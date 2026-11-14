@@ -25,6 +25,12 @@ interface AgentHandleLike {
 interface AgentRegistryLike {
   create(options: Record<string, unknown>): Promise<AgentHandleLike>
   resume(options: Record<string, unknown>): Promise<AgentHandleLike>
+  /** The official registry exposes a live-agent lookup (not an owner handle). */
+  get?(sessionId: string): AgentHandleLike['agent'] | undefined
+}
+
+interface SessionStoreLike {
+  get?(sessionId: string): unknown
 }
 
 interface TurnState {
@@ -141,21 +147,42 @@ export class DshSessionBridge implements SessionBridge {
 
   async resume(sessionId: string): Promise<void> {
     const agents = this.requireAgents()
-    // A live handle from `create()` is NOT safe to reuse for the next turn:
-    // after a completed turn the DSH runtime may detach that Session from its
-    // SessionStore, and a further `agent.followup()` then fails with
-    // "cannot append outside a SessionStore" (verified on dsh 0.2.2-rc.1).
-    // Re-hydrate from persistence for every follow-up turn instead.
-    const previous = this.handles.get(sessionId)
-    if (previous) {
-      this.handles.delete(sessionId)
-      await previous.dispose().catch((error) => {
-        this.logger.warn('disposing stale handle for %s failed: %s', sessionId, String(error))
-      })
+    const cached = this.handles.get(sessionId)
+
+    if (cached) {
+      // Normal follow-up in the SAME live host: reuse the owning AgentHandle.
+      // AgentHandle.dispose() removes the Session from SessionStore. Disposing
+      // it before every turn destroys the very context we want to preserve.
+      // A cold resume belongs ONLY to a new bridge/host after persistence has
+      // been mounted and agent-loop has registered its factory.
+      if (typeof agents.get === 'function' && agents.get(sessionId) !== cached.agent) {
+        throw new Error(
+          `native DSH Agent ${sessionId} is no longer registered; ` +
+          'the host/agent-loop may have unloaded. Refusing to reuse a stale handle.',
+        )
+      }
+      const sessions = this.ctx.get('sessions') as SessionStoreLike | undefined
+      if (typeof sessions?.get === 'function' && !sessions.get(sessionId)) {
+        throw new Error(
+          `native DSH Session ${sessionId} is not in the active SessionStore; ` +
+          'the host may have shut down. Refusing to append to a detached Session.',
+        )
+      }
+      this.logger.debug('reusing live native DSH session %s', sessionId)
+      return
     }
-    const handle = await agents.resume({ resumeSessionId: sessionId })
-    this.handles.set(sessionId, handle)
-    this.logger.info('resumed native DSH session %s', sessionId)
+
+    try {
+      const handle = await agents.resume({ resumeSessionId: sessionId })
+      this.handles.set(sessionId, handle)
+      this.logger.info('restored persisted native DSH session %s', sessionId)
+    } catch (error) {
+      throw new Error(
+        `cannot resume persisted DSH Session ${sessionId}; ensure a persistent DSH host ` +
+        `has agent-loop and session-persistence mounted: ${String(error)}`,
+        { cause: error },
+      )
+    }
   }
 
   async submit(sessionId: string, text: string, signal: AbortSignal): Promise<void> {

@@ -75,7 +75,11 @@ function fakeAgents() {
     }
   }
 
-  const agents = {
+  const agents: {
+    create: (options: Record<string, unknown>) => Promise<FakeHandle>
+    resume: (options: Record<string, unknown>) => Promise<FakeHandle>
+    get?: (sessionId: string) => FakeHandle['agent'] | undefined
+  } = {
     create: async (options: Record<string, unknown>) => {
       created.push(options)
       return makeHandle()
@@ -253,18 +257,74 @@ describe('DshSessionBridge', () => {
     expect(fake2.created[0]).not.toHaveProperty('agentOptions')
   })
 
-  it('re-hydrates a Session from persistence on every resume, even with a cached handle', async () => {
-    // Real-runtime regression: reusing a live handle after a completed turn
-    // fails with "cannot append outside a SessionStore".
-    const { bridge, fake } = setup()
+  it('keeps one live AgentHandle for three sequential turns without destroying context', async () => {
+    const { ctx, bridge, fake } = setup()
     await bridge.create('session-1', '/workspace')
+    for (const [index, prompt] of ['remember alpha', 'what was it?', 'repeat it'].entries()) {
+      await bridge.resume('session-1')
+      await bridge.submit('session-1', prompt, new AbortController().signal)
+      const waiting = bridge.waitForReply('session-1', {
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      })
+      ctx.emit('session/event', { id: 'session-1' }, {
+        type: 'assistant/message',
+        data: { message: { content: [{ type: 'text', text: `turn-${index + 1}` }] } },
+      })
+      ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: {} })
+      expect((await waiting).text).toBe(`turn-${index + 1}`)
+    }
+    expect(fake.created).toHaveLength(1)
     expect(fake.resumed).toHaveLength(0)
-    await bridge.resume('session-1')
+    expect(fake.disposed).toHaveLength(0)
+    expect(fake.followups).toHaveLength(3)
+    await bridge.dispose()
+    expect(fake.disposed).toHaveLength(1)
+  })
+
+  it('cold-resumes a persisted Session exactly once in a new bridge', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.dispose()
+    const restored = new DshSessionBridge(ctx, silentLogger)
+    await restored.resume('session-1')
+    await restored.resume('session-1')
     expect(fake.resumed).toEqual([{ resumeSessionId: 'session-1' }])
     expect(fake.disposed).toHaveLength(1)
-    await bridge.resume('session-1')
-    expect(fake.resumed).toHaveLength(2)
+    await restored.dispose()
     expect(fake.disposed).toHaveLength(2)
+  })
+
+  it('refuses to use a cached Agent when the official registry no longer owns it', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    ctx.services.set('agents', fake.agents)
+    fake.agents.get = () => undefined
+    await expect(bridge.resume('session-1')).rejects.toThrow(/no longer registered/)
+    expect(fake.resumed).toHaveLength(0)
+    expect(fake.disposed).toHaveLength(0)
+    await bridge.dispose()
+  })
+
+  it('refuses to append to a detached SessionStore', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    ctx.services.set('sessions', { get: (_sessionId: string) => undefined })
+    await expect(bridge.resume('session-1')).rejects.toThrow(/not in the active SessionStore/)
+    expect(fake.followups).toHaveLength(0)
+    await bridge.dispose()
+  })
+
+  it('reports a missing Agent Factory during cold restore without creating a new Session', async () => {
+    const ctx = new FakeCtx()
+    const fake = fakeAgents()
+    ctx.services.set('agents', {
+      ...fake.agents,
+      resume: async () => { throw new Error('no agent factory registered (load an agent-loop plugin)') },
+    })
+    const bridge = new DshSessionBridge(ctx, silentLogger)
+    await expect(bridge.resume('previous-session')).rejects.toThrow(/no agent factory registered/)
+    expect(fake.created).toHaveLength(0)
   })
 
 })

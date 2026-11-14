@@ -114,6 +114,64 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await gateway.stop()
   })
 
+  it('keeps a chat on one Session over three same-process messages', async () => {
+    const { gateway, transport, bridge } = await harness()
+    for (const messageId of ['om_turn_1', 'om_turn_2', 'om_turn_3']) {
+      await transport.emitMessage(alice({ messageId, chatId: 'oc_three_turns' }))
+      await gateway.whenIdle()
+    }
+    expect(bridge.created).toHaveLength(1)
+    expect(bridge.resumed).toEqual([
+      bridge.created[0]!.sessionId,
+      bridge.created[0]!.sessionId,
+    ])
+    expect(bridge.prompts.map((p) => p.sessionId)).toEqual([
+      bridge.created[0]!.sessionId,
+      bridge.created[0]!.sessionId,
+      bridge.created[0]!.sessionId,
+    ])
+    await gateway.stop()
+  })
+
+  it('preserves the original Session mapping if cold resume fails', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const config = resolveConfig({ stateDir: dir, allowlist: ['ou_alice'], offline: true })
+    const firstTransport = new MockFeishuTransport('default')
+    const firstBridge = new MockSessionBridge()
+    const first = createGateway(config, {
+      transports: [firstTransport], bridge: firstBridge, logger: silentLogger,
+    })
+    await first.start()
+    await firstTransport.emitMessage(alice({ messageId: 'om_session_first', chatId: 'oc_bound' }))
+    await first.whenIdle()
+    const originalSessionId = firstBridge.created[0]!.sessionId
+    await first.stop()
+
+    class FailingRestoreBridge extends MockSessionBridge {
+      override async resume(_sessionId: string): Promise<void> {
+        throw new Error('no agent factory registered')
+      }
+    }
+    const secondTransport = new MockFeishuTransport('default')
+    const secondBridge = new FailingRestoreBridge()
+    const second = createGateway(config, {
+      transports: [secondTransport], bridge: secondBridge, logger: silentLogger,
+    })
+    await second.start()
+    await secondTransport.emitMessage(alice({ messageId: 'om_session_second', chatId: 'oc_bound' }))
+    await second.whenIdle()
+    expect(secondBridge.created).toHaveLength(0)
+    expect(secondBridge.prompts).toHaveLength(0)
+    expect(secondTransport.sent[0]?.text).toContain('已保留会话绑定')
+    const { readFile } = await import('node:fs/promises')
+    const data = JSON.parse(await readFile(`${dir}/sessions.json`, 'utf8')) as {
+      bindings: Record<string, { sessionId: string }>
+    }
+    expect(data.bindings['default:oc_bound']?.sessionId).toBe(originalSessionId)
+    await second.stop()
+  })
+
   it('reuses one native Session per chat and resumes it after a restart', async () => {
     const { dir: stateDir, cleanup: cleanupState } = await tempDir()
     cleanups.push(cleanupState)

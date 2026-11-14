@@ -37,6 +37,13 @@ export interface GatewayHealth {
   readonly uptimeMs: number
 }
 
+class SessionResumeError extends Error {
+  constructor(sessionId: string, cause: unknown) {
+    super(`cannot restore DSH Session ${sessionId}: ${String(cause)}`, { cause })
+    this.name = 'SessionResumeError'
+  }
+}
+
 const REJECT_REASONS: readonly RejectReason[] = [
   'groups-disabled',
   'empty-allowlist',
@@ -341,7 +348,13 @@ export class FeishuGateway {
       }
       // Never blindly replay a turn that may have caused real side effects.
       await this.inbox.markFailed(record.messageId, reason)
-      await this.replyDiagnostic(record, '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
+      if (error instanceof SessionResumeError) {
+        await this.replyDiagnostic(record,
+          'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
+      } else {
+        await this.replyDiagnostic(record,
+          '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
+      }
     }
   }
 
@@ -360,11 +373,10 @@ export class FeishuGateway {
     try {
       await this.bridge.resume(existing.sessionId)
     } catch (error) {
-      this.logger.warn('resume of %s failed, creating a fresh Session: %s', existing.sessionId, String(error))
-      const sessionId = `${sessionIdFor(botId, chatId)}-${newId('retry')}`
-      await this.bridge.create(sessionId, this.config.workspace, this.config.agent)
-      await this.registry.bind(key, sessionId)
-      return sessionId
+      // Do NOT silently replace a chat's conversation with an empty Session.
+      // A closed host, missing factory, or broken persistence needs an explicit
+      // recovery decision. Keep the original binding for diagnosis / retry.
+      throw new SessionResumeError(existing.sessionId, error)
     }
     return existing.sessionId
   }

@@ -224,6 +224,13 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 
 ---
 
+## 原生 Session 多轮对话（修复分支）
+
+- 同一个飞书聊天在**同一长期运行的 DSH Host** 中，连续消息直接复用同一个活动 AgentHandle，保持 SessionStore 中的原生上下文；**不在每一轮执行 `dispose() → resume()`**。
+- 只有插件启动后没有当前 Session 的活动 Handle、且 Host 的 Agent Loop 和 Session Persistence 处于可用状态时，才按已有会话 ID 执行 `agents.resume()`。
+- 若恢复失败，保留原聊天绑定并提示诊断，不静默替换成空白 Session。
+- 单次任务型 headless Host 在任务完成后可能卸载 Agent Factory。真实多轮测试必须使用保持运行的测试 Host；单元测试成功**不等于**真实模型多轮已通过。
+
 ## 消息可靠性与执行安全（修复分支）
 
 - **先持久化再确认收到消息**：入站事件先由 Inbox 原子入队，随后才更新可选去重缓存。异步持久化失败不会被当作成功接收。

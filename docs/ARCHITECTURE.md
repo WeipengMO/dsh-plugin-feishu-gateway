@@ -138,7 +138,7 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 5. 按 `botId:chatId` 进入串行队列，避免同一会话两个 turn 交错。
 6. `SessionRegistry` 查映射：
    - 无 → 以聊天键与随机后缀生成新的 Session id → `bridge.create()` → `bind()`；
-   - 有 → `bridge.resume(existing.sessionId)`；恢复失败则换新 id 重新 create（防陈旧 id 卡死）。
+   - 有 → `bridge.resume(existing.sessionId)`：如果当前 Bridge 已持有活动 AgentHandle，**直接复用**；只有新进程 / 新 Bridge 缺失 Handle 才从持久化 `agents.resume()`。恢复失败**保留原 Session 绑定**并回复诊断，不创建空白会话。
 7. `bridge.submit()` → `agent.followup(createUserMessage(...))`，DSH 自己的 loop 驱动模型。
 8. `bridge.waitForReply()` 同时收集：
    - **durable**：`session/event` 的 `assistant/message` / `assistant/attempt`（`event.data.message.content` 文本块）；
@@ -233,14 +233,17 @@ Inbox 的准入权威是**实例内的内存 Map**。两个 Gateway 实例（或
   `makeUserMessage` 的动态 import 回退对象也被 `agent.followup()` 接受（入站消息被
   splice 进 agent inbox）。此前「scope-filtered 事件可能收不到」的担忧在 0.2.2-rc.1
   headless 运行时**不成立**。
-- **但发现两个真实缺陷**：(1) 默认配置下 `ctx.agents.create()` 未带 `agentOptions`，
+- **实测发现两个历史缺陷（第二项需通过新的多轮回归重新验证）**：(1) 默认配置下 `ctx.agents.create()` 未带 `agentOptions`，
   Agent 无 provider/model，每个 turn 以 `agent ... has no provider/model` 结束，用户只
   收到空回复兜底且消息被标记 `done`；已修复为从 `ctx.agentDefaultModel.currentSelection()`
-  补默认 provider/model。(2) **同一 Session 的后续消息（上下文复用）仍失败**：复用缓存的
-  AgentHandle 会报 `cannot append outside a SessionStore`；改为每轮按持久化
-  `agents.resume()` 重新挂载后，headless 测试 profile 又因未注册 agent factory 报
-  `no agent factory registered (load an agent-loop plugin)`。多轮上下文复用、Agent 超时 /
-  异常 / 取消后的隔离、卸载时 Listener / AgentHandle 清理**均未在真实运行时验证**
-  （BLOCKED）。v0.2.0 需在带 agent factory 的 Web profile / 真实租户中复核，必要时改用
-  `ctx.sessionController.follow({ assistantStream: true }, signal)`。
+  补默认 provider/model。(2) **同一 Session 的后续消息（上下文复用）历史上失败**：之前每条消息
+  `dispose()` 原有 Handle 并重新 `agents.resume()`。而 `dispose()` 会把原
+  Session 从活动 SessionStore 移除；当一次性 headless 运行时已卸载 Agent Loop 时，
+  `resume()` 又会因缺少 Factory 报
+  `no agent factory registered (load an agent-loop plugin)`。
+  现在同进程活动 Handle 直接复用，冷恢复只在新的 Bridge 启动时发生；
+  若 Agent Registry / SessionStore 已经卸载则明确失败，**不会悄悄新建无上下文 Session**。
+  该行为有 Mock 回归测试，但跨多轮真实模型上下文、冷恢复与
+  超时 / 异常 / 取消后的隔离仍须在长期存活的真实 DSH Host 中验收。
+  若 Host 生命周期本身只维持单次任务，需要提供常驻 Host 后再测试。
 - 社区参考项目调研报告已标注可达性与「已验证 / 推断」；本项目代码从零编写，未 Fork。
