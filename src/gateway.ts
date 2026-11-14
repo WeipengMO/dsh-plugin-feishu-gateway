@@ -68,6 +68,7 @@ export class FeishuGateway {
   private readonly abortController = new AbortController()
   private readonly chatQueues = new Map<string, Promise<void>>()
   private readonly inFlight = new Set<Promise<void>>()
+  private readonly scheduledMessageIds = new Set<string>()
   private readonly rejected: Record<RejectReason, number>
   private startedAt = 0
   private processed = 0
@@ -130,7 +131,7 @@ export class FeishuGateway {
       }
       // Replay only work that was never started. A running Agent may already
       // have changed files or executed shell commands before the crash.
-      for (const record of pending) this.track(this.replayRecord(record))
+      for (const record of pending) this.scheduleRecord(record)
       for (const record of this.inbox.uncertain()) {
         await this.replyDiagnostic(record,
           '此前请求在服务重启时处于执行中，可能已经产生实际操作。为避免重复执行，已暂停自动重试；请检查 DSH 会话后决定是否重新发送。',
@@ -160,6 +161,7 @@ export class FeishuGateway {
     await Promise.allSettled([...this.inFlight])
     await this.bridge.dispose()
     this.chatQueues.clear()
+    this.scheduledMessageIds.clear()
     this.logger.info(
       'stopped: processed=%d rejected=%d errors=%d outboxPending=%d',
       this.processed,
@@ -182,7 +184,10 @@ export class FeishuGateway {
     // as a duplicate if its inbound payload has not been durably recorded.
     const { record, isNew } = await this.inbox.recordIfAbsent(decision.message)
     if (!isNew) {
-      this.logger.debug('duplicate message %s ignored', message.messageId)
+      // A crash/failure after durable admission but before queueing must not
+      // leave a pending event stranded until the next full service restart.
+      if (record.status === 'pending') this.scheduleRecord(record)
+      this.logger.debug('duplicate message %s already admitted', message.messageId)
       return
     }
     try {
@@ -192,13 +197,21 @@ export class FeishuGateway {
       // The dedup index is non-authoritative: Inbox already owns the ID.
       this.logger.warn('dedup index update failed for %s: %s', record.messageId, String(error))
     }
-    this.track(this.processRecord(record))
+    this.scheduleRecord(record)
   }
 
-  /** Replay path used at startup; skips router/dedup but not the per-chat queue. */
-  private async replayRecord(record: InboxRecord): Promise<void> {
-    if (record.status === 'done') return
-    await this.enqueue(record.botId, record.chatId, () => this.dispatch(record))
+  /** Schedule a pending durable event exactly once within this process. */
+  private scheduleRecord(record: InboxRecord): void {
+    if (record.status !== 'pending' || this.scheduledMessageIds.has(record.messageId)) return
+    this.scheduledMessageIds.add(record.messageId)
+    const work = this.processRecord(record)
+    this.track(work.then(
+      () => { this.scheduledMessageIds.delete(record.messageId) },
+      (error) => {
+        this.scheduledMessageIds.delete(record.messageId)
+        throw error
+      },
+    ))
   }
 
   private async processRecord(record: InboxRecord): Promise<void> {
