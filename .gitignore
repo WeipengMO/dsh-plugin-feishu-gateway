@@ -14,3 +14,8 @@ turbo/
 # Default gateway state contains message bodies and session identifiers.
 .feishu-gateway/
 **/.feishu-gateway/
+
+# Feishu channel credentials (never commit)
+feishu-channel.env
+*.env
+!*.env.example
