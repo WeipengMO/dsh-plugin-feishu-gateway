@@ -198,4 +198,21 @@ describe('DshSessionBridge', () => {
     expect(ctx.listenerCount('agent/assistant-stream')).toBe(0)
     expect(bridge.available).toBe(false)
   })
+  it('does not concatenate assistant/attempt with the final assistant/message', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/attempt',
+      data: { message: { content: [{ type: 'text', text: 'draft' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'final' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: {} })
+    expect((await waiting).text).toBe('final')
+  })
+
 })

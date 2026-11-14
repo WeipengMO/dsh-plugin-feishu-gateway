@@ -61,7 +61,8 @@ describe('DurableInbox', () => {
     await inbox.record(message('om_1'))
     await inbox.markFailed('om_1', 'boom')
     expect(inbox.get('om_1')).toMatchObject({ status: 'failed', attempts: 1, error: 'boom' })
-    expect(inbox.pending()).toHaveLength(1)
+    // Failed operations may have already performed side effects; do not replay.
+    expect(inbox.pending()).toHaveLength(0)
   })
 
   it('tolerates a torn trailing line', async () => {
@@ -71,4 +72,46 @@ describe('DurableInbox', () => {
     const inbox = make()
     expect(await inbox.open()).toEqual([])
   })
+  it('deduplicates concurrent deliveries at the durable inbox boundary', async () => {
+    const { make } = await fixture()
+    const inbox = make()
+    await inbox.open()
+    const [a, b] = await Promise.all([
+      inbox.recordIfAbsent(message('om_same', 'one')),
+      inbox.recordIfAbsent(message('om_same', 'two')),
+    ])
+    expect([a.isNew, b.isNew].sort()).toEqual([false, true])
+    expect(inbox.stats().total).toBe(1)
+    const restored = make()
+    expect((await restored.open()).map((r) => r.messageId)).toEqual(['om_same'])
+  })
+
+  it('marks interrupted Agent work uncertain rather than replaying side effects', async () => {
+    const { make } = await fixture()
+    const first = make()
+    await first.open()
+    await first.record(message('om_running'))
+    await first.markRunning('om_running')
+    const restarted = make()
+    expect(await restarted.open()).toEqual([])
+    expect(restarted.uncertain().map((r) => r.messageId)).toEqual(['om_running'])
+    await restarted.markRecoveryNotified('om_running')
+    const third = make()
+    await third.open()
+    expect(third.uncertain()).toEqual([])
+    expect(third.get('om_running')?.status).toBe('uncertain')
+  })
+
+  it('repairs a truncated JSONL tail before appending new events', async () => {
+    const { dir, make } = await fixture()
+    const { writeFile, readFile } = await import('node:fs/promises')
+    await writeFile(`${dir}/inbox.jsonl`, '{"type":"processed","messageId":"x"}\n{"type":"rec', 'utf8')
+    const inbox = make()
+    await inbox.open()
+    await inbox.record(message('om_healthy'))
+    const restarted = make()
+    expect((await restarted.open()).map((r) => r.messageId)).toEqual(['om_healthy'])
+    expect((await readFile(`${dir}/inbox.jsonl`, 'utf8')).not.toContain('{"type":"rec\n')
+  })
+
 })

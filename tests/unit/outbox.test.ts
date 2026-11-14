@@ -63,4 +63,46 @@ describe('DurableOutbox', () => {
     expect(await outbox.send('missing-bot', { chatId: 'oc_1', text: 'hi' })).toBe(false)
     expect(outbox.pending()).toHaveLength(1)
   })
+  it('never overwrites two concurrent pending sends', async () => {
+    const { transport, make } = await fixture()
+    const outbox = make()
+    await outbox.open()
+    await Promise.all([
+      outbox.send('default', { replyToMessageId: 'om_a', text: 'A' }, 'reply:a'),
+      outbox.send('default', { replyToMessageId: 'om_b', text: 'B' }, 'reply:b'),
+    ])
+    expect(transport.sent.map((m) => m.text).sort()).toEqual(['A', 'B'])
+    expect(outbox.pending()).toHaveLength(0)
+  })
+
+  it('coalesces concurrent drains and duplicate deliveries for the same idempotency key', async () => {
+    const { transport, make } = await fixture()
+    const outbox = make()
+    await outbox.open()
+    transport.remainingFailures = 2
+    await outbox.send('default', { replyToMessageId: 'om_once', text: 'only once' }, 'reply:once')
+    expect(outbox.pending()).toHaveLength(1)
+    transport.remainingFailures = 0
+    await Promise.all([outbox.drain(), outbox.drain()])
+    expect(transport.sent).toHaveLength(1)
+    await outbox.send('default', { replyToMessageId: 'om_once', text: 'only once' }, 'reply:once')
+    expect(transport.sent).toHaveLength(1)
+  })
+
+  it('reuses the original REST UUID after restart', async () => {
+    const { transport, make } = await fixture()
+    const first = make()
+    await first.open()
+    transport.remainingFailures = 2
+    await first.send('default', { chatId: 'oc_1', text: 'persist' }, 'reply:persist')
+    const originalUuid = first.pending()[0]?.target.uuid
+    expect(originalUuid).toBeTruthy()
+    transport.remainingFailures = 0
+    const restarted = make()
+    await restarted.open()
+    await restarted.drain()
+    expect(transport.sent).toHaveLength(1)
+    expect(transport.sent[0]?.uuid).toBe(originalUuid)
+  })
+
 })

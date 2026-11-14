@@ -6,6 +6,8 @@ import { FeishuGateway, type GatewayHealth } from '../../src/gateway.js'
 import { MockSessionBridge } from '../../src/session/mock-session-bridge.js'
 import { silentLogger } from '../../src/util/logger.js'
 import { createGateway } from '../../src/index.js'
+import { DurableInbox } from '../../src/inbox/inbox.js'
+import type { SessionReply, WaitOptions } from '../../src/types.js'
 import type { GatewayConfig } from '../../src/types.js'
 import { tempDir } from '../helpers.js'
 
@@ -211,6 +213,77 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     expect(gateway.health().status).toBe('ok')
     await gateway.stop()
   })
+  it('does not execute a formerly allowlisted message after access is revoked', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const inbox = new DurableInbox(dir)
+    await inbox.open()
+    await inbox.record({
+      messageId: 'om_revoked', botId: 'default', chatId: 'oc_1',
+      senderId: 'ou_alice', senderType: 'user', chatType: 'p2p',
+      text: 'do something', createTime: 1, messageType: 'text',
+    })
+    const transport = new MockFeishuTransport('default')
+    const bridge = new MockSessionBridge()
+    const gateway = createGateway(resolveConfig({ stateDir: dir, allowlist: ['ou_other'], offline: true }),
+      { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await gateway.whenIdle()
+    expect(bridge.prompts).toHaveLength(0)
+    expect(transport.sent).toHaveLength(0)
+    await gateway.stop()
+  })
+
+  it('does not replay a crash-interrupted Agent turn; sends a recovery warning instead', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const inbox = new DurableInbox(dir)
+    await inbox.open()
+    await inbox.record({
+      messageId: 'om_interrupted', botId: 'default', chatId: 'oc_1',
+      senderId: 'ou_alice', senderType: 'user', chatType: 'p2p',
+      text: 'modify files', createTime: 1, messageType: 'text',
+    })
+    await inbox.markRunning('om_interrupted')
+    const transport = new MockFeishuTransport('default')
+    const bridge = new MockSessionBridge()
+    const gateway = createGateway(resolveConfig({ stateDir: dir, allowlist: ['ou_alice'], offline: true }),
+      { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await gateway.whenIdle()
+    expect(bridge.prompts).toHaveLength(0)
+    expect(transport.sent).toHaveLength(1)
+    expect(transport.sent[0]?.text).toContain('避免重复执行')
+    await gateway.stop()
+  })
+
+  it('isolates the next message from the native Session of a timed-out turn', async () => {
+    class TimeoutOnceBridge extends MockSessionBridge {
+      private calls = 0
+      override async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
+        this.calls += 1
+        if (this.calls === 1) return { text: 'incomplete', reason: 'timeout' }
+        return super.waitForReply(sessionId, options)
+      }
+    }
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const transport = new MockFeishuTransport('default')
+    const bridge = new TimeoutOnceBridge()
+    const gateway = createGateway(resolveConfig({ stateDir: dir, allowlist: ['ou_alice'], offline: true }),
+      { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await transport.emitMessage(alice({ messageId: 'om_timeout' }))
+    await gateway.whenIdle()
+    await transport.emitMessage(alice({ messageId: 'om_followup' }))
+    await gateway.whenIdle()
+    expect(bridge.cancelled).toContain(bridge.prompts[0]?.sessionId)
+    expect(bridge.created).toHaveLength(2)
+    expect(bridge.prompts[0]?.sessionId).not.toBe(bridge.prompts[1]?.sessionId)
+    expect(transport.sent[0]?.text).toContain('原会话已隔离')
+    await gateway.stop()
+  })
+
 })
 
 async function harnessUnavailable(): Promise<{ gateway: FeishuGateway; transport: MockFeishuTransport }> {

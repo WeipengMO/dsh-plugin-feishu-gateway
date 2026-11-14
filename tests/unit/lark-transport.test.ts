@@ -171,4 +171,24 @@ describe('LarkTransport (SDK mocked)', () => {
     expect(sdkState.closed).toBe(1)
     expect(t.state).toBe('closed')
   })
+  it('propagates asynchronous admission errors instead of ACKing a lost event', async () => {
+    const t = transport()
+    await t.connect({ onMessage: async () => { throw new Error('disk full') }, onStateChange: () => {} })
+    await expect(sdkState.handlers['im.message.receive_v1']!(rawEvent())).rejects.toThrow('disk full')
+  })
+
+  it('fails closed for an ambiguous chat type or a missing open_id', async () => {
+    const t = transport()
+    const received: unknown[] = []
+    await t.connect({ onMessage: (m) => { received.push(m) }, onStateChange: () => {} })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({
+      message: { ...rawEvent().message, chat_type: 'unknown' },
+    }))
+    expect(received).toEqual([expect.objectContaining({ chatType: 'group' })])
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({
+      sender: { sender_id: { user_id: 'id_only' }, sender_type: 'user' },
+    }))
+    expect(received).toHaveLength(1)
+  })
+
 })
