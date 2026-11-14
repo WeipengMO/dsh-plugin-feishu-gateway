@@ -29,6 +29,7 @@ interface AgentRegistryLike {
 
 interface TurnState {
   readonly durable: string[]
+  readonly attempts: string[]
   readonly live: string[]
   readonly done: Promise<void>
   readonly resolve: () => void
@@ -125,7 +126,7 @@ export class DshSessionBridge implements SessionBridge {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error(`session ${sessionId} is not live`)
     if (signal.aborted) throw new Error('submit aborted')
-    this.ensureTurn(sessionId)
+    const submittedTurn = this.ensureTurn(sessionId)
     handle.agent.followup(await makeUserMessage(text))
 
     // Secondary completion signal. `turn/end` is the authoritative boundary,
@@ -137,7 +138,9 @@ export class DshSessionBridge implements SessionBridge {
     if (typeof whenIdle === 'function') {
       void whenIdle.call(handle.agent).then(() => {
         const turn = this.turns.get(sessionId)
-        if (turn && (turn.durable.length > 0 || turn.live.length > 0)) this.settle(sessionId)
+        if (turn === submittedTurn && (turn.durable.length > 0 || turn.attempts.length > 0 || turn.live.length > 0)) {
+          this.settle(sessionId)
+        }
       }).catch(() => undefined)
     }
   }
@@ -147,7 +150,7 @@ export class DshSessionBridge implements SessionBridge {
     if (!turn) return { text: '', reason: 'empty' }
     const result = await withTimeout(turn.done, options.timeoutMs, options.signal)
     const durable = turn.durable.join('').trim()
-    const text = durable || turn.live.join('').trim()
+    const text = durable || turn.attempts.join('').trim() || turn.live.join('').trim()
     const reason = !result.timedOut ? 'idle' : 'timeout'
     this.turns.delete(sessionId)
     return {
@@ -190,7 +193,7 @@ export class DshSessionBridge implements SessionBridge {
     const done = new Promise<void>((r) => {
       resolve = r
     })
-    const turn: TurnState = { durable: [], live: [], done, resolve, settled: false, events: 0 }
+    const turn: TurnState = { durable: [], attempts: [], live: [], done, resolve, settled: false, events: 0 }
     this.turns.set(sessionId, turn)
     return turn
   }
@@ -210,7 +213,7 @@ export class DshSessionBridge implements SessionBridge {
     const type = (event as { type?: unknown })?.type
     if (type === 'assistant/message' || type === 'assistant/attempt') {
       const text = extractText((event as { data?: unknown })?.data)
-      if (text) turn.durable.push(text)
+      if (text) (type === 'assistant/message' ? turn.durable : turn.attempts).push(text)
       turn.events += 1
     } else if (type === 'turn/end') {
       this.settle(sessionId)
