@@ -1,8 +1,8 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, truncate } from 'node:fs/promises'
 import path from 'node:path'
 import type { InboundMessage } from '../types.js'
 
-export type InboxStatus = 'pending' | 'done' | 'failed'
+export type InboxStatus = 'pending' | 'running' | 'done' | 'failed' | 'uncertain'
 
 export interface InboxRecord {
   readonly messageId: string
@@ -14,12 +14,16 @@ export interface InboxRecord {
   readonly status: InboxStatus
   readonly attempts: number
   readonly error?: string
+  readonly recoveryNotified?: boolean
 }
 
 export type InboxEvent =
   | { readonly type: 'received'; readonly record: InboxRecord }
+  | { readonly type: 'running'; readonly messageId: string }
   | { readonly type: 'processed'; readonly messageId: string }
   | { readonly type: 'failed'; readonly messageId: string; readonly error: string }
+  | { readonly type: 'uncertain'; readonly messageId: string }
+  | { readonly type: 'recovery-notified'; readonly messageId: string }
 
 /**
  * Durable append-only inbox. Every inbound message is written *before* it is
@@ -56,8 +60,14 @@ export class DurableInbox {
     }
     const current = this.records.get(event.messageId)
     if (!current) return
-    if (event.type === 'processed') {
+    if (event.type === 'running') {
+      this.records.set(event.messageId, { ...current, status: 'running' })
+    } else if (event.type === 'processed') {
       this.records.set(event.messageId, { ...current, status: 'done' })
+    } else if (event.type === 'uncertain') {
+      this.records.set(event.messageId, { ...current, status: 'uncertain' })
+    } else if (event.type === 'recovery-notified') {
+      this.records.set(event.messageId, { ...current, recoveryNotified: true })
     } else {
       this.records.set(event.messageId, {
         ...current,
@@ -86,31 +96,79 @@ export class DurableInbox {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
       this.records.clear()
-      for (const line of text.split('\n')) {
-        if (!line.trim()) continue
+      const lines = text.split('\n')
+      let validBytes = 0
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index]!
+        if (!line.trim()) {
+          if (index < lines.length - 1) validBytes += Buffer.byteLength(line + '\n')
+          continue
+        }
         try {
           this.fold(JSON.parse(line) as InboxEvent)
-        } catch {
-          // Skip a torn trailing line; the next append continues the log.
+        } catch (error) {
+          // Only the incomplete final line may be discarded. Invalid completed
+          // records are a storage error, not silently ignored data loss.
+          if (index !== lines.length - 1 || text.endsWith('\n')) throw error
+          await truncate(this.file, validBytes)
+          break
         }
+        validBytes += Buffer.byteLength(line + (index < lines.length - 1 ? '\n' : ''))
+      }
+      // A crashed process must never automatically replay an in-progress
+      // Agent operation: the side effects may have already happened.
+      for (const record of [...this.records.values()]) {
+        if (record.status !== 'running') continue
+        const event: InboxEvent = { type: 'uncertain', messageId: record.messageId }
+        await appendFile(this.file, `${JSON.stringify(event)}\n`, { mode: 0o600 })
+        this.fold(event)
       }
       return this.pending()
     })
   }
 
+  /** Atomically admit an event only if its id was never recorded.
+   * The inbox, not a separately written dedup cache, is the admission authority.
+   */
+  async recordIfAbsent(
+    message: InboundMessage,
+    receivedAt = Date.now(),
+  ): Promise<{ record: InboxRecord; isNew: boolean }> {
+    return this.serialize(async () => {
+      const existing = this.records.get(message.messageId)
+      if (existing) return { record: existing, isNew: false }
+      const record: InboxRecord = {
+        messageId: message.messageId,
+        botId: message.botId,
+        chatId: message.chatId,
+        senderId: message.senderId,
+        text: message.text,
+        receivedAt,
+        status: 'pending',
+        attempts: 0,
+      }
+      const event: InboxEvent = { type: 'received', record }
+      await mkdir(this.stateDir, { recursive: true })
+      await appendFile(this.file, `${JSON.stringify(event)}\n`, { mode: 0o600 })
+      this.fold(event)
+      return { record, isNew: true }
+    })
+  }
+
   async record(message: InboundMessage, receivedAt = Date.now()): Promise<InboxRecord> {
-    const record: InboxRecord = {
-      messageId: message.messageId,
-      botId: message.botId,
-      chatId: message.chatId,
-      senderId: message.senderId,
-      text: message.text,
-      receivedAt,
-      status: 'pending',
-      attempts: 0,
-    }
-    await this.append({ type: 'received', record })
-    return record
+    return (await this.recordIfAbsent(message, receivedAt)).record
+  }
+
+  async markRunning(messageId: string): Promise<void> {
+    await this.append({ type: 'running', messageId })
+  }
+
+  async markUncertain(messageId: string): Promise<void> {
+    await this.append({ type: 'uncertain', messageId })
+  }
+
+  async markRecoveryNotified(messageId: string): Promise<void> {
+    await this.append({ type: 'recovery-notified', messageId })
   }
 
   async markProcessed(messageId: string): Promise<void> {
@@ -122,7 +180,11 @@ export class DurableInbox {
   }
 
   pending(): InboxRecord[] {
-    return [...this.records.values()].filter((r) => r.status !== 'done')
+    return [...this.records.values()].filter((r) => r.status === 'pending')
+  }
+
+  uncertain(): InboxRecord[] {
+    return [...this.records.values()].filter((r) => r.status === 'uncertain' && !r.recoveryNotified)
   }
 
   get(messageId: string): InboxRecord | undefined {
@@ -133,9 +195,9 @@ export class DurableInbox {
     const all = [...this.records.values()]
     return {
       total: all.length,
-      pending: all.filter((r) => r.status === 'pending').length,
+      pending: all.filter((r) => r.status === 'pending' || r.status === 'running').length,
       done: all.filter((r) => r.status === 'done').length,
-      failed: all.filter((r) => r.status === 'failed').length,
+      failed: all.filter((r) => r.status === 'failed' || r.status === 'uncertain').length,
     }
   }
 }

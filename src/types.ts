@@ -42,6 +42,8 @@ export interface OutboundTarget {
   /** Feishu `message_id` to reply to (preferred, keeps the conversation). */
   readonly replyToMessageId?: string
   readonly text: string
+  /** Stable per-message idempotency UUID reused on every REST retry. */
+  readonly uuid?: string
 }
 
 export interface SendReceipt {

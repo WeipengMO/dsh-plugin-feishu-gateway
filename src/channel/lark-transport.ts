@@ -111,9 +111,7 @@ export class LarkTransport implements FeishuTransport {
 
     const dispatcher = new mod.EventDispatcher({})
     dispatcher.register({
-      'im.message.receive_v1': (event: RawReceiveEvent) => {
-        this.handleEvent(event)
-      },
+      'im.message.receive_v1': (event: RawReceiveEvent) => this.handleEvent(event),
     })
 
     this.ws = new mod.WSClient({
@@ -156,7 +154,7 @@ export class LarkTransport implements FeishuTransport {
     const content = JSON.stringify({ text: target.text })
     if (target.replyToMessageId) {
       const result = await this.client.im.message.reply({
-        data: { content, msg_type: 'text', uuid: newId('fg') },
+        data: { content, msg_type: 'text', uuid: target.uuid ?? newId('fg') },
         path: { message_id: target.replyToMessageId },
       })
       return unwrap(result, `reply to ${target.replyToMessageId}`)
@@ -178,7 +176,7 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
-  private handleEvent(event: RawReceiveEvent): void {
+  private async handleEvent(event: RawReceiveEvent): Promise<void> {
     const message = event.message
     if (!message?.message_id || !message.chat_id) return
     // Never echo bot-originated messages back into a native Session.
@@ -203,13 +201,15 @@ export class LarkTransport implements FeishuTransport {
       createTime: Number(event.create_time ?? message.create_time ?? Date.now()),
       messageType,
     }
-    // Feishu re-pushes an event if the handler does not return within ~3s.
-    // `onMessage` is intentionally NOT awaited here: the gateway persists the
-    // message to the durable inbox first and does the model work asynchronously.
+    // ACK only after Inbox admission is durable. Model execution is queued
+    // separately, so we never await the potentially long Agent turn here.
+    // Re-throw admission failures so the dispatcher can treat the event as
+    // unsuccessful instead of silently acknowledging a lost message.
     try {
-      void this.handlers?.onMessage(inbound)
+      await this.handlers?.onMessage(inbound)
     } catch (error) {
-      this.logger.error('inbound handler threw: %s', String(error))
+      this.logger.error('inbound persistence failed: %s', String(error))
+      throw error
     }
   }
 }
