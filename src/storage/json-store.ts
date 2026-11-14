@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { newId } from '../util/id.js'
 
 /**
  * A tiny atomic JSON document store. Writes go to a temp file in the same
@@ -8,11 +9,14 @@ import path from 'node:path'
  */
 export class JsonStore<T> {
   private readonly file: string
+  /** Per-instance temp path: two stores in one process must not share `${pid}.tmp`. */
+  private readonly tempFile: string
   private chain: Promise<unknown> = Promise.resolve()
   private cache: T | undefined
 
   constructor(private readonly directory: string, private readonly name: string, private readonly fallback: T) {
     this.file = path.join(directory, `${name}.json`)
+    this.tempFile = `${this.file}.${process.pid}.${newId('tmp')}.tmp`
   }
 
   get path(): string {
@@ -46,9 +50,8 @@ export class JsonStore<T> {
 
   private async writeToDisk(value: T): Promise<void> {
     await mkdir(this.directory, { recursive: true })
-    const temp = `${this.file}.${process.pid}.tmp`
-    await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 })
-    await rename(temp, this.file)
+    await writeFile(this.tempFile, JSON.stringify(value, null, 2), { mode: 0o600 })
+    await rename(this.tempFile, this.file)
     this.cache = value
   }
 
@@ -82,7 +85,7 @@ export class JsonStore<T> {
   /** Used by tests to remove state completely. */
   async remove(): Promise<void> {
     await rm(this.file, { force: true })
-    await rm(`${this.file}.${process.pid}.tmp`, { force: true })
+    await rm(this.tempFile, { force: true })
     this.cache = undefined
   }
 }

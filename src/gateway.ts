@@ -5,6 +5,7 @@ import { DurableOutbox } from './outbox/outbox.js'
 import { MessageRouter, type RejectReason } from './router/message-router.js'
 import { SessionRegistry } from './session/session-registry.js'
 import { truncateText } from './session/session-bridge.js'
+import { acquireStateDirOwnerLock, type StateDirOwnerLock } from './storage/owner-lock.js'
 import type {
   FeishuTransport,
   GatewayConfig,
@@ -70,6 +71,7 @@ export class FeishuGateway {
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
   private readonly rejected: Record<RejectReason, number>
+  private ownerLock: StateDirOwnerLock | undefined
   private startedAt = 0
   private processed = 0
   private errors = 0
@@ -101,6 +103,10 @@ export class FeishuGateway {
     this.startedAt = Date.now()
     try {
       await mkdir(this.config.stateDir, { recursive: true })
+      // stateDir is exclusive to ONE gateway instance. The Inbox admission
+      // authority is an in-memory Map, so two instances sharing a stateDir
+      // would admit the same message_id and execute the Agent turn twice.
+      this.ownerLock = await acquireStateDirOwnerLock(this.config.stateDir, this.logger)
       await this.dedup.open()
       const pending = await this.inbox.open()
       await this.registry.open()
@@ -129,19 +135,42 @@ export class FeishuGateway {
         }
         await this.outbox.drain()
       }
-      // Replay only work that was never started. A running Agent may already
-      // have changed files or executed shell commands before the crash.
-      for (const record of pending) this.scheduleRecord(record)
+      // A crashed/shutdown turn may still be bound to a native Session that was
+      // executing an (possibly side-effecting) Agent turn. Isolate that binding
+      // BEFORE dispatching any pending work: timeout/error paths already unbind,
+      // so this closes the crash/shutdown isolation asymmetry (otherwise the
+      // next message would resume the interrupted Session).
       for (const record of this.inbox.uncertain()) {
+        try {
+          await this.registry.unbind(chatKey(record.botId, record.chatId))
+        } catch (error) {
+          this.logger.error('session isolation during recovery failed for %s: %s', record.messageId, String(error))
+        }
         await this.replyDiagnostic(record,
           '此前请求在服务重启时处于执行中，可能已经产生实际操作。为避免重复执行，已暂停自动重试；请检查 DSH 会话后决定是否重新发送。',
           `recovery:${record.messageId}`)
         await this.inbox.markRecoveryNotified(record.messageId)
       }
+      // Replay only work that was never started. A running Agent may already
+      // have changed files or executed shell commands before the crash.
+      for (const record of pending) this.scheduleRecord(record)
       this.dedupSnapshot = await this.dedup.size()
     } catch (error) {
       this.started = false
+      await this.releaseOwnerLock()
       throw error
+    }
+  }
+
+  /** Best-effort, owner-checked release. Safe to call twice. */
+  private async releaseOwnerLock(): Promise<void> {
+    const lock = this.ownerLock
+    this.ownerLock = undefined
+    if (!lock) return
+    try {
+      await lock.release()
+    } catch (error) {
+      this.logger.warn('failed to release stateDir owner lock: %s', String(error))
     }
   }
 
@@ -169,11 +198,15 @@ export class FeishuGateway {
       this.errors,
       this.outbox.stats().pending,
     )
+    await this.releaseOwnerLock()
   }
 
   /** Entry point for every inbound event from any transport. */
   async handleInbound(message: InboundMessage): Promise<void> {
-    if (this.stopped) return
+    // During shutdown the transport may still deliver an event. Resolving here
+    // would make the SDK send a 200 ACK for a message that was never durably
+    // admitted (silent loss). Reject so the event is treated as unsuccessful.
+    if (this.stopped) throw new Error('feishu gateway is stopped; event was not admitted')
     const decision = this.router.decide(message)
     if (!decision.accepted) {
       this.rejected[decision.reason] += 1

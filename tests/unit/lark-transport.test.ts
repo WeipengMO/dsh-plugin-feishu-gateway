@@ -13,6 +13,8 @@ const sdkState = vi.hoisted(() => ({
   replied: [] as Array<{ data: unknown; path: unknown }>,
   handlers: {} as Record<string, (event: unknown) => unknown>,
   failCreate: false,
+  /** Simulate a misconfigured bot: `start()` resolves but onReady never fires. */
+  suppressReady: false,
 }))
 
 vi.mock('@larksuiteoapi/node-sdk', () => {
@@ -43,7 +45,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     constructor(public params: Record<string, unknown>) {}
     async start(params: { eventDispatcher: unknown }) {
       sdkState.started.push(params)
-      ;(this.params.onReady as (() => void) | undefined)?.()
+      if (!sdkState.suppressReady) (this.params.onReady as (() => void) | undefined)?.()
     }
     close() {
       sdkState.closed += 1
@@ -83,6 +85,7 @@ beforeEach(() => {
   sdkState.created.length = 0
   sdkState.replied.length = 0
   sdkState.failCreate = false
+  sdkState.suppressReady = false
   for (const key of Object.keys(sdkState.handlers)) delete sdkState.handlers[key]
 })
 
@@ -189,6 +192,30 @@ describe('LarkTransport (SDK mocked)', () => {
       sender: { sender_id: { user_id: 'id_only' }, sender_type: 'user' },
     }))
     expect(received).toHaveLength(1)
+  })
+
+  it('reuses the persisted REST UUID on the create path across retries', async () => {
+    // Regression: `create` used to mint a fresh uuid on every attempt, so
+    // Feishu server-side idempotency could never dedupe a retried send.
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    sdkState.failCreate = true
+    await expect(t.sendText({ chatId: 'oc_1', text: 'answer', uuid: 'FIXED-UUID' })).rejects.toThrow('code=99999')
+    sdkState.failCreate = false
+    await t.sendText({ chatId: 'oc_1', text: 'answer', uuid: 'FIXED-UUID' })
+    expect(sdkState.created).toHaveLength(2)
+    expect(sdkState.created.map((c) => (c.data as { uuid?: string }).uuid)).toEqual(['FIXED-UUID', 'FIXED-UUID'])
+  })
+
+  it('does not report connected when the WS never becomes ready', async () => {
+    // A bad appId makes WSClient.start() resolve silently without onReady.
+    // Marking it `connected` would hide the failure from health().
+    sdkState.suppressReady = true
+    const t = transport()
+    const states: string[] = []
+    await t.connect({ onMessage: () => {}, onStateChange: (s) => states.push(s) })
+    expect(t.state).toBe('connecting')
+    expect(states).not.toContain('connected')
   })
 
 })

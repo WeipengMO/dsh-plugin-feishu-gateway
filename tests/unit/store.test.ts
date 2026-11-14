@@ -48,4 +48,16 @@ describe('JsonStore', () => {
     const { readdir } = await import('node:fs/promises')
     expect((await readdir(dir)).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
+
+  it('two stores in one process do not share a colliding temp file', async () => {
+    // Regression: the old `${pid}.tmp` name meant instance A's rename could
+    // observe instance B's half-written buffer (ENOENT / lost state).
+    const { dir } = await fixture()
+    const a = new JsonStore<Doc>(dir, 'shared', { values: [] })
+    const b = new JsonStore<Doc>(dir, 'shared', { values: [] })
+    await Promise.all([a.load(), b.load()])
+    await Promise.all([a.save({ values: [1] }), b.save({ values: [2] })])
+    const raw = await readFile(path.join(dir, 'shared.json'), 'utf8')
+    expect([1, 2]).toContain((JSON.parse(raw) as Doc).values[0])
+  })
 })

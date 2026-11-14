@@ -284,6 +284,70 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await gateway.stop()
   })
 
+  it('isolates the Session of a crash-interrupted turn before the next message', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const config = resolveConfig({
+      stateDir: dir, allowlist: ['ou_alice'], offline: true,
+      replyTimeoutMs: 60_000, sendRetries: 1, sendRetryBaseDelayMs: 1,
+    })
+    const transport1 = new MockFeishuTransport('default')
+    const bridge1 = new MockSessionBridge({ delayMs: 60_000 }) // hangs until aborted
+    const gateway1 = createGateway(config, { transports: [transport1], bridge: bridge1, logger: silentLogger })
+    await gateway1.start()
+    await transport1.emitMessage(alice({ messageId: 'om_crash', chatId: 'oc_crash' }))
+    for (let i = 0; i < 100 && bridge1.created.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(bridge1.created).toHaveLength(1)
+    const interruptedSessionId = bridge1.created[0]!.sessionId
+    // Abort leaves the record `running` and the chat->Session binding intact.
+    await gateway1.stop()
+
+    const transport2 = new MockFeishuTransport('default')
+    const bridge2 = new MockSessionBridge({ reply: 'fresh answer' })
+    const gateway2 = createGateway(config, { transports: [transport2], bridge: bridge2, logger: silentLogger })
+    await gateway2.start()
+    await gateway2.whenIdle()
+    expect(bridge2.prompts).toHaveLength(0) // never auto-replay the uncertain turn
+    await transport2.emitMessage(alice({ messageId: 'om_followup', chatId: 'oc_crash' }))
+    await gateway2.whenIdle()
+    // Recovery must have unbound the interrupted Session: a fresh one is used.
+    expect(bridge2.resumed).not.toContain(interruptedSessionId)
+    expect(bridge2.created).toHaveLength(1)
+    expect(bridge2.prompts[0]?.sessionId).not.toBe(interruptedSessionId)
+    await gateway2.stop()
+  })
+
+  it('rejects inbound events after stop instead of silently ACKing them', async () => {
+    const { gateway } = await harness()
+    await gateway.stop()
+    await expect(gateway.handleInbound({
+      messageId: 'om_late', botId: 'default', chatId: 'oc_1', chatType: 'p2p',
+      senderId: 'ou_alice', senderType: 'user', text: 'late', createTime: 1, messageType: 'text',
+    })).rejects.toThrow(/stopped/)
+  })
+
+  it('refuses a second live gateway on the same stateDir, then allows restart', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const config = resolveConfig({ stateDir: dir, allowlist: ['ou_alice'], offline: true })
+    const first = createGateway(config, {
+      transports: [new MockFeishuTransport('default')], bridge: new MockSessionBridge(), logger: silentLogger,
+    })
+    await first.start()
+    const second = createGateway(config, {
+      transports: [new MockFeishuTransport('default')], bridge: new MockSessionBridge(), logger: silentLogger,
+    })
+    await expect(second.start()).rejects.toThrow(/already owned by a running Feishu gateway/)
+    await first.stop()
+    const restarted = createGateway(config, {
+      transports: [new MockFeishuTransport('default')], bridge: new MockSessionBridge(), logger: silentLogger,
+    })
+    await expect(restarted.start()).resolves.toBeUndefined()
+    await restarted.stop()
+  })
+
 })
 
 async function harnessUnavailable(): Promise<{ gateway: FeishuGateway; transport: MockFeishuTransport }> {

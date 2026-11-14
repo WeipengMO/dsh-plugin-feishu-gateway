@@ -89,7 +89,12 @@ describe('DurableOutbox', () => {
     expect(transport.sent).toHaveLength(1)
   })
 
-  it('reuses the original REST UUID after restart', async () => {
+  // This asserts the UUID persisted on the OUTBOX RECORD, not the value the
+  // Lark REST adapter passes to `im.message.create`. The latter is covered by
+  // the "reuses the persisted REST UUID on the create path" test in
+  // tests/unit/lark-transport.test.ts — MockFeishuTransport.sent records the
+  // target, so it cannot detect an adapter-level uuid regression.
+  it('reloads the persisted outbox target UUID across restarts', async () => {
     const { transport, make } = await fixture()
     const first = make()
     await first.open()

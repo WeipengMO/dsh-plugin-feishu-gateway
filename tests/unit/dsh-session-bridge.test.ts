@@ -215,4 +215,56 @@ describe('DshSessionBridge', () => {
     expect((await waiting).text).toBe('final')
   })
 
+  it('falls back to the host default model selection when no route is configured', async () => {
+    // Real-runtime regression: ctx.agents.create() without agentOptions leaves
+    // the Agent with no provider/model, so every turn errors with
+    // "agent ... has no provider/model" and the user gets an empty reply.
+    const { ctx, bridge, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'mock-route', model: 'mock-model' }),
+    })
+    await bridge.create('session-1', '/workspace')
+    expect(fake.created[0]).toMatchObject({
+      agentOptions: { provider: 'mock-route', model: 'mock-model' },
+    })
+  })
+
+  it('prefers an explicit plugin route over the host default', async () => {
+    const { ctx, bridge, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'host-default', model: 'host-model' }),
+    })
+    await bridge.create('session-1', '/workspace', { provider: 'explicit', model: 'explicit-model' })
+    expect(fake.created[0]).toMatchObject({
+      agentOptions: { provider: 'explicit', model: 'explicit-model' },
+    })
+  })
+
+  it('stays usable (no agentOptions) when the default-model service is absent or throws', async () => {
+    const { bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    expect(fake.created[0]).not.toHaveProperty('agentOptions')
+    const ctx2 = new FakeCtx()
+    const fake2 = fakeAgents()
+    ctx2.services.set('agents', fake2.agents)
+    ctx2.services.set('agentDefaultModel', { currentSelection: () => { throw new Error('no route') } })
+    const bridge2 = new DshSessionBridge(ctx2, silentLogger)
+    await bridge2.create('session-2', '/workspace')
+    expect(fake2.created[0]).not.toHaveProperty('agentOptions')
+  })
+
+  it('re-hydrates a Session from persistence on every resume, even with a cached handle', async () => {
+    // Real-runtime regression: reusing a live handle after a completed turn
+    // fails with "cannot append outside a SessionStore".
+    const { bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    expect(fake.resumed).toHaveLength(0)
+    await bridge.resume('session-1')
+    expect(fake.resumed).toEqual([{ resumeSessionId: 'session-1' }])
+    expect(fake.disposed).toHaveLength(1)
+    await bridge.resume('session-1')
+    expect(fake.resumed).toHaveLength(2)
+    expect(fake.disposed).toHaveLength(2)
+  })
+
 })

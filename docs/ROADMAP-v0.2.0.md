@@ -109,6 +109,43 @@ v0.1.0 已有 JSONL Inbox + 原子 JSON Outbox + DedupIndex。建议：
 - **可替换存储**：把 `JsonStore` / `DurableInbox` 抽象成接口，v0.2.0 可选 SQLite
   （DSH 自带 `dsh-session-query-sqlite`，但**会话历史仍归 DSH**，插件只存自己的队列/映射）。
 
+### 本次可靠性回归后仍明确存在的缺口（v0.2.0 待办）
+
+以下由代码审查 + 故障注入实证（`research/review-findings.md`、
+`research/fault-injection-report.md`）确认，本轮**未**改动，需如实标注：
+
+- `failed` / `uncertain` 是终态，`feishuGateway` 服务只暴露只读 `health()` /
+  `diagnostics()`；**没有 `resolve` / `retry` / `list-uncertain` 入口**，用户消息可能
+  长期卡住。对应上面的「死信队列 + 手动重放入口」。
+- 已完成的非法 `inbox.jsonl` 行会让 `open()` 抛错 → 插件启动失败，没有隔离 / 跳过 /
+  命令行修复入口（三个 `JsonStore` 文件才有 `.corrupt-*` 隔离）。只有尾部断行被修复。
+- `stateDir` 目前是**单机 advisory owner lock**（`.owner.lock`），不是分布式互斥；
+  跨主机 / NFS 共享 `stateDir` 仍不安全。长期应把准入权威换成磁盘唯一性检查 / SQLite。
+- `appendFile` 未 `fsync`：机器掉电可能丢失最近的 `running` 事件 → 理论上重复执行；
+  Inbox / Registry / Outbox 无跨库事务，回复发出后才 `markProcessed`，极窄崩溃窗口会
+  产生二次「请检查会话」提示。
+- 白名单**热撤销**无效：`MessageRouter` 持有构造时的 allowlist 快照，且 `InboxRecord`
+  未持久化 `chatType` / `senderType` / `messageType`；只有重启后重放的 `pending` 会重新校验。
+- Outbox `sendText` 无硬超时且 `drainUnsafe` 持全局互斥遍历所有机器人，一个挂起的
+  bot 会队头阻塞其它 bot 与启动 drain；`pending` / `inbox.jsonl` 无上限（仅 `sent` 有 20k 上限）。
+- 超时 / 取消的 `AgentHandle` 直到 `stop()` 才 `dispose()`，在长生命周期内可能累积；
+  `bridge.cancel()` 是 fire-and-forget。
+- 入站持久化失败虽会抛错（不假 ACK），但 `health()` 计数器**不体现**该失败，
+  health()-only 监控看不到。
+- 真实 DSH 运行时（隔离 `DSH_HOME` + Mock LLM）实测：`session/event` /
+  `agent/assistant-stream` 的 scope 投递**已验证正常**，`createUserMessage` 回退对象也被
+  `agent.followup()` 接受；但**同一原生 Session 的后续消息（多轮上下文复用）仍失败**——
+  缓存的 AgentHandle 会报 `cannot append outside a SessionStore`，改为每轮
+  `agents.resume()` 重新挂载后，headless 测试 profile 又因未注册 agent factory 报
+  `no agent factory registered (load an agent-loop plugin)`。需要在带 agent factory 的
+  Web profile / 真实租户中复核并修复多轮对话，另需补测 Agent 超时 / 异常 / 取消后的
+  Session 隔离与卸载时的 Listener / AgentHandle 清理。
+- 真实飞书服务端对非 200 ACK 的重推、>1h 的 `uuid` 去重窗口，仍未在真实租户中验证。
+
+> 保证边界：单实例、单主机、进程（非掉电）崩溃范围内 = 「Agent 最多自动执行一次」+
+> 「回复至少投递一次」+「尽力而为的外部幂等」。**不提供 exactly-once**，也不跨
+> 多实例 / 掉电 / 长时故障 / 非幂等 Agent 工具调用保证。
+
 ---
 
 ## P1-6 图片 / 文件双向传输

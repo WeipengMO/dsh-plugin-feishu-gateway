@@ -97,14 +97,39 @@ export class DshSessionBridge implements SessionBridge {
     return this.agents
   }
 
+  /** Optional: the host's `agent-default-model` service (absent in mocks). */
+  private defaultModelSelection(): { provider?: string; model?: string; reasoningEffort?: string } | undefined {
+    try {
+      const service = this.ctx.get('agentDefaultModel') as {
+        currentSelection?: () => { provider?: string; model?: string; reasoningEffort?: string }
+      } | undefined
+      return typeof service?.currentSelection === 'function' ? service.currentSelection() : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
     if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
     const meta: Record<string, unknown> = { cwd }
+
+    // A native Agent created through ctx.agents.create() has NO provider/model
+    // unless one is supplied: the `agent-default-model` service only records a
+    // model selection for agents the host creates itself. Verified in a real
+    // DSH 0.2.2-rc.1 runtime — without this, every turn ends with
+    // "agent ... has no provider/model" and the user gets an empty-reply
+    // fallback. Fall back to the profile's own default selection when the
+    // plugin's `agent` route is not configured (the default case).
+    const selection = this.defaultModelSelection()
+    const provider = route?.provider ?? selection?.provider
+    const model = route?.model ?? selection?.model
+    const reasoningEffort = route?.reasoningEffort ?? selection?.reasoningEffort
     const agentOptions: Record<string, unknown> = {}
-    if (route?.provider) agentOptions.provider = route.provider
-    if (route?.model) agentOptions.model = route.model
-    if (route?.reasoningEffort) agentOptions.reasoningEffort = route.reasoningEffort
+    if (provider) agentOptions.provider = provider
+    if (model) agentOptions.model = model
+    if (reasoningEffort) agentOptions.reasoningEffort = reasoningEffort
+
     const handle = await agents.create({
       sessionId,
       meta,
@@ -115,8 +140,19 @@ export class DshSessionBridge implements SessionBridge {
   }
 
   async resume(sessionId: string): Promise<void> {
-    if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
+    // A live handle from `create()` is NOT safe to reuse for the next turn:
+    // after a completed turn the DSH runtime may detach that Session from its
+    // SessionStore, and a further `agent.followup()` then fails with
+    // "cannot append outside a SessionStore" (verified on dsh 0.2.2-rc.1).
+    // Re-hydrate from persistence for every follow-up turn instead.
+    const previous = this.handles.get(sessionId)
+    if (previous) {
+      this.handles.delete(sessionId)
+      await previous.dispose().catch((error) => {
+        this.logger.warn('disposing stale handle for %s failed: %s', sessionId, String(error))
+      })
+    }
     const handle = await agents.resume({ resumeSessionId: sessionId })
     this.handles.set(sessionId, handle)
     this.logger.info('resumed native DSH session %s', sessionId)

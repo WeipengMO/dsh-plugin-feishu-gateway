@@ -231,8 +231,49 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 - **Outbox 串行化与固定 UUID**：同一 Outbox 实例内的入队、发送、重连补发受同一互斥队列保护。每个消息重试都复用持久 UUID，配合本地已发送记录降低重复回复风险。
 - **超时会话隔离**：超时任务触发取消并解除原聊天会话绑定，下一条消息使用独立 DSH Session，避免旧回复混入新轮次。
 - **权限与凭据**：任务入队和执行时都检查当前白名单；仅接收 `open_id` 和明确的 `p2p` 消息，凭据必须从环境变量读取，不再支持在配置中直接填明文 Secret。
+- **`stateDir` 单实例独占（新增）**：启动时以 `O_EXCL` 创建 `stateDir/.owner.lock`；第二个指向同一目录的 Gateway 实例会**启动失败**（fail closed），避免两个实例各自持有一份内存去重 Map 而把同一 `message_id` 执行两次。锁由持有者令牌标识，`stop()` 只释放自己的锁；进程崩溃 / SIGKILL 遗留的陈旧锁会在下次启动时按 PID + `/proc` starttime 检测并接管，不会把插件永久锁死。这是**单机 advisory 锁，不是分布式互斥锁**：`stateDir` 必须位于同一主机、且只被一个 Gateway 实例使用；`JsonStore` 临时文件名也已改为按实例唯一。
+- **崩溃恢复的会话隔离（新增）**：`running → uncertain` 的恢复路径现在会**解除该聊天的 Session 绑定**（此前仅超时/异常路径会解绑），下一条消息创建全新 Session，而不是 resume 那个可能已被中断、且可能已产生副作用的旧 Session。
+- **JSONL 断尾恢复与出站幂等（新增）**：最后一行是合法 JSON 但缺少结尾换行时会在 `open()` 阶段补齐，避免下一次追加把两个对象粘成一行导致随后启动失败；`im.message.create` 路径也复用持久化的 `uuid`，REST 重试具备幂等键；WebSocket 仅在 `onReady`/`onReconnected` 后才报告 `connected`，配置错误的机器人不再被误报为健康；关闭期间到达的入站事件会抛错而不是被静默 ACK。
 
-**交付语义说明：** 网络发送成功与本地记录完成之间仍存在极窄的进程崩溃窗口。固定 UUID 有助于服务端去重，但不能跨任意下游工具保证严格 exactly-once；对非幂等的 DSH 工具操作，本项目明确采用保守的 `uncertain` 恢复策略，而不是声称执行恰好一次。运行前仍需真实 DSH + 飞书测试租户验证。
+**交付语义与保证边界（明确、不夸大）：**
+
+- 本插件**不提供端到端 exactly-once**。实际保证是：单实例、单主机、进程（非机器掉电）崩溃范围内的**「Agent 最多自动执行一次」+「回复至少投递一次」+「尽力而为的外部幂等」**（20k 条上限的 `sent` 记录 + 飞书约 1 小时的 `uuid` 窗口 + 稳定的 `idem` 键）。
+- `appendFile` 未 `fsync`：机器掉电可能丢失最近的 `running` 事件，使一次已开始的 Turn 退化为可重放的 `pending` → 理论上重复执行。`inbox.jsonl` 的 append 与 `outbox.send()` / `registry.touch()` / `markProcessed()` 不在同一事务内：回复发出后才标记完成，极窄崩溃窗口内会产生一条「请检查会话后决定是否重发」的二次提示。
+- **`failed` / `uncertain` 是终态且目前没有程序化的重试 / 解决入口**：`health()` / `diagnostics()` 只读，唯一的恢复方式是用户在飞书重新发送（产生新的 `message_id`）。这是刻意的保守取舍（避免重放可能已产生副作用的 Turn），也是已知的人工恢复缺口，见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md) 的死信队列 + 手动重放 TODO。
+- **已完成的非法 JSONL 行**（非尾部断尾）仍会让 `open()` 抛错并导致插件启动失败，尚没有隔离 / 跳过 / 命令行修复入口；只有三个 `JsonStore` 状态文件有 `.corrupt-*` 隔离。
+- 白名单撤销只对**重启后**重放的 `pending` 生效；运行中的实例仍持有构造时的 allowlist 快照，热撤销需要重新加载插件。Outbox 的 `pending` 与 `inbox.jsonl` 均无上限/压缩（`sent` 有 20k 上限）；单个机器人的 `sendText` 没有硬超时，可能阻塞全局 Outbox 互斥队列。
+- 状态文件以 `0o600` 保存**明文**用户消息与回复文本（不含 App Secret 值），`stateDir` 请勿放在会被提交到仓库的位置。飞书服务端对非 200 ACK 的重推行为、超过 1 小时的 `uuid` 去重，均未通过真实租户验证。
+- 网络发送成功与本地记录完成之间仍存在极窄的进程崩溃窗口。固定 UUID 有助于服务端去重，但不能跨任意下游工具保证严格 exactly-once；对非幂等的 DSH 工具操作，本项目明确采用保守的 `uncertain` 恢复策略，而不是声称执行恰好一次。运行前仍需真实 DSH + 飞书测试租户验证。
+
+## 真实 DSH 运行时 / 原生 Session 验证（本次补充）
+
+用**隔离的临时 `DSH_HOME` + Mock 凭据 + 本地 Mock LLM（OpenAI 兼容 SSE）**启动了一次真实
+`dsh 0.2.2-rc.1` headless 运行时：`dsh plugin add` 安装的 `.tgz` 被装载，
+`inject` 的 `ctx.agents/agentLoop/sessions/llm` 均为真实服务，插件 `apply()` 执行并写出
+`stateDir/dedup.json`。注意 `--dump-config` 只组合配置、**不证明激活**，激活以真实启动 +
+状态文件为准。随后用一个**测试专用 probe** 通过公开 `createGateway()`（不注入
+`MockSessionBridge`）把入站消息送入真实 `DshSessionBridge`：
+
+- `session/event` 与 `agent/assistant-stream` **确实**投递到插件级 ctx（澄清了此前文档的
+  未验证假设）；`makeUserMessage` 的回退对象也被 `agent.followup()` 接受（入站消息被
+  splice 进 agent inbox）。
+- **修复前（默认配置，真实缺陷）**：`ctx.agents.create()` 未带 `agentOptions`，每个 turn
+  以 `agent ... has no provider/model` 结束，用户只收到「模型未返回文本内容。」，消息却被
+  标记 `done` —— 原生 Session 默认不可用。**已修复**：未配置 `agent` 路由时从
+  `ctx.agentDefaultModel.currentSelection()` 取 provider/model 填入 `agentOptions`。
+  修复后首条消息经真实 `assistant/message` 返回真实模型文本，`turn/end: completed`，
+  `agent/assistant-stream` 14 个事件，未观察到重复文本拼接。
+- **仍未解决 / BLOCKED**：同一 Session 的**后续消息（上下文复用）**在 headless 测试 profile
+  中失败（先 `cannot append outside a SessionStore`；改为按持久化 `agents.resume()`
+  重新挂载后变为 `no agent factory registered (load an agent-loop plugin)`，该 profile
+  未注册 agent factory）。Agent 超时 / 异常 / 取消后的 Session 隔离、卸载时 Event Listener
+  与 AgentHandle 清理，也**未在真实运行时验证**；`pnpm run demo` 与全部 vitest 用例用的
+  都是 `MockSessionBridge`（模拟 Agent 文本）。
+
+**结论：Gateway 并非只模拟 Agent 文本** —— 修复后首轮确实走 DSH 原生 Session 并拿到真实
+模型回复；但**还不能说「完整使用」**：默认配置原本是坏的、多轮上下文复用仍 BLOCKED，
+真实飞书端到端也未验证。详见 `research/TEST-REPORT.md` 与
+`research/runtime-compat.md`。
 
 ## 后续版本
 

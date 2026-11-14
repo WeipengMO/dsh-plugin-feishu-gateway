@@ -114,4 +114,24 @@ describe('DurableInbox', () => {
     expect(await readFile(`${dir}/inbox.jsonl`, 'utf8')).not.toContain('{"type":"rec\n')
   })
 
+  it('normalizes a complete final line that lacks its trailing newline', async () => {
+    // A torn write can drop only the final `\n`. The fold accepts the object,
+    // but without normalization the next append concatenates `}{...}` on one
+    // line and the following open() throws.
+    const { dir, make } = await fixture()
+    const { writeFile, readFile } = await import('node:fs/promises')
+    const record = {
+      messageId: 'om_before', botId: 'default', chatId: 'oc_1', senderId: 'ou_alice',
+      text: 'before', receivedAt: 1, status: 'pending', attempts: 0,
+    }
+    await writeFile(`${dir}/inbox.jsonl`, JSON.stringify({ type: 'received', record }), 'utf8')
+    const inbox = make()
+    await inbox.open()
+    expect(await readFile(`${dir}/inbox.jsonl`, 'utf8')).toMatch(/\n$/)
+    await inbox.record(message('om_after'))
+    const restarted = make()
+    expect((await restarted.open()).map((r) => r.messageId)).toEqual(['om_before', 'om_after'])
+    expect(restarted.get('om_before')?.status).toBe('pending')
+  })
+
 })

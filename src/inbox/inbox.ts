@@ -98,6 +98,7 @@ export class DurableInbox {
       this.records.clear()
       const lines = text.split('\n')
       let validBytes = 0
+      let truncated = false
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index]!
         if (!line.trim()) {
@@ -111,9 +112,17 @@ export class DurableInbox {
           // records are a storage error, not silently ignored data loss.
           if (index !== lines.length - 1 || text.endsWith('\n')) throw error
           await truncate(this.file, validBytes)
+          truncated = true
           break
         }
         validBytes += Buffer.byteLength(line + (index < lines.length - 1 ? '\n' : ''))
+      }
+      // A torn write can leave a *complete* final JSON object with no trailing
+      // newline. The fold above accepts it, but the next append would then
+      // concatenate `}{...}` into one line and make the file unparseable on the
+      // following open(). Normalize the tail before any new event is appended.
+      if (!truncated && text.length > 0 && !text.endsWith('\n')) {
+        await appendFile(this.file, '\n', { mode: 0o600 })
       }
       // A crashed process must never automatically replay an in-progress
       // Agent operation: the side effects may have already happened.

@@ -144,7 +144,7 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
    - **durable**：`session/event` 的 `assistant/message` / `assistant/attempt`（`event.data.message.content` 文本块）；
    - **live**：`agent/assistant-stream` 的 `text-delta` chunk；
    - 结束条件：`turn/end`；超时 / abort 由 `withTimeout` 兜底。
-9. 在 Agent 提交前将 Inbox 持久标记为 `running`。超时则取消并解绑原 Session；崩溃恢复时 `running` 变 `uncertain` 并通知用户检查操作结果。
+9. 在 Agent 提交前将 Inbox 持久标记为 `running`。超时/异常/取消则取消并解绑原 Session；崩溃恢复时 `running` 变 `uncertain`、**同样解除该聊天的 Session 绑定**（下一条消息创建全新 Session），并通知用户检查操作结果。`uncertain` / `failed` 不自动重放，目前也没有程序化的重试 / 解决入口（见 ROADMAP v0.2.0 的死信队列 + 手动重放 TODO）。
 10. 回复经 `truncateText` 后送入串行 Outbox，按入站消息设置幂等键，持久记录发送 UUID；失败重试或重连补发。成功后 `markProcessed()`；运行失败终结为 `failed`，不自动重放。
 
 ### 2.3 持久化模型（v0.1.0 的「基础」部分）
@@ -156,9 +156,32 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 | `outbox.json` | 原子 JSON（pending + sent ledger） | 单进程串行补发、固定 UUID、消息幂等键 |
 | `sessions.json` | 原子 JSON（chat → sessionId） | 重启后 `ctx.agents.resume` |
 
-所有写操作都是「同目录临时文件 + `rename`」，单进程内用 Promise chain 串行化，避免并发丢写。
+三个 `JsonStore` 状态文件使用「同目录**按实例唯一**的临时文件 + `rename`」原子写入；
+`inbox.jsonl` 是 **append-only 日志**（`appendFile`，带 `0o600`），不是 `rename` 路径，
+且**没有 `fsync`**——「持久化」指交给内核页缓存，可抵御进程崩溃，不能保证机器掉电不丢。
+各存储内部用各自的 Promise chain 串行化；**但 Inbox / Registry / Outbox 之间没有跨库事务**：
+`outbox.send()`（外部 REST 副作用）发生在 `registry.touch()` 与 `markProcessed()` 之前。
 **没有引入 SQLite / 原生依赖**，也没有引入第二套会话存储 —— 会话内容完全由 DSH 的
-`dsh-session-persistence-jsonl` 管理。损坏的状态文件会被隔离成 `.corrupt-*` 并干净启动。
+`dsh-session-persistence-jsonl` 管理。
+
+损坏文件处理**仅覆盖三个 `JsonStore` 文件**：它们会被隔离成 `.corrupt-*` 并干净启动。
+`inbox.jsonl` 只修复**尾部断行**：损坏的不完整末行会被 `truncate` 掉；合法但缺结尾换行
+的末行会补齐 `\n`（否则下一次追加会把两个 JSON 对象粘成一行）。**一条已完成的非法
+JSONL 行仍会让 `open()` 抛错并使插件启动失败**，目前没有隔离 / 跳过 / 命令行修复入口。
+
+### 2.3.1 `stateDir` 单实例独占（fail closed）
+
+Inbox 的准入权威是**实例内的内存 Map**。两个 Gateway 实例（或两个进程）共用同一
+`stateDir` 时，会各自把同一个 `message_id` 判定为新消息并**执行两次 Agent**（不可逆副作用）。
+该场景已由 `scripts/fault-injection.mjs` 的 S6 复现并修复：启动时以 `O_EXCL` 创建
+`stateDir/.owner.lock`（内容含 owner 令牌、pid、host、`/proc` starttime），第二个实例
+`start()` 直接失败。锁由持有者在 `stop()` / 启动失败时按令牌释放；陈旧锁通过 PID 存活
+与 starttime 比对（可识别 PID 复用与僵尸进程）被接管，因此 SIGKILL 后的重启不会被永久锁死。
+
+> 这是**单机 advisory 锁，不是分布式互斥锁**。`stateDir` 必须位于同一主机且只被一个
+> Gateway 实例使用；跨主机 / 网络文件系统共享目录不在支持范围内。长期方案是把准入权威
+> 换成真正的磁盘唯一性检查（或 SQLite）。`JsonStore` 临时文件名也已由
+> `<file>.<pid>.tmp` 改为 `<file>.<pid>.<随机实例令牌>.tmp`，避免同进程内两个实例互踩。
 
 ### 2.4 生命周期与清理清单
 
@@ -204,10 +227,20 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
   `EventDispatcher.register`、`im.message.reply/create`、`Domain`），但**没有用真实凭据连过**。
   `im.message.reply` 在本机安装包的 `types/index.d.ts` 中已确认（GitHub README 的两段示例
   只用了 `create`，调研报告据此把 `reply` 标为「未从 README 验证」，此处以本机类型声明为准）。
-- 未做真实 DSH 运行时验证：`session/event` 是 **scope-filtered** 事件，理论上注册在插件根 ctx
-  的监听器应收到全部 Session 的事件，但这一行为只在带 FakeCtx 的集成测试中验证过，
-  **未在真实 DSH 进程中确认**。因此 `DshSessionBridge` 增加了 `agent.whenIdle()` 作为二次
-  完成信号（仅在已观察到 assistant 内容后才生效），并且即使收不到 `turn/end`，
-  `waitForReply` 也会在超时时把已收集到的文本返回。v0.2.0 应在真实租户中复核事件投递，
-  必要时改用 `ctx.sessionController.follow({ assistantStream: true }, signal)`。
+- **真实 DSH 运行时已验证（本次补充，隔离 `DSH_HOME` + Mock LLM）**：`session/event` 与
+  `agent/assistant-stream` **确实**投递到插件级 ctx，包括插件自建 Session 的事件
+  （实测 `assistant/message` / `turn/end` / `agent/assistant-stream` 均到达）。
+  `makeUserMessage` 的动态 import 回退对象也被 `agent.followup()` 接受（入站消息被
+  splice 进 agent inbox）。此前「scope-filtered 事件可能收不到」的担忧在 0.2.2-rc.1
+  headless 运行时**不成立**。
+- **但发现两个真实缺陷**：(1) 默认配置下 `ctx.agents.create()` 未带 `agentOptions`，
+  Agent 无 provider/model，每个 turn 以 `agent ... has no provider/model` 结束，用户只
+  收到空回复兜底且消息被标记 `done`；已修复为从 `ctx.agentDefaultModel.currentSelection()`
+  补默认 provider/model。(2) **同一 Session 的后续消息（上下文复用）仍失败**：复用缓存的
+  AgentHandle 会报 `cannot append outside a SessionStore`；改为每轮按持久化
+  `agents.resume()` 重新挂载后，headless 测试 profile 又因未注册 agent factory 报
+  `no agent factory registered (load an agent-loop plugin)`。多轮上下文复用、Agent 超时 /
+  异常 / 取消后的隔离、卸载时 Listener / AgentHandle 清理**均未在真实运行时验证**
+  （BLOCKED）。v0.2.0 需在带 agent factory 的 Web profile / 真实租户中复核，必要时改用
+  `ctx.sessionController.follow({ assistantStream: true }, signal)`。
 - 社区参考项目调研报告已标注可达性与「已验证 / 推断」；本项目代码从零编写，未 Fork。

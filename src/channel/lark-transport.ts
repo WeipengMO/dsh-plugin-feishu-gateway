@@ -127,8 +127,11 @@ export class LarkTransport implements FeishuTransport {
     })
 
     try {
+      // WSClient.start() resolves before the handshake completes (and silently
+      // no-ops for an invalid appId). Only onReady/onReconnected prove a live
+      // connection, so do NOT report `connected` here: a misconfigured bot
+      // must stay `connecting`/`failed` instead of being marked healthy.
       await this.ws.start({ eventDispatcher: dispatcher })
-      this.transition('connected')
     } catch (error) {
       this.transition('failed', error instanceof Error ? error : new Error(String(error)))
       throw error
@@ -161,7 +164,9 @@ export class LarkTransport implements FeishuTransport {
     }
     if (!target.chatId) throw new Error('sendText requires replyToMessageId or chatId')
     const result = await this.client.im.message.create({
-      data: { receive_id: target.chatId, msg_type: 'text', content, uuid: newId('fg') },
+      // Reuse the outbox-persisted UUID so REST retries/reconnect drains are
+      // idempotent on the `create` path too (the `reply` path already does).
+      data: { receive_id: target.chatId, msg_type: 'text', content, uuid: target.uuid ?? newId('fg') },
       params: { receive_id_type: 'chat_id' },
     })
     return unwrap(result, `send to ${target.chatId}`)
