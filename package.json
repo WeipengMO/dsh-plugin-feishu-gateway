@@ -68,6 +68,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "demo": "node scripts/demo.mjs",
     "verify": "pnpm run typecheck && pnpm run build && pnpm run test",
     "pack": "pnpm pack --pack-destination dist"
   },

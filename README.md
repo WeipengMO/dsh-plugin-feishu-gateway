@@ -154,22 +154,49 @@ FEISHU_GATEWAY_<BOT_ID_UPPER>_APP_SECRET
 **不要**手改现有 `web` profile。创建一个独立 profile：
 
 ```bash
-# 1. 复制模板（详见 docs/TEST-PROFILE.md）
-cp -r profiles/feishu-gateway-test "$DSH_HOME/profiles/feishu-gateway-test"
+# 0. 先构建：lib/ 不在 git 里，干净检出必须生成
+pnpm install --frozen-lockfile && pnpm run build
 
-# 2. 用 dsh 自己的插件管理命令把本地目录装进这个 profile
-dsh plugin --profile feishu-gateway-test add \
-  /home/ubuntu/dsh-workspace/projects/dsh-plugin-feishu-gateway
+# 1. 复制模板到独立 Profile（不要动 web）
+PROFILE=feishu-gateway-test
+mkdir -p "$DSH_HOME/profiles/$PROFILE"
+cp -r "profiles/$PROFILE/." "$DSH_HOME/profiles/$PROFILE/"
 
-# 3. 注入测试凭据（没有真实凭据就保持 offline: true，跑 Mock）
-export FEISHU_GATEWAY_DEFAULT_APP_ID='cli_...'
-export FEISHU_GATEWAY_DEFAULT_APP_SECRET='...'
+# 2. 用 dsh 自己的插件管理命令安装（tarball 已含 lib/）
+pnpm run pack
+dsh plugin --profile "$PROFILE" add "$PWD/dist/dsh-plugin-feishu-gateway-0.1.0.tgz"
 
-# 4. 用该 profile 启动
-dsh --profile feishu-gateway-test
+# 3. 可选：注入测试凭据（没有凭据就保持模板默认 offline: true）
+# export FEISHU_GATEWAY_DEFAULT_APP_ID='cli_...'
+# export FEISHU_GATEWAY_DEFAULT_APP_SECRET='...'
 ```
 
-完整步骤、profile 目录结构、离线 Mock 模式和诊断命令见 [docs/TEST-PROFILE.md](docs/TEST-PROFILE.md)。
+> **安装 ≠ 测试**：v0.1.0 没有 Web 管理面板，装进 `web` 也不会出现任何界面或交互入口；
+> 功能验证不需要启动 DSH、也不需要装进任何 Profile，见下一节。
+> 模板用的是 `dsh-headless`，启动需要任务参数且需要 LLM 路由配置（默认模板未配，
+> 直接启动会报 `MISSING_CREDENTIAL`）——详见 [docs/TEST-PROFILE.md](docs/TEST-PROFILE.md) §5。
+
+---
+
+## 如何测试（不需要装进 web）
+
+| 层 | 命令 | 验证内容 | 需要 DSH / 飞书 |
+| --- | --- | --- | --- |
+| L1 单元 + 集成 | `pnpm run verify` | 路由安全、去重、持久化、原生 Session 桥接、真实 Cordis Context 装载/卸载、全链路 Mock 集成（86 用例） | 否 / 否 |
+| L2 本地全链路 | `pnpm run demo "你好"`（或 `node scripts/demo.mjs "你好"`） | 手动发一条消息，打印入站 → 原生 Session → 出站回复、健康计数 | 否 / 否 |
+| L3 安装与配置树 | `dsh --profile <name> --dump-config`、`import('dsh-plugin-feishu-gateway')` | bundle 层能组合、模块能解析 | 只读，不启动 |
+| L4 完整运行时激活 | `dsh --profile <name> "<任务>"` | `apply()` 在真实 DSH 里执行 | 是 / 否（需先配 LLM 路由） |
+| L5 真实飞书 E2E | 测试应用凭据 + `offline: false` + 从飞书发私聊 | 真实 WS 收发 | 是 / **仅测试应用** |
+
+L2 依赖构建产物 `lib/`，从干净检出先跑一次 `pnpm run build`。换第二个参数可验证拒绝策略：
+
+```bash
+pnpm run demo "你好" ou_stranger     # 白名单外 → 无回复
+```
+
+**关键说明**：`offline: true` 下用的是 `MockFeishuTransport`，启动 Profile 也**不会自动产生入站消息**，
+最多只能看到加载日志。要真正驱动消息流，只有 L1/L2（本地 Mock）或 L5（真实测试应用）两条路 ——
+**装进 `web` 并不会让 Mock 产生消息，也不会多出任何 GUI 入口**。
 
 ---
 

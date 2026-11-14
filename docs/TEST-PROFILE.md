@@ -161,10 +161,14 @@ dsh plugin --profile feishu-gateway-test version-exemptions   # 应为空，证�
 `MockFeishuTransport`：不加载 `@larksuiteoapi/node-sdk`、不开 socket、不发 HTTP。
 这一模式仍会走真实的 `ctx.agents` 原生 Session（如果 profile 有模型路由）或降级为诊断回复。
 
-纯离线单元 / 集成验证不需要启动 DSH：
+**注意：`MockFeishuTransport` 不会自动产生入站消息。** 即使成功启动该 Profile，
+也只能看到加载日志，看不到消息流。所以 v0.1.0 的功能测试**不需要启动 DSH**：
 
 ```bash
-pnpm run test        # 86 个用例，全 Mock
+pnpm run verify                      # 86 个用例，全 Mock（单元 + 集成 + 真实 Cordis 生命周期）
+pnpm run demo "你好"               # 本地全链路：打印入站 → Session → 出站回复 + 健康计数
+pnpm run demo "你好" ou_stranger   # 白名单外用户 → 无回复（验证拒绝策略）
+dsh --profile feishu-gateway-test --dump-config   # 只读：验证 bundle 配置树能组合
 ```
 
 ### B. 连接飞书测试应用（有测试凭据时）
@@ -172,11 +176,24 @@ pnpm run test        # 86 个用例，全 Mock
 ```bash
 export FEISHU_GATEWAY_DEFAULT_APP_ID='cli_xxxxxxxx'
 export FEISHU_GATEWAY_DEFAULT_APP_SECRET='xxxxxxxx'
-dsh --profile feishu-gateway-test
+# 把该 Profile 的 cordis.patch.yml 里 offline 改为 false，然后：
+dsh --profile feishu-gateway-test "你的任务"
 ```
 
 凭据只从环境变量读取；日志只打印 `env:FEISHU_GATEWAY_DEFAULT_APP_SECRET` 这样的**来源名**。
 测试应用配置见 [FEISHU-APP.md](FEISHU-APP.md)。**不要使用任何现有正式应用的凭据。**
+
+> ⚠️ **两个实测坑**（本机 0.2.2-rc.1 验证）：
+> 1. 模板用 `dsh-headless`，**必须带任务参数**，裸跑会报 `a task is required`；
+>    `--help` / `--dump-config` 只打印信息，不挂载插件。
+> 2. `dsh-base` 的默认模型路由是 `deepseek-official`，而本模板**没有 LLM 适配器配置**，
+>    带任务启动会在启动阶段报 `MISSING_CREDENTIAL: llm-deepseek: no API key ...` 并退出，
+>    插件来不及 `apply()`。要在完整 DSH 运行时里激活插件，需先给该 Profile 补
+>    `llm-pi-ai` + `agent-default-model` 两行配置（可只读复制 `web` 的
+>    `cordis.patch.yml` 中同 id 的行，**不要改动 web**）并注入对应的 API key 环境变量。
+>
+> 因此「安装 + 配置树 + 模块加载」已可用 `--dump-config` / `import()` 验证；
+> **L4 完整运行时激活在本模板默认配置下不可用**，L1/L2 才是 v0.1.0 的主要测试手段。
 
 ### C. 不自动连接（只验证装载 / 配置）
 
@@ -192,7 +209,10 @@ dsh --profile feishu-gateway-test
 
 ---
 
-## 6. 启动后的检查
+## 6. 启动后的检查（仅当 L4/L5 真正启动成功时）
+
+> 若按默认模板启动，会先遇到 §5B 的两个坑；此时改用 §5A 的
+> `pnpm run verify` / `pnpm run demo` 验证功能，用 `--dump-config` 验证安装。
 
 ```bash
 # 日志里应出现（已脱敏）：

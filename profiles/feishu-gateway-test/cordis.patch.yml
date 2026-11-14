@@ -7,6 +7,19 @@
 #
 # This is the SAFE/DEFAULT OFFLINE configuration: no Feishu credentials are
 # needed and no network socket is opened. See docs/TEST-PROFILE.md §5.
+#
+# STARTUP CAVEATS (verified on dsh 0.2.2-rc.1):
+#  * This profile uses @deepseek-ai/dsh-headless, which REQUIRES a task argument:
+#      dsh --profile feishu-gateway-test "<task>"
+#    A bare `dsh --profile feishu-gateway-test` exits with "a task is required".
+#  * dsh-base's default model route needs an LLM adapter that this profile does
+#    not configure. Starting a task without one fails at boot with
+#    `MISSING_CREDENTIAL: llm-deepseek: no API key ...`, before plugins mount.
+#    To exercise the plugin inside a full DSH runtime, add `llm-pi-ai` and
+#    `agent-default-model` rows here (copy the same-id rows from the web
+#    profile's cordis.patch.yml as READ-ONLY input) and provide the API key env.
+#  * For v0.1.0 functional testing, prefer `pnpm run verify` and
+#    `pnpm run demo` -- they need no DSH profile at all.
 - id: feishu-gateway
   config:
     bots:
