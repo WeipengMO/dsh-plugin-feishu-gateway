@@ -81,10 +81,10 @@ pnpm run verify
 ```
 Feishu WebSocket → FeishuTransport
   → MessageRouter（白名单 / 群聊关闭 / 类型检查）
-  → DedupIndex + DurableInbox（持久化、去重、重启恢复）
+  → DurableInbox（持久化原子入队）+ DedupIndex（非权威缓存）
   → SessionRegistry → SessionBridge（ctx.agents 原生 Agent/Session）
   → 监听 session/event + agent/assistant-stream 收集回复
-  → DurableOutbox（重试 / 断线补发）→ Feishu reply/create
+  → DurableOutbox（串行补发 / 持久 UUID / 幂等键）→ Feishu reply/create
 ```
 
 详细设计、官方 API 证据、能力矩阵见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，版本兼容性分析见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
@@ -182,7 +182,7 @@ dsh plugin --profile "$PROFILE" add "$PWD/dist/dsh-plugin-feishu-gateway-0.1.0.t
 
 | 层 | 命令 | 验证内容 | 需要 DSH / 飞书 |
 | --- | --- | --- | --- |
-| L1 单元 + 集成 | `pnpm run verify` | 路由安全、去重、持久化、原生 Session 桥接、真实 Cordis Context 装载/卸载、全链路 Mock 集成（86 用例） | 否 / 否 |
+| L1 单元 + 集成 | `pnpm run verify` | 路由安全、去重、持久化、原生 Session 桥接、真实 Cordis Context 装载/卸载、全链路 Mock 集成与故障注入测试 | 否 / 否 |
 | L2 本地全链路 | `pnpm run demo "你好"`（或 `node scripts/demo.mjs "你好"`） | 手动发一条消息，打印入站 → 原生 Session → 出站回复、健康计数 | 否 / 否 |
 | L3 安装与配置树 | `dsh --profile <name> --dump-config`、`import('dsh-plugin-feishu-gateway')` | bundle 层能组合、模块能解析 | 只读，不启动 |
 | L4 完整运行时激活 | `dsh --profile <name> "<任务>"` | `apply()` 在真实 DSH 里执行 | 是 / 否（需先配 LLM 路由） |
@@ -214,7 +214,7 @@ pnpm run demo "你好" ou_stranger     # 白名单外 → 无回复
 pnpm install            ✓ (esbuild / protobufjs 构建脚本已在 pnpm-workspace.yaml 白名单)
 pnpm run typecheck      ✓
 pnpm run build          ✓  lib/index.js + lib/types/**
-pnpm run test           ✓  13 files / 86 tests passed
+pnpm run test           # 运行单元 / 集成 / 故障注入测试（修复分支请以 CI 结果为准）
 pnpm run verify         ✓
 ```
 
@@ -223,6 +223,16 @@ pnpm run verify         ✓
 CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build → test → coverage → pack）。
 
 ---
+
+## 消息可靠性与执行安全（修复分支）
+
+- **先持久化再确认收到消息**：入站事件先由 Inbox 原子入队，随后才更新可选去重缓存。异步持久化失败不会被当作成功接收。
+- **运行中断不自动重复执行**：Inbox 明确区分 `pending`、`running`、`done`、`failed` 和 `uncertain`。崩溃后仅自动处理尚未开始执行的 `pending`；`running` 变为 `uncertain`，向用户提示检查会话，不自动重新运行可能修改文件/执行命令的 Agent Turn。
+- **Outbox 串行化与固定 UUID**：同一 Outbox 实例内的入队、发送、重连补发受同一互斥队列保护。每个消息重试都复用持久 UUID，配合本地已发送记录降低重复回复风险。
+- **超时会话隔离**：超时任务触发取消并解除原聊天会话绑定，下一条消息使用独立 DSH Session，避免旧回复混入新轮次。
+- **权限与凭据**：任务入队和执行时都检查当前白名单；仅接收 `open_id` 和明确的 `p2p` 消息，凭据必须从环境变量读取，不再支持在配置中直接填明文 Secret。
+
+**交付语义说明：** 网络发送成功与本地记录完成之间仍存在极窄的进程崩溃窗口。固定 UUID 有助于服务端去重，但不能跨任意下游工具保证严格 exactly-once；对非幂等的 DSH 工具操作，本项目明确采用保守的 `uncertain` 恢复策略，而不是声称执行恰好一次。运行前仍需真实 DSH + 飞书测试租户验证。
 
 ## 后续版本
 

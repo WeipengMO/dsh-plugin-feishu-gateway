@@ -165,7 +165,7 @@ dsh plugin --profile feishu-gateway-test version-exemptions   # 应为空，证�
 也只能看到加载日志，看不到消息流。所以 v0.1.0 的功能测试**不需要启动 DSH**：
 
 ```bash
-pnpm run verify                      # 86 个用例，全 Mock（单元 + 集成 + 真实 Cordis 生命周期）
+pnpm run verify                      # 全 Mock 单元 / 集成 / 故障注入（含真实 Cordis 生命周期）
 pnpm run demo "你好"               # 本地全链路：打印入站 → Session → 出站回复 + 健康计数
 pnpm run demo "你好" ou_stranger   # 白名单外用户 → 无回复（验证拒绝策略）
 dsh --profile feishu-gateway-test --dump-config   # 只读：验证 bundle 配置树能组合

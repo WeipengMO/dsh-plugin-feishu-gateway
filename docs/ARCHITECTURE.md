@@ -100,8 +100,8 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 └───────────────▲──────────────────────────────────────────────────────────┘
                 │ accepted
 ┌───────────────┴──────────────────────────────────────────────────────────┐
-│  DedupIndex (durable)  →  DurableInbox (JSONL, append-before-dispatch)    │
-│  重启时回放 pending 记录（at-least-once + 去重 = exactly-once 效果）       │
+│  DurableInbox (JSONL 原子准入) → DedupIndex (非权威可选缓存)               │
+│  仅安全回放 pending；running → uncertain，不重复执行 Agent 副作用          │
 └───────────────▲──────────────────────────────────────────────────────────┘
                 │ 每个 chat 串行队列
 ┌───────────────┴──────────────────────────────────────────────────────────┐
@@ -133,28 +133,27 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 1. `WSClient` 推 `im.message.receive_v1` → `LarkTransport` 归一化成 `InboundMessage`
    （取 `open_id`、`chat_id`、`chat_type`、`message_type`，`content` 是 JSON 字符串里的 `text`）。
 2. `MessageRouter.decide()` 安全判定；拒绝则只计数、debug 日志、**不回复**（避免探测泄露）。
-3. `DedupIndex.checkAndRemember(message_id)`：断线重连后的重复投递在这里被挡掉，索引持久化。
-4. `DurableInbox.record()` **先落盘**再交给处理器；崩溃 / reload 后 `open()` 返回 pending 记录。
+3. `DurableInbox.recordIfAbsent()`：以单一持久化入口原子处理重复的 `message_id`，先落盘后确认接收；落盘失败不 ACK。
+4. `DedupIndex.checkAndRemember()`：Inbox 成功后才更新的可选缓存，失败不阻断已经可靠入队的工作。
 5. 按 `botId:chatId` 进入串行队列，避免同一会话两个 turn 交错。
 6. `SessionRegistry` 查映射：
-   - 无 → `sessionIdFor(botId, chatId)` 生成稳定 id → `bridge.create()` → `bind()`；
+   - 无 → 以聊天键与随机后缀生成新的 Session id → `bridge.create()` → `bind()`；
    - 有 → `bridge.resume(existing.sessionId)`；恢复失败则换新 id 重新 create（防陈旧 id 卡死）。
 7. `bridge.submit()` → `agent.followup(createUserMessage(...))`，DSH 自己的 loop 驱动模型。
 8. `bridge.waitForReply()` 同时收集：
    - **durable**：`session/event` 的 `assistant/message` / `assistant/attempt`（`event.data.message.content` 文本块）；
    - **live**：`agent/assistant-stream` 的 `text-delta` chunk；
    - 结束条件：`turn/end`；超时 / abort 由 `withTimeout` 兜底。
-9. 回复文本经 `truncateText` 后写入 `DurableOutbox`，用 `im.message.reply`（优先，保持会话上下文）
-   或 `im.message.create` 发送；失败重试，仍失败则留在 outbox，`connected` 事件时再 drain。
-10. `registry.touch()` + `inbox.markProcessed()`；异常则 `markFailed()` 并回复通用错误提示（不泄露细节）。
+9. 在 Agent 提交前将 Inbox 持久标记为 `running`。超时则取消并解绑原 Session；崩溃恢复时 `running` 变 `uncertain` 并通知用户检查操作结果。
+10. 回复经 `truncateText` 后送入串行 Outbox，按入站消息设置幂等键，持久记录发送 UUID；失败重试或重连补发。成功后 `markProcessed()`；运行失败终结为 `failed`，不自动重放。
 
 ### 2.3 持久化模型（v0.1.0 的「基础」部分）
 
 | 文件 | 格式 | 作用 |
 | --- | --- | --- |
-| `dedup.json` | 原子 JSON（`message_id → 首次时间`） | 去重；TTL + 容量上限裁剪 |
-| `inbox.jsonl` | 追加日志（`received`/`processed`/`failed`） | 崩溃恢复、状态可追溯 |
-| `outbox.json` | 原子 JSON（pending 数组） | 未送达回复、重试、断线补发 |
+| `dedup.json` | 原子 JSON（`message_id → 首次时间`） | 非权威加速索引；TTL + 容量上限裁剪 |
+| `inbox.jsonl` | 追加日志（`received`/`running`/`processed`/`failed`/`uncertain`） | 防止崩溃重放 Agent 副作用，保守恢复 |
+| `outbox.json` | 原子 JSON（pending + sent ledger） | 单进程串行补发、固定 UUID、消息幂等键 |
 | `sessions.json` | 原子 JSON（chat → sessionId） | 重启后 `ctx.agents.resume` |
 
 所有写操作都是「同目录临时文件 + `rename`」，单进程内用 Promise chain 串行化，避免并发丢写。
@@ -186,7 +185,7 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 | Session 接入 | `ctx.agents` path A | 跨 profile、有明确 dispose、非 Web-only |
 | 服务声明 | `inject: ['agents','agentLoop','sessions','llm']` | 缺失时插件**不激活**而不是抛错 |
 | `SessionId` / `UserMessage` | 运行时字符串 + 动态 import 官方构造函数 | 避免编译期依赖 DSH 内部 branded 类型 |
-| 去重 vs 恢复 | 回放 pending 时**跳过** dedup | 否则重启恢复会被自己的去重索引挡住 |
+| 去重 vs 恢复 | 以 Inbox 为准；running/failed 不自动重放 | 避免重复执行不可逆 Agent 操作 |
 | 群聊 | 硬编码拒绝 | 需要 mention 解析、群隔离、审批策略，属于 v0.2.0 |
 | 存储 | 原子 JSON / JSONL | 零原生依赖、易审计；v0.2.0 可换 SQLite |
 | 真实凭据 | 完全不接触 | 用户明确要求；测试全 Mock |
