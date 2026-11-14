@@ -259,6 +259,7 @@ export class FeishuGateway {
     }
     const key = chatKey(record.botId, record.chatId)
     const signal = this.abortController.signal
+    let activeSessionId: string | undefined
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
@@ -270,11 +271,14 @@ export class FeishuGateway {
       }
 
       const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+      activeSessionId = sessionId
       await this.bridge.submit(sessionId, record.text, signal)
       const reply = await this.bridge.waitForReply(sessionId, {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
       })
+      // Shutdown leaves a running turn uncertain; it may have had side effects.
+      if (signal.aborted) return
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
         this.bridge.cancel(sessionId)
         // A late reply from the prior Agent must never enter the next turn.
@@ -292,6 +296,16 @@ export class FeishuGateway {
       const reason = error instanceof Error ? error.message : String(error)
       this.logger.error('message %s failed: %s', record.messageId, reason)
       if (signal.aborted) return
+      // A failure after agent creation might still leave an active turn.
+      // Prevent late events from leaking into the next chat request.
+      if (activeSessionId) {
+        this.bridge.cancel(activeSessionId)
+        try {
+          await this.registry.unbind(key)
+        } catch (unbindError) {
+          this.logger.error('session isolation failed for %s: %s', activeSessionId, String(unbindError))
+        }
+      }
       // Never blindly replay a turn that may have caused real side effects.
       await this.inbox.markFailed(record.messageId, reason)
       await this.replyDiagnostic(record, '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')

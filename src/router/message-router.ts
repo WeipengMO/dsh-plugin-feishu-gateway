@@ -30,9 +30,9 @@ export class MessageRouter {
   }
 
   decide(message: InboundMessage): RouterDecision {
-    if (message.chatType === 'group' || this.config.allowGroups) {
+    if (message.chatType !== 'p2p') {
       // v0.1.0 deliberately does not implement group policy, mention parsing,
-      // or per-group isolation. Reject even if the flag was toggled in config.
+      // or per-group isolation. The legacy flag must never disable DMs.
       return { accepted: false, reason: 'groups-disabled' }
     }
     if (this.allowlist.size === 0) {
