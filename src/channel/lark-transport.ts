@@ -182,10 +182,8 @@ export class LarkTransport implements FeishuTransport {
     // Never echo bot-originated messages back into a native Session.
     const senderType = event.sender?.sender_type ?? 'user'
     if (senderType !== 'user') return
-    const senderId = event.sender?.sender_id?.open_id
-      ?? event.sender?.sender_id?.user_id
-      ?? event.sender?.sender_id?.union_id
-      ?? ''
+    // Authorization uses open_id only. Never substitute user_id/union_id.
+    const senderId = event.sender?.sender_id?.open_id ?? ''
     if (!senderId) return
 
     const messageType = message.message_type ?? 'unknown'
@@ -194,7 +192,8 @@ export class LarkTransport implements FeishuTransport {
       messageId: message.message_id,
       botId: this.botId,
       chatId: message.chat_id,
-      chatType: message.chat_type === 'group' ? 'group' : 'p2p',
+      // Fail closed on unexpected/unknown chat types.
+      chatType: message.chat_type === 'p2p' ? 'p2p' : 'group',
       senderId,
       senderType,
       text,

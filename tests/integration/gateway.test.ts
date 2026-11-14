@@ -200,7 +200,7 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
       stateDir: dir,
       offline: true,
       allowlist: [],
-      bots: [{ id: 'default', enabled: true, domain: 'feishu', appId: 'cli_x', appSecret: 'sec_x' }],
+      bots: [{ id: 'default', enabled: true, domain: 'feishu', appIdEnv: 'APP_ID', appSecretEnv: 'APP_SECRET' }],
     })
     const gateway = createGateway(config, {
       logger: silentLogger,

@@ -15,8 +15,6 @@ const BotSchema = Schema.object({
     .description('Open platform domain: feishu.cn or larksuite.com.'),
   appIdEnv: Schema.string().description('Env var name holding the app id (recommended).'),
   appSecretEnv: Schema.string().description('Env var name holding the app secret (recommended).'),
-  appId: Schema.string().description('Literal app id — local development only, never a secret.'),
-  appSecret: Schema.string().description('Literal app secret — local development only. Prefer appSecretEnv.'),
 })
 
 /**
@@ -69,8 +67,6 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     domain: bot.domain === 'lark' ? 'lark' : 'feishu',
     ...(bot.appIdEnv ? { appIdEnv: bot.appIdEnv } : {}),
     ...(bot.appSecretEnv ? { appSecretEnv: bot.appSecretEnv } : {}),
-    ...(bot.appId ? { appId: bot.appId } : {}),
-    ...(bot.appSecret ? { appSecret: bot.appSecret } : {}),
   })) satisfies BotSpec[]
 
   const workspace = typeof raw.workspace === 'string' && raw.workspace.trim() !== ''
@@ -133,7 +129,6 @@ export function implicitEnvNames(botId: string): { appId: string; appSecret: str
  * Resolve one bot's credentials. Precedence:
  *   1. configured env-var name (`appIdEnv` / `appSecretEnv`)
  *   2. implicit `FEISHU_GATEWAY_<ID>_APP_ID` / `_APP_SECRET`
- *   3. literal config field (local development only)
  * Secrets are never logged; only the resolved *source* is reported.
  */
 export function resolveBotCredentials(
@@ -144,7 +139,7 @@ export function resolveBotCredentials(
   const missing: string[] = []
   const sources: string[] = []
 
-  const read = (explicitName: string | undefined, implicitName: string, literal: string | undefined) => {
+  const read = (explicitName: string | undefined, implicitName: string) => {
     if (explicitName) {
       if (!ENV_NAME.test(explicitName)) {
         missing.push(`invalid env var name ${explicitName}`)
@@ -163,16 +158,12 @@ export function resolveBotCredentials(
       sources.push(`env:${implicitName}`)
       return implicitValue
     }
-    if (literal) {
-      sources.push('config-literal')
-      return literal
-    }
     missing.push(implicitName)
     return undefined
   }
 
-  const appId = read(bot.appIdEnv, implicit.appId, bot.appId)
-  const appSecret = read(bot.appSecretEnv, implicit.appSecret, bot.appSecret)
+  const appId = read(bot.appIdEnv, implicit.appId)
+  const appSecret = read(bot.appSecretEnv, implicit.appSecret)
 
   if (!appId || !appSecret) {
     return { source: sources.join(',') || 'none', missing }

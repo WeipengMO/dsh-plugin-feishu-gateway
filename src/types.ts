@@ -78,9 +78,6 @@ export interface BotSpec {
   readonly appIdEnv?: string
   /** Name of the environment variable holding the app secret. */
   readonly appSecretEnv?: string
-  /** Literal values are accepted for local development but discouraged. */
-  readonly appId?: string
-  readonly appSecret?: string
 }
 
 export interface AgentRoute {
