@@ -356,6 +356,21 @@ Inbox/Registry/Outbox 无跨库事务（回复先发后 `markProcessed`，极窄
   除测试 Profile 自身的 `cordis.yml`（由 `--dump-config` 重写，已备份）与该 Profile 的
   `package.json`/lockfile（`dsh plugin add`）外无其它改动。
 
+### 8.1 推送方式与最终状态
+
+- 本地提交：`41b572be92b8d348f0989969bd50883094a81c43`（父提交 `75a5c3a`，21 文件、
+  `+3069/-27`）。
+- **`git push` 被网络阻塞**：本主机可访问 `api.github.com`（curl 200）但**无法建立到
+  `github.com:443` 的 TCP 连接**（`GIT_CURL_VERBOSE` 显示卡在 `Trying 20.6.7.17:443...`，
+  `git ls-remote` / `git push` 均超时）。因此改用**官方 GitHub Git Data API**（`gh api`）
+  逐个创建 blob → 以父提交 tree 为 `base_tree` 创建 tree → 创建 commit → `PATCH` 分支 ref。
+  经校验：API 创建的 tree SHA `efcc59e41a8a3fd24428aab3e6b296380db07129` 与本地
+  `HEAD^{tree}` **完全一致**，且用 UTC 时间戳重建后 API commit SHA 与本地 HEAD **完全相同**
+  （非 force、fast-forward 自 `75a5c3a`）。
+- 远端 `refs/heads/fix/gateway-reliability-idempotency` 已指向 `41b572be`，本地
+  `origin/fix/...` 跟踪 ref 已同步；`git status -sb` 干净。PR 仍为 **OPEN**、未合并。
+- 新提交触发 CI：`verify (24)` **pass**（run `43600164941`，32s）。
+
 ---
 
 ## 九、BLOCKED 汇总
