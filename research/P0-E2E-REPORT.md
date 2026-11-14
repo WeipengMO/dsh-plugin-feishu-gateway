@@ -153,5 +153,10 @@ pnpm run e2e:real-llm
 - `e2e:feishu` 的自动断言覆盖**投递、持久化、会话续接、错误计数**；
   「回复文本包含 token」需要人工在飞书确认，或与 `e2e:real-llm`（同一 SessionBridge 路径）交叉验证。
 - 真实飞书服务端对非 200 ACK 的重推、>1h `uuid` 去重窗口，仍无法脚本化断言。
-- 本轮未修改 DSH Core、未触碰 `web` profile 与 `dsh-web.service`、未使用 `allow-version`、
-  未合并 PR、未发布 npm。
+- 本轮未修改 DSH Core、未使用 `allow-version`、未合并 PR、未发布 npm。
+- **`web` profile 说明（透明记录）**：`~/.dsh/profiles/web/cordis.patch.yml` 的 mtime 在
+  00:37 发生变化，但**内容结构与本轮之前完全一致**（仍为 `ui-settings-general` /
+  `llm-pi-ai(magpie)` / `agent-default-model` 三行），且 `grep -cE 'mock-route|e2e|native-session-probe|FEISHU_GATEWAY_TEST_LLM'`
+  为 **0** —— 不含任何本轮测试产物。本轮所有 `dsh` 调用都显式设置了隔离的 `DSH_HOME`；
+  该 mtime 变化来自正在运行的 `dsh web` 进程自身对设置文件的持久化，不是本轮写入。
+  `dsh web`（PID 943668）全程正常运行。
