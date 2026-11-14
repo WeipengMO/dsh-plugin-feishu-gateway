@@ -1,0 +1,51 @@
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { JsonStore } from '../../src/storage/json-store.js'
+import { tempDir } from '../helpers.js'
+
+interface Doc { readonly values: number[] }
+
+const cleanups: Array<() => Promise<void>> = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup()
+})
+
+async function fixture(): Promise<{ dir: string; store: JsonStore<Doc> }> {
+  const { dir, cleanup } = await tempDir()
+  cleanups.push(cleanup)
+  return { dir, store: new JsonStore<Doc>(dir, 'doc', { values: [] }) }
+}
+
+describe('JsonStore', () => {
+  it('returns the fallback for a missing file and persists updates atomically', async () => {
+    const { dir, store } = await fixture()
+    expect(await store.load()).toEqual({ values: [] })
+    await store.update((current) => ({ values: [...current.values, 1] }))
+    await store.update((current) => ({ values: [...current.values, 2] }))
+    expect(await store.load()).toEqual({ values: [1, 2] })
+    const raw = await readFile(path.join(dir, 'doc.json'), 'utf8')
+    expect(JSON.parse(raw)).toEqual({ values: [1, 2] })
+  })
+
+  it('serializes concurrent updates without lost writes', async () => {
+    const { store } = await fixture()
+    await Promise.all(Array.from({ length: 20 }, (_, i) => store.update((c) => ({ values: [...c.values, i] }))))
+    expect((await store.load()).values).toHaveLength(20)
+  })
+
+  it('quarantines a corrupt file and starts clean', async () => {
+    const { dir, store } = await fixture()
+    await writeFile(path.join(dir, 'doc.json'), '{not json', 'utf8')
+    expect(await store.load()).toEqual({ values: [] })
+    await store.save({ values: [9] })
+    expect(await store.load()).toEqual({ values: [9] })
+  })
+
+  it('never leaves a temp file behind', async () => {
+    const { dir, store } = await fixture()
+    await store.save({ values: [1] })
+    const { readdir } = await import('node:fs/promises')
+    expect((await readdir(dir)).filter((f) => f.endsWith('.tmp'))).toEqual([])
+  })
+})

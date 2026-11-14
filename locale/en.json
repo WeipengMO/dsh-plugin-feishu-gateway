@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Feishu Gateway",
+    "description": "Bridge Feishu/Lark direct messages to native DSH Sessions over a WebSocket long connection."
+  }
+}

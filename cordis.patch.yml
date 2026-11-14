@@ -1,0 +1,24 @@
+# Bundle patch for dsh-plugin-feishu-gateway.
+#
+# A profile enables this bundle by listing the package name in
+# `dsh.profile.bundles` (see profiles/feishu-gateway-test/ and
+# docs/TEST-PROFILE.md). The user's own `cordis.patch.yml` may override the
+# row by id, e.g. to set `config.bots` / `config.allowlist`.
+#
+# NEVER put app secrets here. `appSecretEnv` names an environment variable;
+# the value is resolved at activation time and never logged.
+- insert:
+    - id: feishu-gateway
+      name: 'dsh-plugin-feishu-gateway'
+      inject: [agents, agentLoop, sessions, llm]
+      config:
+        bots:
+          - id: default
+            enabled: true
+            domain: feishu
+            appIdEnv: FEISHU_GATEWAY_DEFAULT_APP_ID
+            appSecretEnv: FEISHU_GATEWAY_DEFAULT_APP_SECRET
+        allowlist: []
+        allowGroups: false
+        offline: false
+        autoConnect: true

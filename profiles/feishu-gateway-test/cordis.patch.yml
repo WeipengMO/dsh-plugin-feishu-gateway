@@ -1,0 +1,28 @@
+# User patch layer for the feishu-gateway-test profile.
+# Applied AFTER every bundle layer. A row with an `id` and no `insert` targets
+# the existing row by id and REPLACES its config wholesale (no deep merge).
+#
+# NEVER put app secrets in this file. appSecretEnv names an environment
+# variable; the value is resolved from process.env at activation time.
+#
+# This is the SAFE/DEFAULT OFFLINE configuration: no Feishu credentials are
+# needed and no network socket is opened. See docs/TEST-PROFILE.md §5.
+- id: feishu-gateway
+  config:
+    bots:
+      - id: default
+        enabled: true
+        domain: feishu
+        appIdEnv: FEISHU_GATEWAY_DEFAULT_APP_ID
+        appSecretEnv: FEISHU_GATEWAY_DEFAULT_APP_SECRET
+    allowlist: []
+    allowGroups: false
+    workspace: /home/ubuntu/dsh-workspace
+    stateDir: /home/ubuntu/.dsh/feishu-gateway-test-state
+    dedupTtlMs: 86400000
+    maxTextLength: 8000
+    replyTimeoutMs: 120000
+    sendRetries: 3
+    autoConnect: true
+    offline: true
+    diagnoseOnStart: true

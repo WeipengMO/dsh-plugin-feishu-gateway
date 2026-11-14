@@ -1,0 +1,7 @@
+# pnpm 12 project settings for this profile.
+# Keep the allow-builds list in sync with the plugin root's pnpm-workspace.yaml.
+packages:
+  - '.'
+allowBuilds:
+  esbuild: true
+  protobufjs: true
