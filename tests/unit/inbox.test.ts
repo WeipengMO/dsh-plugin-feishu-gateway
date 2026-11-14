@@ -111,7 +111,7 @@ describe('DurableInbox', () => {
     await inbox.record(message('om_healthy'))
     const restarted = make()
     expect((await restarted.open()).map((r) => r.messageId)).toEqual(['om_healthy'])
-    expect((await readFile(`${dir}/inbox.jsonl`, 'utf8')).not.toContain('{"type":"rec\n')
+    expect(await readFile(`${dir}/inbox.jsonl`, 'utf8')).not.toContain('{"type":"rec\n')
   })
 
 })
