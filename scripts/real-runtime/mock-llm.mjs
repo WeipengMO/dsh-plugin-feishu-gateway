@@ -40,6 +40,9 @@ function realUserText(text) {
     && !text.startsWith('Current runtime context.')
 }
 
+/** Token the probe asks the model to remember (injected by the harness). */
+const MEMORY_TOKEN = process.env.MOCK_LLM_TOKEN || ''
+
 function generateReply(messages) {
   const userTexts = messages.filter((m) => m && m.role === 'user').map(textOf)
   const assistantTexts = messages.filter((m) => m && m.role === 'assistant').map(textOf)
@@ -48,9 +51,12 @@ function generateReply(messages) {
   // Strict: ONLY earlier REAL user turns + earlier assistant messages are
   // memory. The current prompt itself must not be able to answer the recall.
   const prior = [...realUsers.slice(0, -1), ...assistantTexts].join('\n')
-  const tokens = prior.match(/\b[A-Z]{2,}-\d{3,}\b/g) || []
   const isRecall = /[?？]|什么|多少|重复|上一轮|刚才|再次|记住|字符串/.test(current)
-  if (isRecall && tokens.length) return tokens[tokens.length - 1]
+  // Extractive memory: find the configured token, else a generic shape.
+  const found = MEMORY_TOKEN && prior.includes(MEMORY_TOKEN)
+    ? MEMORY_TOKEN
+    : (prior.match(/\b[A-Z]{2,}-\d{3,}\b/g) || []).pop()
+  if (isRecall && found) return found
   return `已记录：${current}`
 }
 

@@ -313,6 +313,37 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 - 冷恢复失败时（H4：删掉持久化文件）Gateway **保留原绑定、不创建空白会话**，回复明确的
   恢复诊断 —— 不会静默丢上下文。
 
+## 两个 P0 端到端测试（真实商用 LLM / 真实飞书租户）
+
+两项都需要**外部凭据**，因此都做了「凭据缺失 → 明确 BLOCKED，绝不假通过」的处理。
+完整步骤见 [docs/E2E.md](docs/E2E.md)。
+
+```bash
+pnpm run e2e:preflight      # 真实 LLM + 真实飞书：缺哪个环境变量一目了然（exit 3 = BLOCKED）
+pnpm run e2e:mock           # 无需凭据：验证 harness + SessionBridge 全链路（3 轮/跨 Host/隔离）
+pnpm run e2e:daemon-smoke   # 无需凭据：验证长驻 Host 机制（真实 WS 场景必需）
+pnpm run e2e:real-llm       # P0-A：真实商用 LLM
+pnpm run e2e:feishu         # P0-B：真实飞书租户（长驻 Host + 手动发 3 条消息）
+```
+
+要点：
+
+- **长驻 Host**：`dsh-headless` 是一次性应用，任务结束即 `io.exit()` 卸载根 fiber
+  （agent factory 被清、Session 被 detach）。真实飞书长连接需要在人工发消息期间进程常驻，
+  因此 daemon 模式只挂 `dsh-base` + 插件（不含 `dsh-headless`），由测试插件
+  `scripts/e2e/e2e-daemon.mjs` 保活并提供只绑定 `127.0.0.1` 的 `/health`、`/diagnostics`、
+  `/events`、`/shutdown` 控制面。
+- **真实模型容错断言**：不要求逐字相等（真实模型会加散文），而是断言三轮共用同一
+  Session ID、Turn 2/3 的回复**包含**被记住的 token、handle 只 dispose 一次、
+  跨 Host 冷恢复仍能回答、超时/取消/异常后均新建 Session。
+- **隔离**：每次运行 `mktemp -d` 独立 `DSH_HOME`，`dsh plugin add` 安装构建产物；
+  不触碰 `~/.dsh`、`web` profile、`dsh-web.service`、DSH Core。
+- **凭据**：只从环境变量读取，生成的 `cordis.patch.yml` 只写变量**名**，报告只记录
+  变量**名称**与存在性；探针使用独立 `<stateDir>-probe` 以免与插件独占 `.owner.lock` 冲突。
+
+当前状态：`e2e:mock` 与 `e2e:daemon-smoke` **已实测通过**；`e2e:real-llm` 与
+`e2e:feishu` 因本环境**没有任何测试凭据**而处于 **BLOCKED**（未声称通过）。
+
 ## 后续版本
 
 见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md)：卡片与流式回复、图片/文件双向、原生审批桥接、长任务取消、Schedule 主动通知、Web 管理面板、多机器人独立工作区/模型、可观测性。

@@ -19,14 +19,24 @@ import { MockFeishuTransport } from 'dsh-plugin-feishu-gateway/testing'
 export const name = 'native-session-probe'
 export const inject = ['agents', 'agentLoop', 'sessions', 'llm']
 
+// Every value can come from the plugin config (written into the profile patch)
+// OR from the environment; config wins so a generated profile is self-contained.
+const pick = (config, key, envName, fallback) => {
+  const fromConfig = config && typeof config[key] === 'string' ? config[key] : ''
+  if (fromConfig) return fromConfig
+  const fromEnv = process.env[envName]
+  if (fromEnv) return fromEnv
+  return fallback
+}
+
 const MODE = process.env.PROBE_MODE || 'three-turns'
-const OUT = process.env.PROBE_OUT_FILE || '/tmp/probe-out.json'
-const STATE_DIR = process.env.PROBE_STATE_DIR || path.join(os.tmpdir(), 'probe-state')
-const WORKSPACE = process.env.PROBE_WORKSPACE || path.join(os.tmpdir(), 'probe-workspace')
 const EXPECTED_SESSION_ID = process.env.PROBE_SESSION_ID || ''
+// The remembered string is injected by the harness so the same probe works with
+// any (possibly substituted) token value; never hardcode it here.
+const TOKEN = process.env.PROBE_TOKEN || 'FALLBACK-TOKEN-000'
 
 const TURNS = [
-  '请记住字符串 GBM-7429。',
+  `请记住字符串 ${TOKEN}。`,
   '我上一轮让你记住了什么？',
   '请再次重复第一轮的字符串。',
 ]
@@ -42,6 +52,9 @@ function safe(v) {
 }
 
 export function apply(ctx, config) {
+  const OUT = pick(config, 'outFile', 'PROBE_OUT_FILE', path.join(os.tmpdir(), 'probe-out.json'))
+  const STATE_DIR = pick(config, 'stateDir', 'PROBE_STATE_DIR', path.join(os.tmpdir(), 'probe-state'))
+  const WORKSPACE = pick(config, 'workspace', 'PROBE_WORKSPACE', path.join(os.tmpdir(), 'probe-workspace'))
   const result = {
     mode: MODE,
     startedAt: new Date().toISOString(),
