@@ -13,7 +13,7 @@ describe('resolveConfig', () => {
     expect(config.bots).toEqual([])
     expect(config.allowlist).toEqual([])
     expect(config.allowGroups).toBe(false)
-    expect(config.offline).toBe(false)
+    expect(config.offline).toBe(process.env.FEISHU_GATEWAY_OFFLINE === '1')
     expect(config.autoConnect).toBe(true)
     expect(config.sendRetries).toBe(3)
     expect(config.replyTimeoutMs).toBe(120_000)
