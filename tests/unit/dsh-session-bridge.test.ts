@@ -327,4 +327,66 @@ describe('DshSessionBridge', () => {
     expect(fake.created).toHaveLength(0)
   })
 
+  it('propagates a native `turn/end` error instead of faking a successful empty reply', async () => {
+    // Real-runtime regression (dsh 0.2.2-rc.1): an LLM 5xx ends the turn with
+    // data.reason = { kind:'error', error:{ message, code } } and NO
+    // assistant/message. Treating it as success silently marked the message
+    // `done` and kept the Session bound.
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end',
+      data: { turn: 1, reason: { kind: 'error', error: { message: '500: upstream failure', code: 'SERVER' } } },
+    })
+    await expect(waiting).rejects.toThrow(/native DSH Agent turn failed \(error: 500: upstream failure\)/)
+  })
+
+  it('accepts a `turn/end` with reason.kind completed', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'ok' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } },
+    })
+    expect(await waiting).toMatchObject({ text: 'ok', reason: 'idle' })
+  })
+
+  it('does not treat a user-aborted `turn/end` as an Agent failure', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { reason: { kind: 'aborted', cause: 'user' } },
+    })
+    expect(await waiting).toMatchObject({ text: '', reason: 'idle' })
+  })
+
+  it('isolates the next turn after a native Agent error (turn state is cleared)', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const failed = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { reason: { kind: 'error', error: { message: 'boom' } } },
+    })
+    await expect(failed).rejects.toThrow(/boom/)
+    // The failed turn must not poison the next one on the same Session.
+    await bridge.submit('session-1', 'again', new AbortController().signal)
+    const next = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'fresh' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    expect(await next).toMatchObject({ text: 'fresh' })
+  })
+
 })

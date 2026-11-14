@@ -282,6 +282,37 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 真实飞书端到端也未验证。详见 `research/TEST-REPORT.md` 与
 `research/runtime-compat.md`。
 
+## Round 2 真实运行时复验（连续三轮 / 跨 Host / 隔离）
+
+用**同一个持续运行的 DSH Host 进程**（`HOST_KEEPALIVE` 让 headless 自身的任务保持未完成，
+避免 `io.exit()` 触发根 fiber 卸载）驱动真实 `DshSessionBridge`，复验结论见
+`research/ROUND2-TEST-REPORT.md`，可复现 harness 见 [`scripts/real-runtime/`](scripts/real-runtime/README.md)：
+
+- **同一 Host 连续三轮 PASS**：三轮共用同一 Session ID；测试 LLM **无状态且只从 DSH 发来的
+  真实会话历史生成回复**（非硬编码答案），Turn 1 为确认语、Turn 2/3 均返回 `GBM-7429`。
+  `DshSessionBridge` 调用序列为 `create → submit → waitForReply → resume → submit →
+  waitForReply → resume → submit → waitForReply → dispose`；活动 `AgentHandle` 只在 `stop()`
+  **dispose 一次**；AgentRegistry / SessionStore / AgentFactory 在三轮中始终为 true。
+- **跨 Host 重启恢复 PASS**：正常关闭 Host 1 后，用**独立的新 `DSH_HOME` + 新进程**（复制
+  DSH `sessions/` / `storages/` 持久化）以同一 Session ID 冷恢复；新 Host 的 LLM 请求里
+  确实带有前三轮的 3 条 User + 3 条 Assistant 消息，回答 `GBM-7429`。
+- **超时 / 取消 / 异常隔离 PASS**：三种情形后下一条消息都使用**全新 Session**，旧文本未泄漏，
+  `crossAttributed = 0`（旧事件没有进入新 Session）。
+- **本轮修复的真实缺陷**：DSH 的 `turn/end` 在 Agent 失败时携带
+  `data.reason = { kind: 'error', error: {...} }` 且**不产生** `assistant/message`。
+  此前 `DshSessionBridge` 只做 `settle()`，导致 Gateway 把失败的 turn 当作成功：发
+  「模型未返回文本内容。」、标记 `done`、且不解除 Session 绑定。现在仅对
+  `kind === 'error'` 抛出，让既有失败路径 `markFailed` + `unbind` + 诊断生效；
+  `aborted` / `interrupted` 等取消类原因不受影响。补了 4 个单测。
+- **未再出现** `cannot append outside a SessionStore` / `no agent factory registered` /
+  异常创建空白 Session 导致上下文丢失。上一轮这两个错误经 DSH 源码分析确认为
+  **headless 一次性任务结束触发 teardown 的产物**，不是 Gateway 缺陷（见
+  `research/dsh-internals.md`）：`dsh-headless/lib/index.js:383` 的 `io.exit()` 会并发卸载
+  子 fiber，清掉 `agents.factory`（`dsh-agent/lib/index.js:558-567`）并 detach Session
+  （`dsh-session/lib/index.js:1576-1578`）。
+- 冷恢复失败时（H4：删掉持久化文件）Gateway **保留原绑定、不创建空白会话**，回复明确的
+  恢复诊断 —— 不会静默丢上下文。
+
 ## 后续版本
 
 见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md)：卡片与流式回复、图片/文件双向、原生审批桥接、长任务取消、Schedule 主动通知、Web 管理面板、多机器人独立工作区/模型、可观测性。

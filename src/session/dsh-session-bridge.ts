@@ -41,6 +41,8 @@ interface TurnState {
   readonly resolve: () => void
   settled: boolean
   events: number
+  /** Set when `turn/end` reports a non-completed reason (native Agent failure). */
+  failure?: string
 }
 
 /**
@@ -215,7 +217,15 @@ export class DshSessionBridge implements SessionBridge {
     const durable = turn.durable.join('').trim()
     const text = durable || turn.attempts.join('').trim() || turn.live.join('').trim()
     const reason = !result.timedOut ? 'idle' : 'timeout'
+    const failure = turn.failure
     this.turns.delete(sessionId)
+    // A `turn/end` with reason.kind === 'error' means the native Agent loop
+    // failed (e.g. LLM 5xx after retries) WITHOUT producing an assistant
+    // message. Returning an empty "success" here would make the Gateway mark
+    // the message `done` with a useless "model returned no text" reply and keep
+    // the (possibly half-updated) Session bound. Propagate it so the existing
+    // failure path marks `failed` + unbinds, isolating the next message.
+    if (failure) throw new Error(`native DSH Agent turn failed (${failure})`)
     return {
       text,
       reason,
@@ -279,6 +289,20 @@ export class DshSessionBridge implements SessionBridge {
       if (text) (type === 'assistant/message' ? turn.durable : turn.attempts).push(text)
       turn.events += 1
     } else if (type === 'turn/end') {
+      // dsh-session emits the authoritative outcome here. Verified on
+      // 0.2.2-rc.1: a failed Agent turn ends with
+      // data.reason = { kind: 'error', error: { message, code } } and produces
+      // no assistant/message. Only `completed` is a real success.
+      const reason = (event as {
+        data?: { reason?: { kind?: string; error?: { message?: string; code?: string } } }
+      })?.data?.reason
+      // Only a genuine Agent failure is surfaced as an error. `aborted` /
+      // `interrupted` are user/cancellation outcomes that the Gateway already
+      // handles via its own signal + `cancelled` reply path.
+      if (reason?.kind === 'error') {
+        const detail = reason.error?.message ?? reason.error?.code ?? 'unknown error'
+        turn.failure = `error: ${detail}`
+      }
       this.settle(sessionId)
     }
   }

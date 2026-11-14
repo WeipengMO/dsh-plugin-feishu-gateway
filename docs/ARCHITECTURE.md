@@ -247,3 +247,25 @@ Inbox 的准入权威是**实例内的内存 Map**。两个 Gateway 实例（或
   超时 / 异常 / 取消后的隔离仍须在长期存活的真实 DSH Host 中验收。
   若 Host 生命周期本身只维持单次任务，需要提供常驻 Host 后再测试。
 - 社区参考项目调研报告已标注可达性与「已验证 / 推断」；本项目代码从零编写，未 Fork。
+
+---
+
+## 5. Round 2 真实运行时复验（补充，2026-11-14）
+
+上述「跨多轮真实模型上下文、冷恢复与超时 / 异常 / 取消后的隔离仍须验收」已在
+**持续运行的真实 DSH 0.2.2-rc.1 Host** 中完成，复现步骤见
+`scripts/real-runtime/README.md`，完整报告见 `research/ROUND2-TEST-REPORT.md`：
+
+- 同一进程连续三轮共用同一 Session；上下文由 DSH 真实会话历史承载（无状态测试 LLM
+  只依据请求中的历史生成回复）；活动 `AgentHandle` 仅在 `stop()` dispose 一次；
+  AgentRegistry / SessionStore / AgentFactory 始终为真。
+- 独立新 `DSH_HOME` + 新进程从 DSH 持久化冷恢复同一 Session ID，LLM 请求含前三轮
+  3 条 User + 3 条 Assistant 消息并回答 `GBM-7429`。
+- 超时 / 取消 / 异常后均创建新 Session，旧文本与旧事件无跨 Session 归因。
+- 上一轮的 `no agent factory registered` / `cannot append outside a SessionStore`
+  经 DSH 源码分析确认为 `dsh-headless` 一次性任务 `io.exit()` 触发根 fiber 并发卸载的
+  产物（`research/dsh-internals.md`），不是 Gateway 缺陷。
+- **本轮修复**：`turn/end` 的 `data.reason.kind === 'error'`（Agent 失败且无
+  `assistant/message`）此前被当成成功 → 空回复 + `done` + 不隔离；现在仅该 kind
+  抛出，复用既有 `markFailed` + `unbind` 路径，`aborted`/`interrupted` 不受影响。
+- 仍**未**在真实飞书租户 / 真实 Web profile 中验证；`dsh-web.service` 未受影响。
