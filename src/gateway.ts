@@ -13,7 +13,7 @@ import type {
   SessionBridge,
   TransportState,
 } from './types.js'
-import { chatKey, sessionIdFor } from './util/id.js'
+import { chatKey, newId, sessionIdFor } from './util/id.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -98,47 +98,50 @@ export class FeishuGateway {
     if (this.started) return
     this.started = true
     this.startedAt = Date.now()
-    await mkdir(this.config.stateDir, { recursive: true })
-
-    await this.dedup.open()
-    const pending = await this.inbox.open()
-    await this.registry.open()
-    const outboxPending = await this.outbox.open()
-
-    if (!this.bridge.available) {
-      this.logger.warn(
-        'native DSH Sessions unavailable (%s); inbound messages will receive a diagnostic reply',
-        this.bridge.unavailableReason ?? 'unknown reason',
-      )
-    }
-    this.logger.info(
-      'starting: bots=%d allowlist=%d stateDir=%s pendingInbox=%d pendingOutbox=%d offline=%s',
-      this.transports.size,
-      this.config.allowlist.length,
-      this.config.stateDir,
-      pending.length,
-      outboxPending,
-      this.config.offline,
-    )
-
-    if (this.config.autoConnect) {
-      for (const transport of this.transports.values()) {
-        await transport.connect({
-          onMessage: (message) => this.handleInbound(message),
-          onStateChange: (state, error) => this.onStateChange(transport.botId, state, error),
-        })
+    try {
+      await mkdir(this.config.stateDir, { recursive: true })
+      await this.dedup.open()
+      const pending = await this.inbox.open()
+      await this.registry.open()
+      const outboxPending = await this.outbox.open()
+      if (!this.bridge.available) {
+        this.logger.warn('native DSH Sessions unavailable (%s); inbound messages will receive a diagnostic reply',
+          this.bridge.unavailableReason ?? 'unknown reason')
       }
-      // A reconnect is a safe point to retry anything the outbox could not send.
-      await this.outbox.drain()
+      this.logger.info(
+        'starting: bots=%d allowlist=%d stateDir=%s pendingInbox=%d pendingOutbox=%d offline=%s',
+        this.transports.size, this.config.allowlist.length, this.config.stateDir,
+        pending.length, outboxPending, this.config.offline,
+      )
+      if (this.config.autoConnect) {
+        // A single bot's failure must not disable all other bots.
+        for (const transport of this.transports.values()) {
+          try {
+            await transport.connect({
+              onMessage: (message) => this.handleInbound(message),
+              onStateChange: (state, error) => this.onStateChange(transport.botId, state, error),
+            })
+          } catch (error) {
+            this.errors += 1
+            this.logger.error('bot %s connect failed: %s', transport.botId, String(error))
+          }
+        }
+        await this.outbox.drain()
+      }
+      // Replay only work that was never started. A running Agent may already
+      // have changed files or executed shell commands before the crash.
+      for (const record of pending) this.track(this.replayRecord(record))
+      for (const record of this.inbox.uncertain()) {
+        await this.replyDiagnostic(record,
+          '此前请求在服务重启时处于执行中，可能已经产生实际操作。为避免重复执行，已暂停自动重试；请检查 DSH 会话后决定是否重新发送。',
+          `recovery:${record.messageId}`)
+        await this.inbox.markRecoveryNotified(record.messageId)
+      }
+      this.dedupSnapshot = await this.dedup.size()
+    } catch (error) {
+      this.started = false
+      throw error
     }
-
-    // Replay durable inbox work that was in flight when the plugin last stopped.
-    // These records already passed the router and dedup gate, so they bypass
-    // both here (at-least-once delivery, exactly-once *effect* via dedup).
-    for (const record of pending) {
-      this.track(this.replayRecord(record))
-    }
-    this.dedupSnapshot = await this.dedup.size()
   }
 
   async stop(): Promise<void> {
@@ -175,14 +178,20 @@ export class FeishuGateway {
       this.logger.debug('dropped message %s: %s', message.messageId, decision.reason)
       return
     }
-    const accepted = decision.message
-    const isNew = await this.dedup.checkAndRemember(accepted.messageId)
+    // Atomic Inbox admission is authoritative. Never acknowledge an event
+    // as a duplicate if its inbound payload has not been durably recorded.
+    const { record, isNew } = await this.inbox.recordIfAbsent(decision.message)
     if (!isNew) {
-      this.logger.debug('duplicate message %s ignored', accepted.messageId)
+      this.logger.debug('duplicate message %s ignored', message.messageId)
       return
     }
-    this.dedupSnapshot += 1
-    const record = await this.inbox.record(accepted)
+    try {
+      await this.dedup.checkAndRemember(record.messageId)
+      this.dedupSnapshot += 1
+    } catch (error) {
+      // The dedup index is non-authoritative: Inbox already owns the ID.
+      this.logger.warn('dedup index update failed for %s: %s', record.messageId, String(error))
+    }
     this.track(this.processRecord(record))
   }
 
@@ -202,37 +211,46 @@ export class FeishuGateway {
     const previous = this.chatQueues.get(key) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(work)
     this.chatQueues.set(key, next)
-    void next.finally(() => {
+    const clean = () => {
       if (this.chatQueues.get(key) === next) this.chatQueues.delete(key)
-    })
+    }
+    void next.then(clean, clean)
     return next
   }
 
   private track(promise: Promise<void>): void {
     this.inFlight.add(promise)
-    void promise.finally(() => this.inFlight.delete(promise))
+    void promise.then(
+      () => { this.inFlight.delete(promise) },
+      (error) => {
+        this.inFlight.delete(promise)
+        this.errors += 1
+        this.logger.error('unhandled message worker failure: %s', String(error))
+      },
+    )
   }
 
   private async dispatch(record: InboxRecord): Promise<void> {
     if (this.stopped) return
-    const message: InboundMessage = {
-      messageId: record.messageId,
-      botId: record.botId,
-      chatId: record.chatId,
-      chatType: 'p2p',
-      senderId: record.senderId,
-      senderType: 'user',
-      text: record.text,
-      createTime: record.receivedAt,
-      messageType: 'text',
+    // Recheck authorization on replay / at dequeue time. Revocation must
+    // prevent a previously queued message from executing after a restart.
+    const decision = this.router.decide({
+      messageId: record.messageId, botId: record.botId, chatId: record.chatId,
+      chatType: 'p2p', senderId: record.senderId, senderType: 'user',
+      text: record.text, createTime: record.receivedAt, messageType: 'text',
+    })
+    if (!decision.accepted) {
+      this.rejected[decision.reason] += 1
+      await this.inbox.markProcessed(record.messageId)
+      return
     }
     const key = chatKey(record.botId, record.chatId)
     const signal = this.abortController.signal
-
     try {
+      // Durable execution boundary, before any Agent-side effects.
+      await this.inbox.markRunning(record.messageId)
       if (!this.bridge.available) {
         await this.replyDiagnostic(record, 'DSH 原生 Session 服务未就绪，插件已按安全默认降级。')
-        // Terminal for this delivery: do not replay a diagnostic on every restart.
         await this.inbox.markProcessed(record.messageId)
         this.errors += 1
         return
@@ -244,13 +262,14 @@ export class FeishuGateway {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
       })
-      const text = truncateText(reply.text, this.config.maxTextLength)
-      if (text) {
-        await this.outbox.send(record.botId, { replyToMessageId: record.messageId, text })
-      } else if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
-        await this.replyDiagnostic(record, '长任务超时或已取消，未产生回复。')
+      if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
+        this.bridge.cancel(sessionId)
+        // A late reply from the prior Agent must never enter the next turn.
+        await this.registry.unbind(key)
+        await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
-        await this.replyDiagnostic(record, '模型未返回文本内容。')
+        const text = truncateText(reply.text, this.config.maxTextLength)
+        await this.replyDiagnostic(record, text || '模型未返回文本内容。')
       }
       await this.registry.touch(key)
       await this.inbox.markProcessed(record.messageId)
@@ -260,15 +279,16 @@ export class FeishuGateway {
       const reason = error instanceof Error ? error.message : String(error)
       this.logger.error('message %s failed: %s', record.messageId, reason)
       if (signal.aborted) return
+      // Never blindly replay a turn that may have caused real side effects.
       await this.inbox.markFailed(record.messageId, reason)
-      await this.replyDiagnostic(record, '处理失败，请稍后重试（错误已记录到日志）。')
+      await this.replyDiagnostic(record, '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
     }
   }
 
   private async ensureSession(key: string, botId: string, chatId: string): Promise<string> {
     const existing = this.registry.get(key)
     if (!existing) {
-      const sessionId = sessionIdFor(botId, chatId)
+      const sessionId = `${sessionIdFor(botId, chatId)}-${newId('session')}`
       try {
         await this.bridge.create(sessionId, this.config.workspace, this.config.agent)
       } catch (error) {
@@ -281,7 +301,7 @@ export class FeishuGateway {
       await this.bridge.resume(existing.sessionId)
     } catch (error) {
       this.logger.warn('resume of %s failed, creating a fresh Session: %s', existing.sessionId, String(error))
-      const sessionId = `${existing.sessionId}-${Date.now()}`
+      const sessionId = `${sessionIdFor(botId, chatId)}-${newId('retry')}`
       await this.bridge.create(sessionId, this.config.workspace, this.config.agent)
       await this.registry.bind(key, sessionId)
       return sessionId
@@ -289,8 +309,8 @@ export class FeishuGateway {
     return existing.sessionId
   }
 
-  private async replyDiagnostic(record: InboxRecord, text: string): Promise<void> {
-    await this.outbox.send(record.botId, { replyToMessageId: record.messageId, text })
+  private async replyDiagnostic(record: InboxRecord, text: string, key = `reply:${record.messageId}`): Promise<void> {
+    await this.outbox.send(record.botId, { replyToMessageId: record.messageId, text }, key)
   }
 
   /** Wait until every tracked message handler has settled (tests / shutdown). */
@@ -311,7 +331,11 @@ export class FeishuGateway {
   }
 
   health(): GatewayHealth {
-    const degraded = !this.bridge.available || [...this.transports.values()].some((t) => t.state === 'failed')
+    const configuredBots = this.config.bots.filter((bot) => bot.enabled).length
+    const degraded = !this.bridge.available
+      || this.transports.size < configuredBots
+      || [...this.transports.values()].some((t) => t.state === 'failed'
+        || (this.started && this.config.autoConnect && t.state !== 'connected'))
     return {
       status: this.stopped ? 'stopped' : degraded ? 'degraded' : 'ok',
       transports: Object.fromEntries([...this.transports].map(([id, t]) => [id, t.state])),
