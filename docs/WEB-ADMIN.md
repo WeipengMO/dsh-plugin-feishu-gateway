@@ -44,7 +44,7 @@ ls -lh dist/*.tgz
 
 构建产物为两个独立 tarball：
 
-- `dsh-plugin-feishu-gateway-0.1.1.tgz`（运行通道）
+- `dsh-plugin-feishu-gateway-0.1.2.tgz`（运行通道）
 - `dsh-plugin-feishu-admin-0.1.0.tgz`（Web 管理插件）
 
 **绝不要将 Gateway 的 tarball 安装到 `web` Profile**：它的 Bundle patch 会插入真正的飞书 Gateway。Web Profile 只安装 `dsh-plugin-feishu-admin`。
@@ -94,7 +94,7 @@ systemctl --user status dsh-feishu-channel.service --no-pager
 
 ```bash
 # 安装真正的网关，只进入飞书 Profile
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.1.1.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.1.2.tgz"
 
 # 管理插件，只进入 Web Profile
 dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.1.0.tgz"

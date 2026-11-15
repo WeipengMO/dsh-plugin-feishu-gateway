@@ -91,6 +91,16 @@ Feishu WebSocket → FeishuTransport
 
 ---
 
+## 飞书内会话控制命令（0.1.2）
+
+白名单用户在飞书**私聊**中直接发送 `/help`、`/status`、`/cancel`、`/new`：
+
+- `/help` 显示命令清单；`/status` 显示当前聊天是否有任务、Session 是否可用、飞书连接和待发消息数。
+- `/cancel` 独立于长任务队列，不必等待原有 LLM 响应；只取消**当前聊天**正在运行的 turn。可能已执行的操作不会回滚，不会自动重放取消的 turn。
+- `/new` 在当前聊天任务结束后将下条消息切换到新 Session，原 DSH Session 历史保留。
+
+命令先经过原有白名单、私聊和 Inbox 去重/持久化检查，不会提交给模型。只有文本 DM 支持；没有打开群聊或工具审批。更多详情见 [docs/FEISHU-CHANNEL.md](docs/FEISHU-CHANNEL.md)。
+
 ## Web 可视化管理（新增）
 
 新增独立的 `web-admin/` 配套插件 **dsh-plugin-feishu-admin**：通过 DSH Web 的 `settings.section` 插槽提供「飞书通道」后台，可查看状态、修改模型/白名单/机器人和安全更新凭据，使用 systemd 重启独立 Gateway。**请不要把 Gateway 安装到 `web` Profile**；Web 只安装 Admin tarball。完整流程见 [docs/WEB-ADMIN.md](docs/WEB-ADMIN.md)。

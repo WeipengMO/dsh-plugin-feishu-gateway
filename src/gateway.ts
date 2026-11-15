@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { DedupIndex } from './inbox/dedup.js'
+import { commandHelp, parseControlCommand, type ControlCommand } from './control/commands.js'
 import { DurableInbox, type InboxRecord } from './inbox/inbox.js'
 import { DurableOutbox } from './outbox/outbox.js'
 import { MessageRouter, type RejectReason } from './router/message-router.js'
@@ -31,10 +32,20 @@ export interface GatewayHealth {
   readonly outbox: ReturnType<DurableOutbox['stats']>
   readonly dedupEntries: number
   readonly boundSessions: number
+  readonly activeTurns: number
   readonly processed: number
   readonly rejected: Record<RejectReason, number>
   readonly errors: number
   readonly uptimeMs: number
+}
+
+interface ActiveTurn {
+  readonly messageId: string
+  readonly startedAt: number
+  readonly controller: AbortController
+  sessionId?: string
+  cancelledByUser: boolean
+  phase: 'running' | 'finalizing'
 }
 
 class SessionResumeError extends Error {
@@ -78,6 +89,7 @@ export class FeishuGateway {
   private readonly chatQueues = new Map<string, Promise<void>>()
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
+  private readonly activeTurns = new Map<string, ActiveTurn>()
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
   private startedAt = 0
@@ -276,7 +288,16 @@ export class FeishuGateway {
   }
 
   private async processRecord(record: InboxRecord): Promise<void> {
-    await this.enqueue(record.botId, record.chatId, () => this.dispatch(record))
+    const command = parseControlCommand(record.text)
+    // A cancellation or status request MUST bypass the current chat's Agent
+    // queue, otherwise a 5-minute turn would block the very control used to
+    // stop or inspect it. /new remains serialized behind current work.
+    if (command === 'cancel' || command === 'status' || command === 'help') {
+      await this.dispatchControl(record, command)
+      return
+    }
+    await this.enqueue(record.botId, record.chatId, () =>
+      command === 'new' ? this.dispatchControl(record, command) : this.dispatch(record))
   }
 
   /** Serialize work per chat so two rapid messages cannot interleave turns. */
@@ -304,6 +325,90 @@ export class FeishuGateway {
     )
   }
 
+  private async dispatchControl(record: InboxRecord, command: ControlCommand): Promise<void> {
+    if (this.stopped) return
+    // Re-validate on crash recovery / dequeuing. Commands are NOT an
+    // authorization bypass and never trigger native Agent tool execution.
+    const decision = this.router.decide({
+      messageId: record.messageId, botId: record.botId, chatId: record.chatId,
+      chatType: 'p2p', senderId: record.senderId, senderType: 'user',
+      text: record.text, createTime: record.receivedAt, messageType: 'text',
+    })
+    if (!decision.accepted) {
+      this.rejected[decision.reason] += 1
+      await this.inbox.markProcessed(record.messageId)
+      return
+    }
+
+    const key = chatKey(record.botId, record.chatId)
+    try {
+      await this.inbox.markRunning(record.messageId)
+      if (this.stopped) return
+      let reply: string
+      if (command === 'help') {
+        reply = commandHelp
+      } else if (command === 'status') {
+        const active = this.activeTurns.get(key)
+        const health = this.health()
+        const seconds = active ? Math.floor((Date.now() - active.startedAt) / 1000) : 0
+        reply = [
+          active
+            ? `当前聊天：${active.phase === 'running' ? '任务运行中' : '正在发送回复'}（约 ${seconds} 秒）`
+            : '当前聊天：没有正在运行的任务',
+          `原生 DSH Session：${health.sessionBridge.available ? '可用' : '不可用'}`,
+          `飞书连接：${health.transports[record.botId] ?? '未知'}`,
+          `待发送回复：${health.outbox.pending}`,
+          `当前已绑定会话：${this.registry.get(key) ? '是' : '否'}`,
+        ].join('\n')
+      } else if (command === 'cancel') {
+        const active = this.activeTurns.get(key)
+        if (!active || active.cancelledByUser || active.phase !== 'running') {
+          reply = '当前聊天没有可以取消的运行中任务。'
+        } else {
+          // One chat's AbortController cannot affect another chat.
+          active.cancelledByUser = true
+          active.controller.abort()
+          if (active.sessionId) {
+            try { this.bridge.cancel(active.sessionId) }
+            catch (error) { this.logger.warn('user cancellation failed: %s', String(error)) }
+          }
+          reply = '已请求取消当前任务。可能已经执行的工具操作不会自动回滚；请检查执行结果后再发起新请求。'
+        }
+      } else {
+        // /new is queued AFTER the currently executing turn. Retiring an
+        // active Handle before the prior turn is complete would detach a
+        // still-running Agent and destroy the user's context unexpectedly.
+        const existing = this.registry.get(key)
+        if (existing) {
+          await this.registry.unbind(key)
+          await this.bridge.retire?.(existing.sessionId)
+        }
+        reply = '已开启新会话。下一条消息将使用全新的 DSH Session；原会话历史仍由 DSH 保存。'
+      }
+      await this.replyDiagnostic(record, reply)
+      await this.inbox.markProcessed(record.messageId)
+      this.processed += 1
+    } catch (error) {
+      this.errors += 1
+      this.logger.error('control command %s failed for %s: %s', command, record.messageId, String(error))
+      await this.inbox.markFailed(record.messageId, 'control command failed')
+      // No blind replay of controls that have already changed a Session.
+      await this.replyDiagnostic(record, '控制命令处理失败，请检查后台状态后再操作。')
+    }
+  }
+
+  private async finalizeUserCancellation(record: InboxRecord, key: string, sessionId?: string): Promise<void> {
+    if (sessionId) {
+      try { this.bridge.cancel(sessionId) }
+      catch (error) { this.logger.warn('cancel failed for %s: %s', sessionId, String(error)) }
+      await this.registry.unbind(key)
+      await this.bridge.retire?.(sessionId)
+    }
+    // Cancelled Agent turns may already have had irreversible side effects.
+    // Terminal failed means the Inbox MUST NEVER automatically replay them.
+    await this.inbox.markFailed(record.messageId, 'cancelled by user; prior operations may have taken effect')
+  }
+
   private async dispatch(record: InboxRecord): Promise<void> {
     if (this.stopped) return
     // Recheck authorization on replay / at dequeue time. Revocation must
@@ -319,11 +424,22 @@ export class FeishuGateway {
       return
     }
     const key = chatKey(record.botId, record.chatId)
-    const signal = this.abortController.signal
+    const turn: ActiveTurn = {
+      messageId: record.messageId, startedAt: Date.now(),
+      controller: new AbortController(), cancelledByUser: false, phase: 'running',
+    }
+    this.activeTurns.set(key, turn)
+    const signal = AbortSignal.any([this.abortController.signal, turn.controller.signal])
     let activeSessionId: string | undefined
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
+      if (signal.aborted) {
+        if (turn.cancelledByUser && !this.abortController.signal.aborted) {
+          await this.finalizeUserCancellation(record, key)
+        }
+        return
+      }
       if (!this.bridge.available) {
         await this.replyDiagnostic(record, 'DSH 原生 Session 服务未就绪，插件已按安全默认降级。')
         await this.inbox.markProcessed(record.messageId)
@@ -333,13 +449,20 @@ export class FeishuGateway {
 
       const sessionId = await this.ensureSession(key, record.botId, record.chatId)
       activeSessionId = sessionId
+      turn.sessionId = sessionId
+      if (signal.aborted) throw new Error('turn aborted before submit')
       await this.bridge.submit(sessionId, record.text, signal)
       const reply = await this.bridge.waitForReply(sessionId, {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
       })
       // Shutdown leaves a running turn uncertain; it may have had side effects.
-      if (signal.aborted) return
+      if (this.abortController.signal.aborted) return
+      if (turn.cancelledByUser) {
+        await this.finalizeUserCancellation(record, key, activeSessionId)
+        return
+      }
+      turn.phase = 'finalizing'
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
         this.bridge.cancel(sessionId)
         // A late reply from the prior Agent must never enter the next turn.
@@ -354,10 +477,14 @@ export class FeishuGateway {
       await this.inbox.markProcessed(record.messageId)
       this.processed += 1
     } catch (error) {
+      if (this.abortController.signal.aborted) return
+      if (turn.cancelledByUser) {
+        await this.finalizeUserCancellation(record, key, activeSessionId)
+        return
+      }
       this.errors += 1
       const reason = error instanceof Error ? error.message : String(error)
       this.logger.error('message %s failed: %s', record.messageId, reason)
-      if (signal.aborted) return
       // A failure after agent creation might still leave an active turn.
       // Prevent late events from leaking into the next chat request.
       if (activeSessionId) {
@@ -382,6 +509,8 @@ export class FeishuGateway {
         await this.replyDiagnostic(record,
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
       }
+    } finally {
+      if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
     }
   }
 
@@ -446,6 +575,7 @@ export class FeishuGateway {
       outbox: this.outbox.stats(),
       dedupEntries: this.dedupSnapshot,
       boundSessions: this.registry.bindings().length,
+      activeTurns: this.activeTurns.size,
       processed: this.processed,
       rejected: { ...this.rejected },
       errors: this.errors,
