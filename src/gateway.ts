@@ -818,6 +818,39 @@ export class FeishuGateway {
       this.audit({ kind: 'delivery', state: 'operator-retry' })
       return 'completed'
     }
+    if (command.type === 'archive-session' || command.type === 'unbind-session') {
+      if (!command.ref || command.expectedLastActiveAt === undefined) return 'rejected'
+      const matches = this.registry.entries().filter(([, binding]) =>
+        opsRef(binding.sessionId) === command.ref &&
+        binding.lastActiveAt === command.expectedLastActiveAt)
+      // A hash is a display handle, NOT permission. Authentication happens in
+      // DSH Web; on the owner process still require one exact current binding.
+      if (matches.length !== 1) return 'not-found'
+      const [key, binding] = matches[0]!
+      const colon = key.indexOf(':')
+      if (colon <= 0) return 'rejected'
+      const botId = key.slice(0, colon)
+      const chatId = key.slice(colon + 1)
+      let state: OperatorResult['state'] = 'rejected'
+      // Reserve the same per-chat queue used for inbound work BEFORE yielding.
+      // Run checks again inside the queue after preceding work has completed.
+      await this.enqueue(botId, chatId, async () => {
+        if (this.stopped || Date.now() - command.ts >= 30_000 ||
+          this.activeTurns.has(key) || this.approvals.size > 0 ||
+          this.inbox.hasUnresolvedFor(botId, chatId) ||
+          this.outbox.pending().length > 0) return
+        const changed = command.type === 'archive-session'
+          ? await this.registry.archiveIfUnchanged(key, binding.sessionId, binding.lastActiveAt)
+          : await this.registry.unbindIfUnchanged(key, binding.sessionId, binding.lastActiveAt)
+        if (!changed) { state = 'not-found'; return }
+        this.audit({ kind: 'system',
+          state: command.type === 'archive-session' ? 'session-archived' : 'session-unbound',
+          botId, session: binding.sessionId })
+        this.refreshOps()
+        state = 'completed'
+      })
+      return state
+    }
     if (command.type !== 'cancel-task' || !command.ref) return 'rejected'
     const matches = [...this.activeTurns.values()].filter(x =>
       opsRef(x.messageId) === command.ref && x.phase === 'running' && !x.cancelledByUser)

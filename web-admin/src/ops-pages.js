@@ -27,6 +27,7 @@ function OpsTable({ columns, rows, empty }) {
           h('td', { key: c.key }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
 }
 function OpsPage({ kind, ops, onConfig, onCommand }) {
+  if (kind === 'sessions') return h(FeishuSessionsInventory, {})
   if (!ops?.telemetryAvailable) return h(OpsUnavailable, {})
   const snapshot = ops.snapshot
   const summary = ops.summary ?? {}
@@ -73,24 +74,6 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
       label: '触发 Outbox 安全补发', onClick: () => onCommand('retry-outbox'),
     }),
     h(OpsNote, null, '仅针对已经入队的 Outbox 消息触发发送检查，不会再次执行 Agent，不会覆盖永久性失败的跳过规则。'))
-  if (kind === 'sessions') return h(React.Fragment, null,
-    h('div', { className: 'fgw-metrics fgw-metrics-three' },
-      h(WbMetric, { title: '已绑定 Session', value: wbCount(snapshot?.stats?.boundSessions) }),
-      h(WbMetric, { title: '活跃任务', value: wbCount(active.length) }),
-      h(WbMetric, { title: '等待审批', value: wbCount(snapshot?.stats?.pendingApprovals) })),
-    h(WbBlock, { title: '原生 DSH Session 绑定', aside: '最近 500 条去标识化绑定，不复制会话' },
-      h(OpsTable, { rows: sessions, empty: '没有已绑定的 Session',
-        columns: [
-          { key: 'ref', title: 'Session', render: x => h('code', null, x.ref.slice(0, 10)) },
-          { key: 'createdAt', title: '创建', render: x => opsDate(x.createdAt) },
-          { key: 'lastActiveAt', title: '最后活动', render: x => opsDate(x.lastActiveAt) },
-          { key: 'persisted', title: '持久化', render: x => x.persisted ? '已持久化' : '未确认' },
-          { key: 'active', title: '运行状态', render: x =>
-            h(WbState, { value: active.some(t => t.session === x.ref) ? 'active' : 'idle' }) },
-        ] })),
-    h(WbBlock, { title: '最近审批事件', aside: '源自飞书原生 approval/request' },
-      h(OpsTimeline, { events: summary.approvals?.slice(0, 30) })),
-    h(OpsAction, { label: '配置审批规则', onClick: () => onConfig('settings') }))
   if (kind === 'approvals') return h(React.Fragment, null,
     h(WbBlock, { title: '审批审计', aside: '请求、批准一次、拒绝、取消或不可用' },
       h(OpsTimeline, { events: summary.approvals ?? [] })),
@@ -142,4 +125,115 @@ function OpsTimeline({ events }) {
           item.session ? ' · Session ' + item.session.slice(0, 10) : '',
           item.tokens !== undefined ? ' · ' + wbCount(item.tokens) + ' Token' : '')),
       h('time', { className: 'fgw-muted' }, opsDate(item.ts)))))
+}
+
+/* This inventory uses only the read-only /sessions endpoint; no raw DSH
+ * Session contents, Feishu chat IDs or credentials are exposed in the DOM. */
+function FeishuSessionsInventory() {
+  const [filters, setFilters] = useState({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' })
+  const [applied, setApplied] = useState({ page: 1, pageSize: 25 })
+  const [report, setReport] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const update = (key, value) => setFilters(prev => ({ ...prev, [key]: value }))
+  const load = useCallback(async () => {
+    setBusy(true)
+    try {
+      const args = new URLSearchParams()
+      Object.entries(applied).forEach(([key, value]) => {
+        if (value !== '' && value !== 'all') args.set(key, String(value))
+      })
+      const response = await request('/sessions?' + args.toString())
+      setReport(response.report)
+      setError('')
+    } catch (e) { setError(e.message || String(e)) }
+    finally { setBusy(false) }
+  }, [applied])
+  useEffect(() => { void load() }, [load])
+  const apply = () => setApplied({ ...filters, page: 1, pageSize: 25 })
+  const storage = report?.storage
+  const bytes = n => Number.isFinite(n) ? (n < 1024 ? n + ' B' :
+    n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(2) + ' MiB') : '—'
+  const kinds = { inbox: 'Inbox', outbox: 'Outbox', bindings: 'Session 绑定',
+    events: '事件审计', runtime: '运行时快照', dedup: '去重记录', usage: 'Token 用量', commands: '操作队列' }
+  const pages = report ? Math.ceil(report.total / report.pageSize) : 0
+  const manage = async (type, item) => {
+    setNotice('')
+    setBusy(true)
+    try {
+      const response = await request('/sessions/preview', 'POST', {
+        type, ref: item.sessionRef, expectedLastActiveAt: item.lastActiveAt,
+      })
+      const preview = response.preview
+      const action = type === 'archive-session' ? '归档绑定' : '解除飞书绑定'
+      const details = '操作：' + action + '\n机器人：' + preview.botId +
+        '\nSession 引用：' + preview.sessionRef +
+        '\n聊天引用：' + preview.chatRef +
+        '\n绑定记录估算：' + bytes(preview.estimatedBindingBytes) +
+        '\n原生 DSH Session 历史：保留不删除' +
+        '\n\n请再次确认。'
+      if (!window.confirm(details)) {
+        setNotice('已取消，未提交任何操作。')
+        return
+      }
+      const result = await request('/sessions/commands', 'POST', { token: preview.token })
+      setNotice('已提交操作 ' + result.command.id + '。这仅代表已入队；执行结果请在「告警中心」核对。')
+      void load()
+    } catch (e) { setNotice('操作未提交：' + (e.message || String(e))) }
+    finally { setBusy(false) }
+  }
+  return h(React.Fragment, null,
+    h('div', { className: 'fgw-metrics fgw-metrics-three' },
+      h(WbMetric, { title: '绑定总数', value: report ? wbCount(report.total) : '—', caption: '当前筛选范围' }),
+      h(WbMetric, { title: 'Gateway 已知文件占用', value: storage ? bytes(storage.totalBytes) : '—', caption: '不包括 DSH 原生 Session' }),
+      h(WbMetric, { title: 'Gateway 运行时', value: report?.runtimeFresh ? '在线' : '未确认', caption: '任务状态需实时快照确认' })),
+    h(WbBlock, { title: '历史筛选', aside: '按最近活跃时间（UTC 日期）筛选，不展示聊天正文' },
+      h('form', { className: 'fgw-session-filters', onSubmit: e => { e.preventDefault(); apply() } },
+        [['from','开始日期','date'], ['to','结束日期','date'], ['bot','机器人 ID','text'],
+          ['chat','聊天 ID / 哈希','text'], ['session','Session ID / 哈希','text']].map(([key, label, type]) =>
+          h('label', { key, className: 'fgw-session-filter' },
+            h('span', null, label),
+            h('input', { type, className: 'fga-input', value: filters[key],
+              onChange: e => update(key, e.target.value), placeholder: label, maxLength: type === 'text' ? 128 : undefined }))),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
+          h('select', { className: 'fga-input', value: filters.status, onChange: e => update('status', e.target.value) },
+            [['all','全部'], ['active','运行中'], ['idle','空闲'], ['archived','已归档']].map(([v,t]) => h('option', { key: v, value: v }, t)))),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '排序'),
+          h('select', { className: 'fga-input', value: filters.sort, onChange: e => update('sort', e.target.value) },
+            h('option', { value: 'lastActiveAt' }, '最后活动'), h('option', { value: 'createdAt' }, '创建时间'))),
+        h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'submit', disabled: busy }, busy ? '筛选中…' : '应用筛选'),
+        h('button', { className: 'fgw-refresh', type: 'button', onClick: () => { setFilters({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' }); setApplied({ page: 1, pageSize: 25, direction: 'desc' }) } }, '重置筛选'))),
+    error && h('div', { className: 'fgw-caution', role: 'alert' }, '读取失败：' + error),
+    notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
+    h(WbBlock, { title: '飞书绑定列表', aside: '仅引用原生 DSH Session，不访问或修改其会话历史' },
+      h(OpsTable, { rows: report?.items ?? [], empty: busy ? '正在载入…' : '没有匹配的 Session',
+        columns: [
+          { key: 'sessionRef', title: 'Session 哈希', render: x => h('code', null, x.sessionRef) },
+          { key: 'chatRef', title: '聊天哈希', render: x => h('code', null, x.chatRef) },
+          { key: 'botId', title: '机器人' },
+          { key: 'createdAt', title: '创建日期', render: x => opsDate(x.createdAt) },
+          { key: 'lastActiveAt', title: '最近活跃', render: x => opsDate(x.lastActiveAt) },
+          { key: 'status', title: '状态', render: x => h(WbState, { value: x.status }) },
+          { key: 'estimatedBindingBytes', title: '绑定估算', render: x => bytes(x.estimatedBindingBytes) },
+          { key: 'actions', title: '操作', render: x =>
+            h('div', { className: 'fgw-session-actions' },
+              h('button', { type: 'button', className: 'fgw-refresh',
+                disabled: busy || !report?.runtimeFresh || x.status === 'active' || x.status === 'archived',
+                onClick: () => void manage('archive-session', x) }, '归档'),
+              h('button', { type: 'button', className: 'fgw-refresh',
+                disabled: busy || !report?.runtimeFresh || x.status === 'active',
+                onClick: () => void manage('unbind-session', x) }, '解除绑定')) },
+        ] }),
+      report && h('div', { className: 'fgw-session-pages' },
+        h('span', null, '共 ' + wbCount(report.total) + ' 条 · 第 ' + report.page + '/' + (pages || 1) + ' 页'),
+        h('button', { type: 'button', className: 'fgw-refresh', disabled: busy || applied.page <= 1,
+          onClick: () => setApplied(x => ({ ...x, page: x.page - 1 })) }, '上一页'),
+        h('button', { type: 'button', className: 'fgw-refresh', disabled: busy || applied.page >= pages,
+          onClick: () => setApplied(x => ({ ...x, page: x.page + 1 })) }, '下一页'))),
+    h(WbBlock, { title: 'Gateway 存储构成', aside: '白名单文件统计，非整个磁盘占用' },
+      h('div', { className: 'fgw-session-storage' },
+        (storage?.categories ?? []).map(x => h('div', { key: x.key, className: 'fgw-data-row' },
+          h('span', null, kinds[x.key] || x.key), h('strong', null, bytes(x.bytes)))))),
+    h(OpsNote, null, '归档仅设置飞书绑定标记；解除绑定只移除飞书→DSH 关联，原生 DSH Session 正文仍保留。所有写操作由 Gateway 在独占状态锁内处理。未开放历史消息/日志删除及自动保留策略。'))
 }

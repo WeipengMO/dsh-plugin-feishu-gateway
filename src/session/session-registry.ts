@@ -9,6 +9,8 @@ export interface SessionBinding {
   readonly lastActiveAt: number
   /** True when the Session has been persisted by DSH and can be resumed. */
   readonly persisted: boolean
+  /** Gateway-local UI archive marker; never archives or deletes a native DSH Session. */
+  readonly archived?: boolean
 }
 
 interface RegistryState {
@@ -46,6 +48,7 @@ export class SessionRegistry {
         createdAt: existing?.createdAt ?? now,
         lastActiveAt: now,
         persisted: existing?.persisted ?? false,
+        ...(existing?.archived ? { archived: true } : {}),
       }
       return { bindings: { ...current.bindings, [chatKey]: binding } }
     })
@@ -68,10 +71,40 @@ export class SessionRegistry {
       return {
         bindings: {
           ...current.bindings,
-          [chatKey]: { ...existing, lastActiveAt: now, persisted: true },
+          [chatKey]: { ...existing, lastActiveAt: now, persisted: true, archived: false },
         },
       }
     })
+  }
+
+  /** Snapshot of chat keys and bindings; never delete the native DSH Session. */
+  entries(): readonly (readonly [string, SessionBinding])[] {
+    return Object.entries(this.state.bindings)
+  }
+
+  async archiveIfUnchanged(chatKey: string, sessionId: string, lastActiveAt: number): Promise<boolean> {
+    let changed = false
+    this.state = await this.store.update((current) => {
+      const binding = current.bindings[chatKey]
+      if (!binding || binding.sessionId !== sessionId || binding.lastActiveAt !== lastActiveAt) return current
+      changed = true
+      return { bindings: { ...current.bindings, [chatKey]: { ...binding, archived: true } } }
+    })
+    return changed
+  }
+
+  /** Unlink Feishu -> DSH only. Do not call bridge.retire or touch native history. */
+  async unbindIfUnchanged(chatKey: string, sessionId: string, lastActiveAt: number): Promise<boolean> {
+    let changed = false
+    this.state = await this.store.update((current) => {
+      const binding = current.bindings[chatKey]
+      if (!binding || binding.sessionId !== sessionId || binding.lastActiveAt !== lastActiveAt) return current
+      const bindings = { ...current.bindings }
+      delete bindings[chatKey]
+      changed = true
+      return { bindings }
+    })
+    return changed
   }
 
   bindings(): readonly SessionBinding[] {

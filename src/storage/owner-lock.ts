@@ -141,8 +141,13 @@ export async function acquireStateDirOwnerLock(
           'sharing one stateDir across instances would duplicate Agent execution',
         )
       }
-      if (existing) logger.warn('reaping stale stateDir lock (pid %s)', existing.pid)
-      await rm(file, { force: true })
+      if (existing) {
+        logger.warn('reaping stale stateDir lock (pid %s)', existing.pid)
+        // Another contender can publish a fresh lock after our ENOENT read,
+        // even though we alone hold the reaper gate. Never unlink a lock
+        // that was absent when checked: doing so can grant TWO owners.
+        await rm(file, { force: true })
+      }
     } finally {
       await rmdir(reaper)
     }

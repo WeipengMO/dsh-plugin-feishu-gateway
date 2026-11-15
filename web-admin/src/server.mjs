@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
+import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
@@ -423,13 +424,20 @@ async function credentialStatus(filename, bots) {
   })
 }
 async function queueOperatorCommand(stateDir, body) {
-  exactKeys(body, ['type', 'ref'])
-  if (body.type !== 'cancel-task' && body.type !== 'retry-outbox')
+  exactKeys(body, ['type', 'ref', 'expectedLastActiveAt'])
+  const sessionAction = body.type === 'archive-session' || body.type === 'unbind-session'
+  if (body.type !== 'cancel-task' && body.type !== 'retry-outbox' && !sessionAction)
     throw httpError(400, 'unsupported operator action')
-  if (body.type === 'cancel-task' && (typeof body.ref !== 'string' || !/^[a-f0-9]{16}$/.test(body.ref)))
-    throw httpError(400, 'invalid task correlation reference')
+  if ((sessionAction || body.type === 'cancel-task') &&
+    (typeof body.ref !== 'string' || !/^[a-f0-9]{16}$/.test(body.ref)))
+    throw httpError(400, 'invalid correlation reference')
   if (body.type === 'retry-outbox' && body.ref !== undefined)
     throw httpError(400, 'retry-outbox takes no task reference')
+  if (sessionAction && (!Number.isSafeInteger(body.expectedLastActiveAt) ||
+    body.expectedLastActiveAt < 0 || body.expectedLastActiveAt > 1e13))
+    throw httpError(400, 'invalid Session activity version')
+  if (!sessionAction && body.expectedLastActiveAt !== undefined)
+    throw httpError(400, 'activity version is only allowed for Session commands')
   // Verified directory chain: refuse to write through a symlinked parent.
   await ensurePrivateDir(stateDir)
   const root = path.join(stateDir, 'ops-control')
@@ -437,7 +445,8 @@ async function queueOperatorCommand(stateDir, body) {
   const dir = path.join(root, 'requests')
   await ensurePrivateDir(dir)
   const command = { version: 1, id: randomUUID(), ts: Date.now(), type: body.type,
-    ...(body.ref ? { ref: body.ref } : {}) }
+    ...(body.ref ? { ref: body.ref } : {}),
+    ...(sessionAction ? { expectedLastActiveAt: body.expectedLastActiveAt } : {}) }
   await atomicPrivateWrite(path.join(dir, command.id + '.json'), JSON.stringify(command) + '\n')
   return { id: command.id, type: command.type }
 }
@@ -494,6 +503,8 @@ export function createAdminHandler(options = {}) {
   if (typeof reject !== 'function') throw new Error('DSH connection.requestRejection required')
   const managed = path.join(stateDir, 'admin-config.json')
   const proxyFile = path.join(stateDir, PROXY_FILE)
+  // Short-lived, one-time confirmation tokens live only in authenticated Web.
+  const sessionPreviews = new Map()
   // Save/credential/restart commands are serialized within this Web Host.
   // A stale ETag check must not race another accepted config write.
   let mutationQueue = Promise.resolve()
@@ -534,6 +545,68 @@ export function createAdminHandler(options = {}) {
         const commands = await readOpsResults(stateDir)
         return json(res, 200, { ok: true, snapshot, events, commands,
           summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/sessions') {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const report = await querySessions(stateDir, parseSessionQuery(params))
+        return json(res, 200, { ok: true, report })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/preview') {
+        const body = await readBody(req)
+        exactKeys(body, ['type', 'ref', 'expectedLastActiveAt'])
+        if (body.type !== 'archive-session' && body.type !== 'unbind-session')
+          throw httpError(400, 'invalid Session action')
+        if (typeof body.ref !== 'string' || !/^[a-f0-9]{16}$/.test(body.ref) ||
+          !Number.isSafeInteger(body.expectedLastActiveAt))
+          throw httpError(400, 'invalid Session reference')
+        const query = parseSessionQuery(new URLSearchParams({ session: body.ref }))
+        const report = await querySessions(stateDir, query)
+        const matches = report.items.filter(item => item.sessionRef === body.ref &&
+          item.lastActiveAt === body.expectedLastActiveAt)
+        if (!report.runtimeFresh || matches.length !== 1 || matches[0].status === 'active')
+          throw httpError(409, 'Session is active, stale, missing or changed; refresh')
+        const snapshot = await readOpsSnapshot(stateDir)
+        if (!snapshot || snapshot.stale || snapshot.stats.pendingApprovals ||
+          snapshot.stats.outboxPending || snapshot.stats.inboxPending)
+          throw httpError(409, 'pending tasks, approvals or delivery; retry when idle')
+        const selected = matches[0]
+        const token = randomUUID()
+        const expiresAt = Date.now() + 30_000
+        for (const [k, v] of sessionPreviews) {
+          if (v.expiresAt <= Date.now()) sessionPreviews.delete(k)
+        }
+        if (sessionPreviews.size >= 100) sessionPreviews.clear()
+        sessionPreviews.set(token, { type: body.type, ref: body.ref,
+          expectedLastActiveAt: body.expectedLastActiveAt, expiresAt })
+        return json(res, 200, { ok: true, preview: {
+          token, expiresAt, action: body.type, sessionRef: selected.sessionRef,
+          chatRef: selected.chatRef, botId: selected.botId, status: selected.status,
+          estimatedBindingBytes: selected.estimatedBindingBytes,
+          nativeSessionPreserved: true,
+        } })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/commands') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['token'])
+          if (typeof body.token !== 'string' || !/^[a-f0-9-]{36}$/.test(body.token))
+            throw httpError(400, 'invalid Session confirmation token')
+          const request = sessionPreviews.get(body.token)
+          sessionPreviews.delete(body.token)
+          if (!request || request.expiresAt <= Date.now())
+            throw httpError(409, 'Session confirmation expired; preview again')
+          // Recheck the activity version before enqueue; owner Gateway checks
+          // once more under its per-chat queue and exclusive stateDir lock.
+          const report = await querySessions(stateDir,
+            parseSessionQuery(new URLSearchParams({ session: request.ref })))
+          if (!report.runtimeFresh ||
+            !report.items.some(x => x.sessionRef === request.ref &&
+              x.lastActiveAt === request.expectedLastActiveAt && x.status !== 'active'))
+            throw httpError(409, 'Session changed; preview again')
+          const command = await queueOperatorCommand(stateDir, { type: request.type,
+            ref: request.ref, expectedLastActiveAt: request.expectedLastActiveAt })
+          return json(res, 202, { ok: true, queued: true, command })
+        })
       }
       if (req.method === 'GET' && route === PREFIX + '/ops/events') {
         const params = new URL(req.url ?? '', 'http://localhost').searchParams
