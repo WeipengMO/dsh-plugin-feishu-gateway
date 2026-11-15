@@ -20,6 +20,7 @@ import type {
   TransportState,
 } from './types.js'
 import { chatKey, newId, sessionIdFor } from './util/id.js'
+import { withTimeout } from './util/retry.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -527,9 +528,14 @@ export class FeishuGateway {
         try {
           const transport = this.transports.get(record.botId)
           if (transport) {
-            const progress = await TaskProgressCard.start(
-              transport, record.messageId, this.logger, this.config.streamIntervalMs)
-            if (progress) {
+            const opened = await withTimeout(
+              TaskProgressCard.start(
+                transport, record.messageId, this.logger, this.config.streamIntervalMs),
+              5_000,
+              signal,
+            )
+            const progress = opened.timedOut ? undefined : opened.value
+            if (progress && !signal.aborted) {
               turn.stream = progress
               unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => progress.onTextDelta(delta))
             }
@@ -604,8 +610,10 @@ export class FeishuGateway {
       if (activeSessionId) this.approvals.cancelSession(activeSessionId)
       unsubscribeProgress?.()
       if (turn.stream) {
-        try { await turn.stream.close(progressStatus) }
-        catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
+        try {
+          const closing = await withTimeout(turn.stream.close(progressStatus), 5_000)
+          if (closing.timedOut) this.logger.warn('Feishu CardKit stream cleanup exceeded deadline')
+        } catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
       }
       if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
     }

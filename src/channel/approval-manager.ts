@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { withTimeout } from '../util/retry.js'
 import { approvalCard, approvalResultCard, CARD_NAMESPACE } from './card-content.js'
 import type { CardActionEvent, FeishuTransport, GatewayLogger } from '../types.js'
 
@@ -62,10 +63,15 @@ export class FeishuApprovalManager {
     const toolName = typeof req.toolName === 'string' ? req.toolName : '受保护工具'
     let cardMessageId: string
     try {
-      const result = await transport.sendInteractiveCard(
-        { replyToMessageId: owner.replyToMessageId },
-        approvalCard(toolName, nonce))
-      cardMessageId = result.messageId
+      const result = await withTimeout(
+        transport.sendInteractiveCard(
+          { replyToMessageId: owner.replyToMessageId },
+          approvalCard(toolName, nonce)),
+        Math.min(5_000, this.timeoutMs),
+        req.signal,
+      )
+      if (result.timedOut) return 'unavailable'
+      cardMessageId = result.value.messageId
     } catch {
       this.logger.warn('Feishu tool approval card delivery failed; denying request')
       return 'unavailable'
