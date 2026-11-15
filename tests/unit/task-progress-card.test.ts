@@ -30,12 +30,13 @@ describe('CardKit single-message progress lifecycle', () => {
       const body = finishedBody(t)
       expect(body.elements[0]?.content).toBe('authoritative final answer')
       expect(JSON.stringify(t.streamReplacements[0]?.card)).not.toContain('取消当前任务')
+      expect(body.elements.at(-1)?.text_size).toBe('notation')
       const footer = String(body.elements.at(-1)?.content)
       expect(footer.split('  \n')).toEqual([
-        '模型：magpie/group-deepseek',
-        'Token 用量：175',
-        '速度：25.0 tok/s',
-        '用时：4.2s',
+        "<font color='grey'>模型：magpie/group-deepseek</font>",
+        "<font color='grey'>Token 用量：175</font>",
+        "<font color='grey'>速度：25.0 tok/s</font>",
+        "<font color='grey'>用时：4.2s</font>",
       ])
       expect(footer).not.toContain('入 ')
       expect(footer).not.toContain(' / 出 ')
@@ -53,7 +54,8 @@ describe('CardKit single-message progress lifecycle', () => {
     expect(body.elements[0]?.content).toBe('**full final**')
     expect(JSON.stringify(body)).not.toContain('Token')
     expect(JSON.stringify(body)).not.toContain('tok/s')
-    expect(JSON.stringify(body)).toContain('1.2s')
+    expect(body.elements.at(-1)?.text_size).toBe('notation')
+    expect(String(body.elements.at(-1)?.content)).toBe("<font color='grey'>用时：1.2s</font>")
   })
 
   it('omits throughput when DSH did not report a model stream duration', async () => {
@@ -65,10 +67,11 @@ describe('CardKit single-message progress lifecycle', () => {
       usage: { inputTokens: 1500, outputTokens: 300, cacheReadTokens: 200 },
     })).toBe(true)
     const footer = String(finishedBody(t).elements.at(-1)?.content)
+    expect(finishedBody(t).elements.at(-1)?.text_size).toBe('notation')
     expect(footer.split('  \n')).toEqual([
-      '模型：deepseek-chat',
-      'Token 用量：2,000',
-      '用时：120.0s',
+      "<font color='grey'>模型：deepseek-chat</font>",
+      "<font color='grey'>Token 用量：2,000</font>",
+      "<font color='grey'>用时：120.0s</font>",
     ])
     expect(footer).not.toContain('速度')
     expect(footer).not.toContain('≈')
