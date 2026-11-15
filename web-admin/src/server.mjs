@@ -230,9 +230,9 @@ async function agentProfileContext(stateDir) {
   const snapshot = await readOpsSnapshot(stateDir)
   // The workspace comes only from the actual Gateway runtime. Never let a
   // browser-supplied path or unsaved Web Admin config select filesystem scope.
-  if (!snapshot || snapshot.stale || !snapshot.workspace)
+  if (!snapshot || snapshot.stale || !snapshot.workspace || snapshot.isolatedAgent !== true)
     throw httpError(503, 'running Gateway workspace unavailable; start Gateway and refresh')
-  return { stateDir, workspace: snapshot.workspace }
+  return { stateDir, workspace: snapshot.workspace, sharedProjectWorkspace: snapshot.sharedProjectWorkspace }
 }
 
 async function setCredential(filename, body, knownBots) {
