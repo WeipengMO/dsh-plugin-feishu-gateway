@@ -1,4 +1,5 @@
 import Schema from '@deepseek-ai/schemastery'
+import { resolveProxyUrl } from './util/proxy-url.js'
 import type { BotCredentials, BotSpec, GatewayConfig } from './types.js'
 
 export type { GatewayConfig, BotSpec } from './types.js'
@@ -213,8 +214,11 @@ export function resolveBotCredentials(
   }
 }
 
-/** Redacted config summary — safe to log. */
+/** Redacted config summary — safe to log. The proxy URL itself never appears. */
 export function redactedConfigSummary(config: GatewayConfig): Record<string, unknown> {
+  const proxy = config.networkProxy
+  // Presence only: the effective URL (managed file → env var) is never rendered.
+  const effectiveProxyUrl = resolveProxyUrl(proxy, config.stateDir)
   return {
     bots: config.bots.map((b) => ({ id: b.id, enabled: b.enabled, domain: b.domain })),
     allowlistSize: config.allowlist.length,
@@ -227,7 +231,12 @@ export function redactedConfigSummary(config: GatewayConfig): Record<string, unk
     replyFormat: config.replyFormat,
     approvalCards: config.approvalCards,
     streamCards: config.streamCards,
-    proxy: { enabled: config.networkProxy.enabled, urlEnv: config.networkProxy.urlEnv,
-      fallbackDirect: config.networkProxy.fallbackDirect, selected: process.env.FEISHU_GATEWAY_PROXY_SELECTED ?? 'unmanaged' },
+    proxy: {
+      enabled: proxy.enabled,
+      urlEnv: proxy.urlEnv,
+      fallbackDirect: proxy.fallbackDirect,
+      configured: effectiveProxyUrl !== undefined,
+      selected: process.env.FEISHU_GATEWAY_PROXY_SELECTED ?? 'unmanaged',
+    },
   }
 }

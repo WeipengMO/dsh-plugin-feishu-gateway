@@ -133,11 +133,20 @@ export interface BotSpec {
   readonly appSecretEnv?: string
 }
 
-/** Optional proxy selected by the launcher before DSH starts; URL lives only in an env var. */
+/**
+ * Optional proxy selected before DSH starts.
+ *
+ * The URL is resolved at build time from the admin-managed
+ * `<stateDir>/network-proxy.json` (preferred) or the named env var and kept
+ * in memory only: it must never be written to logs, diagnostics, telemetry or
+ * the managed config file.
+ */
 export interface NetworkProxyConfig {
   readonly enabled: boolean
   readonly urlEnv: string
   readonly fallbackDirect: boolean
+  /** Resolved proxy URL (may contain credentials). In-memory only, never logged. */
+  readonly url?: string
 }
 
 export interface AgentRoute {

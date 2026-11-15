@@ -4,16 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { createAdminHandler, validateConfig, name, inject } from '../src/server.mjs'
+import { createAdminHandler, validateConfig, validateProxyUrl, redactProxyUrl, name, inject } from '../src/server.mjs'
 
 const allowed = { cookie: 'test-session=good' }
 const mutating = { ...allowed, 'content-type': 'application/json', 'x-dsh-feishu-admin': '1' }
-async function fixture() {
+async function fixture(extra = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'dsh-feishu-admin-'))
   const stateDir = path.join(dir, 'state')
   const envFile = path.join(dir, 'feishu-channel.env')
   const handler = createAdminHandler({
-    stateDir, envFile, healthPort: 39191,
+    stateDir, envFile, healthPort: 39191, ...extra,
     requestRejection: req => req.headers.cookie === 'test-session=good' ? undefined : 401
   })
   const server = createServer((req, res) => { void handler(req, res) })
@@ -444,4 +444,365 @@ test('Agent profile removes only tagged legacy shared DSH instructions after exp
     const now=await f.request('/agent-profile')
     assert.equal(now.json.profile.legacy.detected,false)
   } finally { await f.close() }
+})
+
+// --- Network proxy management (write-only URL, CONNECT probe, env import) ---
+
+async function fakeProxy(handler) {
+  const seen = []
+  const tunnels = new Set()
+  const server = createServer((req, res) => { res.writeHead(405); res.end() })
+  server.on('connect', (req, socket) => {
+    tunnels.add(socket)
+    socket.on('close', () => tunnels.delete(socket))
+    seen.push({ method: req.method, target: req.url, authorization: req.headers['proxy-authorization'] })
+    handler(req, socket)
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+  return { port, seen, close: () => new Promise(resolve => {
+    for (const socket of tunnels) socket.destroy()
+    server.closeAllConnections()
+    server.close(resolve)
+  }) }
+}
+
+async function closedPort() {
+  const server = createServer(() => undefined)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+  await new Promise(resolve => server.close(resolve))
+  return port
+}
+
+test('proxy URL validation accepts only http(s) authorities and never echoes the value', () => {
+  const accepted = ['http://127.0.0.1:7890', 'https://proxy.example.com:443',
+    'http://proxy.example.com', 'http://user:proxy-secret-token@proxy.example.com:8080',
+    'http://127.0.0.1:7890/', 'HTTP://Proxy.Example.COM:8080']
+  for (const raw of accepted) assert.equal(validateProxyUrl(raw), new URL(raw).href)
+  assert.equal(redactProxyUrl('http://user:proxy-secret-token@proxy.example.com:8080/path?q=1#frag'),
+    'http://proxy.example.com:8080')
+  assert.equal(redactProxyUrl('not a url'), null)
+  const rejected = ['ftp://proxy.example.com', 'socks5://127.0.0.1:1080',
+    'http://proxy.example.com/path', 'http://proxy.example.com/?q=1', 'http://proxy.example.com/#frag',
+    'http://proxy.example.com:8080?q=1', 'http://proxy.example.com:8080/path', 'http://',
+    'proxy.example.com:8080', 'http://proxy.example.com:0', 'http://proxy.example.com:70000',
+    'http://proxy.example.com/\n', ' http://proxy.example.com', '', 'x'.repeat(2049), 42, null]
+  for (const raw of rejected) {
+    assert.throws(() => validateProxyUrl(raw), error => {
+      assert.equal(error.status, 400)
+      assert.equal(error.message, 'invalid proxy url')
+      return true
+    })
+  }
+})
+
+test('saved proxy URL is private, never echoed, and reported as managed state', async () => {
+  const f = await fixture()
+  const proxyPass = 'proxy-secret-token'
+  const secretUrl = 'http://alice:' + proxyPass + '@127.0.0.1:7890'
+  try {
+    const first = await f.request('/state')
+    assert.deepEqual(first.json.networkProxy, { enabled: false, fallbackDirect: true, source: 'none',
+      configured: false, display: null, envName: 'FEISHU_CHANNEL_PROXY_URL', envConfigured: false })
+    assert.equal('url' in (first.json.config.networkProxy ?? {}), false)
+    const saved = await f.request('/config', 'PUT', { expectedRevision: first.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', url: secretUrl },
+    } }, mutating)
+    assert.equal(saved.status, 200)
+    assert.equal(saved.json.restartRequired, true)
+    assert.equal(saved.json.networkProxy.source, 'managed')
+    assert.equal(saved.json.networkProxy.configured, true)
+    assert.equal(saved.json.networkProxy.display, 'http://127.0.0.1:7890')
+    assert.doesNotMatch(JSON.stringify(saved.json), /alice|proxy-secret-token/)
+    const proxyFile = path.join(f.stateDir, 'network-proxy.json')
+    assert.equal((await stat(proxyFile)).mode & 0o777, 0o600)
+    const stored = JSON.parse(await readFile(proxyFile, 'utf8'))
+    assert.equal(stored.version, 1)
+    assert.equal(stored.url, new URL(secretUrl).href)
+    const adminRaw = await readFile(path.join(f.stateDir, 'admin-config.json'), 'utf8')
+    assert.doesNotMatch(adminRaw, /alice|proxy-secret-token|"url"/)
+    const state = await f.request('/state')
+    assert.equal(state.json.networkProxy.source, 'managed')
+    assert.equal(state.json.networkProxy.display, 'http://127.0.0.1:7890')
+    assert.equal(state.json.networkProxy.enabled, true)
+    assert.doesNotMatch(JSON.stringify(state.json), /alice|proxy-secret-token/)
+    assert.equal('url' in state.json.config.networkProxy, false)
+    assert.equal(state.json.config.networkProxy.urlEnv, 'FEISHU_CHANNEL_PROXY_URL')
+  } finally { await f.close() }
+})
+
+test('clearing and omitting the proxy URL follow the documented contract', async () => {
+  const f = await fixture()
+  try {
+    await writeFile(f.envFile, 'FEISHU_CHANNEL_PROXY_URL=http://env-proxy.example.com:3128\n', { mode: 0o600 })
+    const first = await f.request('/state')
+    assert.equal(first.json.networkProxy.source, 'env')
+    assert.equal(first.json.networkProxy.display, 'http://env-proxy.example.com:3128')
+    assert.equal(first.json.networkProxy.envConfigured, true)
+    const saved = await f.request('/config', 'PUT', { expectedRevision: first.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL',
+        url: 'http://managed.example.com:8080' },
+    } }, mutating)
+    assert.equal(saved.status, 200)
+    assert.equal(saved.json.networkProxy.source, 'managed')
+    const kept = await f.request('/config', 'PUT', { expectedRevision: saved.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL' },
+    } }, mutating)
+    assert.equal(kept.status, 200)
+    assert.equal(kept.json.networkProxy.source, 'managed')
+    assert.equal(kept.json.networkProxy.display, 'http://managed.example.com:8080')
+    assert.equal((await stat(path.join(f.stateDir, 'network-proxy.json'))).mode & 0o777, 0o600)
+    const cleared = await f.request('/config', 'PUT', { expectedRevision: kept.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', url: null },
+    } }, mutating)
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.json.networkProxy.source, 'env')
+    assert.equal(cleared.json.networkProxy.display, 'http://env-proxy.example.com:3128')
+    await assert.rejects(readFile(path.join(f.stateDir, 'network-proxy.json'), 'utf8'), e => e.code === 'ENOENT')
+    const again = await f.request('/config', 'PUT', { expectedRevision: cleared.json.revision, config: {
+      networkProxy: { enabled: false, fallbackDirect: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', url: null },
+    } }, mutating)
+    assert.equal(again.status, 200)
+    assert.equal(again.json.networkProxy.enabled, false)
+    assert.equal(again.json.networkProxy.fallbackDirect, false)
+  } finally { await f.close() }
+})
+
+test('invalid proxy URLs are rejected without writing state or echoing the value', async () => {
+  const f = await fixture()
+  const bad = 'ftp://secret-host.example.com:2121'
+  try {
+    const first = await f.request('/state')
+    const rejected = await f.request('/config', 'PUT', { expectedRevision: first.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', url: bad },
+    } }, mutating)
+    assert.equal(rejected.status, 400)
+    assert.equal(rejected.json.error, 'invalid proxy url')
+    assert.doesNotMatch(JSON.stringify(rejected.json), /secret-host|2121/)
+    await assert.rejects(readFile(path.join(f.stateDir, 'network-proxy.json'), 'utf8'), e => e.code === 'ENOENT')
+    for (const value of ['http://host.example.com:8080/path', 'http://host.example.com:8080/?q=1']) {
+      const result = await f.request('/config', 'PUT', { expectedRevision: first.json.revision, config: {
+        networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', url: value },
+      } }, mutating)
+      assert.equal(result.status, 400)
+      assert.doesNotMatch(JSON.stringify(result.json), /host\.example\.com/)
+    }
+    assert.equal((await f.request('/state')).json.revision, first.json.revision)
+  } finally { await f.close() }
+})
+
+test('proxy URL import reads only the configured env variable and never returns it', async () => {
+  const f = await fixture()
+  const envUrl = 'http://envuser:env-secret-pass@env-proxy.example.com:3128'
+  try {
+    const denied = await f.request('/network-proxy/import-env', 'POST', {}, {
+      'content-type': 'application/json', 'x-dsh-feishu-admin': '1',
+    })
+    assert.equal(denied.status, 401)
+    const missing = await f.request('/network-proxy/import-env', 'POST', {}, mutating)
+    assert.equal(missing.status, 404)
+    assert.equal(missing.json.error, 'proxy url not found in env file')
+    await writeFile(f.envFile, '# managed credentials\nFEISHU_GATEWAY_DEFAULT_APP_ID=cli_0123456789abcdef\n' +
+      'FEISHU_CHANNEL_PROXY_URL=' + envUrl + '\n', { mode: 0o600 })
+    const imported = await f.request('/network-proxy/import-env', 'POST', {}, mutating)
+    assert.equal(imported.status, 200)
+    assert.equal(imported.json.restartRequired, true)
+    assert.equal(imported.json.networkProxy.source, 'managed')
+    assert.equal(imported.json.networkProxy.display, 'http://env-proxy.example.com:3128')
+    assert.equal(imported.json.networkProxy.envConfigured, true)
+    assert.doesNotMatch(JSON.stringify(imported.json), /envuser|env-secret-pass/)
+    const proxyFile = path.join(f.stateDir, 'network-proxy.json')
+    assert.equal((await stat(proxyFile)).mode & 0o777, 0o600)
+    assert.equal(JSON.parse(await readFile(proxyFile, 'utf8')).url, new URL(envUrl).href)
+    const state = await f.request('/state')
+    const custom = await f.request('/config', 'PUT', { expectedRevision: state.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'MY_PROXY_URL' },
+    } }, mutating)
+    assert.equal(custom.status, 200)
+    await writeFile(f.envFile, 'MY_PROXY_URL=http://custom.example.com:9000\n', { mode: 0o600 })
+    const customImport = await f.request('/network-proxy/import-env', 'POST', {}, mutating)
+    assert.equal(customImport.status, 200)
+    assert.equal(customImport.json.networkProxy.envName, 'MY_PROXY_URL')
+    assert.equal(customImport.json.networkProxy.display, 'http://custom.example.com:9000')
+    await writeFile(f.envFile, 'MY_PROXY_URL=ftp://bad.example.com\n', { mode: 0o600 })
+    const invalid = await f.request('/network-proxy/import-env', 'POST', {}, mutating)
+    assert.equal(invalid.status, 400)
+    assert.equal(invalid.json.error, 'invalid proxy url')
+    assert.doesNotMatch(JSON.stringify(invalid.json), /bad\.example\.com/)
+    assert.equal(JSON.parse(await readFile(proxyFile, 'utf8')).url, 'http://custom.example.com:9000/')
+  } finally { await f.close() }
+})
+
+test('proxy test performs a CONNECT probe and reports reachable without leaking the URL', async () => {
+  const f = await fixture()
+  const proxy = await fakeProxy((req, socket) => {
+    socket.end('HTTP/1.1 200 Connection Established\r\n\r\n')
+  })
+  const proxyUrl = 'http://probe-user:probe-secret@127.0.0.1:' + proxy.port
+  try {
+    const noProxy = await f.request('/network-proxy/test', 'POST', {}, mutating)
+    assert.equal(noProxy.status, 400)
+    assert.equal(noProxy.json.error, 'no proxy configured')
+    const result = await f.request('/network-proxy/test', 'POST', { url: proxyUrl }, mutating)
+    assert.equal(result.status, 200)
+    assert.equal(result.json.ok, true)
+    assert.equal(result.json.result.reachable, true)
+    assert.equal(result.json.result.target, 'open.feishu.cn:443')
+    assert.equal(typeof result.json.result.latencyMs, 'number')
+    assert.equal(result.json.result.error, undefined)
+    assert.doesNotMatch(JSON.stringify(result.json), /probe-user|probe-secret|127\.0\.0\.1/)
+    assert.equal(proxy.seen.length, 1)
+    assert.equal(proxy.seen[0].method, 'CONNECT')
+    assert.equal(proxy.seen[0].target, 'open.feishu.cn:443')
+    assert.ok(proxy.seen[0].authorization?.startsWith('Basic '))
+    assert.equal(Buffer.from(proxy.seen[0].authorization.slice(6), 'base64').toString(),
+      'probe-user:probe-secret')
+  } finally { await proxy.close(); await f.close() }
+})
+
+test('proxy test reports stable error codes for refused, denied and lark targets', async () => {
+  const f = await fixture()
+  try {
+    const port = await closedPort()
+    const refused = await f.request('/network-proxy/test', 'POST',
+      { url: 'http://refused-secret@127.0.0.1:' + port }, mutating)
+    assert.equal(refused.status, 200)
+    assert.equal(refused.json.result.reachable, false)
+    assert.equal(refused.json.result.error, 'ECONNREFUSED')
+    assert.doesNotMatch(JSON.stringify(refused.json), /refused-secret|127\.0\.0\.1/)
+    const authProxy = await fakeProxy((req, socket) => {
+      socket.end('HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n')
+    })
+    try {
+      const denied = await f.request('/network-proxy/test', 'POST',
+        { url: 'http://auth-secret@127.0.0.1:' + authProxy.port }, mutating)
+      assert.equal(denied.status, 200)
+      assert.equal(denied.json.result.reachable, false)
+      assert.equal(denied.json.result.error, 'HTTP_407')
+      assert.doesNotMatch(JSON.stringify(denied.json), /auth-secret/)
+    } finally { await authProxy.close() }
+    const envProxy = await fakeProxy((req, socket) => {
+      socket.end('HTTP/1.1 200 Connection Established\r\n\r\n')
+    })
+    try {
+      await writeFile(f.envFile, 'FEISHU_CHANNEL_PROXY_URL=http://127.0.0.1:' + envProxy.port + '\n', { mode: 0o600 })
+      const viaEnv = await f.request('/network-proxy/test', 'POST', {}, mutating)
+      assert.equal(viaEnv.status, 200)
+      assert.equal(viaEnv.json.result.reachable, true)
+      assert.equal(viaEnv.json.result.target, 'open.feishu.cn:443')
+      const state = await f.request('/state')
+      const lark = await f.request('/config', 'PUT', { expectedRevision: state.json.revision, config: {
+        bots: [{ id: 'larkbot', domain: 'lark', enabled: true }],
+        networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL' },
+      } }, mutating)
+      assert.equal(lark.status, 200)
+      const larkProbe = await f.request('/network-proxy/test', 'POST', {}, mutating)
+      assert.equal(larkProbe.json.result.target, 'open.larksuite.com:443')
+      assert.equal(envProxy.seen.at(-1).target, 'open.larksuite.com:443')
+    } finally { await envProxy.close() }
+  } finally { await f.close() }
+})
+
+test('stored proxy file refuses symlinks and non-regular files, degrades on corrupt content', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(f.stateDir, 'admin-config.json'),
+      JSON.stringify({ version: 1, config: {} }), { mode: 0o600 })
+    const revision = (await f.request('/state')).json.revision
+    const proxyFile = path.join(f.stateDir, 'network-proxy.json')
+    const outside = path.join(f.dir, 'outside-proxy.json')
+    await writeFile(outside, JSON.stringify({ version: 1, url: 'http://127.0.0.1:9' }), { mode: 0o600 })
+    await writeFile(f.envFile, 'FEISHU_CHANNEL_PROXY_URL=http://127.0.0.1:9\n', { mode: 0o600 })
+    await symlink(outside, proxyFile)
+    const symlinked = await f.request('/state')
+    assert.equal(symlinked.status, 409)
+    assert.doesNotMatch(JSON.stringify(symlinked.json), /outside-proxy|127\.0\.0\.1/)
+    const symlinkSave = await f.request('/config', 'PUT', { expectedRevision: revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL',
+        url: 'http://managed.example.com:8080' },
+    } }, mutating)
+    assert.equal(symlinkSave.status, 409)
+    const symlinkImport = await f.request('/network-proxy/import-env', 'POST', {}, mutating)
+    assert.equal(symlinkImport.status, 409)
+    assert.equal(await readFile(outside, 'utf8'), JSON.stringify({ version: 1, url: 'http://127.0.0.1:9' }))
+    await rm(proxyFile)
+    await mkdir(proxyFile)
+    assert.equal((await f.request('/state')).status, 409)
+    await rm(proxyFile, { recursive: true })
+    // Corrupt *content* must not take down the whole management panel: it is
+    // reported as storedError, the env fallback stays usable, and a later save
+    // repairs the file without any manual Linux edit.
+    const corruptCases = ['{broken', JSON.stringify({ version: 2, url: 'http://127.0.0.1:9' }),
+      JSON.stringify({ version: 1, url: 'ftp://bad.example.com' }),
+      JSON.stringify({ version: 1, url: 'http://127.0.0.1:9', extra: 1 })]
+    for (const content of corruptCases) {
+      await writeFile(proxyFile, content, { mode: 0o600 })
+      const state = await f.request('/state')
+      assert.equal(state.status, 200)
+      assert.equal(state.json.networkProxy.storedError, true)
+      assert.equal(state.json.networkProxy.source, 'env')
+      assert.equal(state.json.networkProxy.display, 'http://127.0.0.1:9')
+      assert.doesNotMatch(JSON.stringify(state.json), /bad\.example\.com|broken/)
+    }
+    const repaired = await f.request('/config', 'PUT', { expectedRevision: (await f.request('/state')).json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL',
+        url: 'http://managed.example.com:8080' },
+    } }, mutating)
+    assert.equal(repaired.status, 200)
+    assert.equal(repaired.json.networkProxy.source, 'managed')
+    assert.equal(repaired.json.networkProxy.storedError, undefined)
+  } finally { await f.close() }
+})
+
+test('legacy networkProxy config without url or urlEnv keeps working', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(f.stateDir, 'admin-config.json'), JSON.stringify({ version: 1, config: {
+      networkProxy: { enabled: true, fallbackDirect: true },
+    } }), { mode: 0o600 })
+    const state = await f.request('/state')
+    assert.equal(state.status, 200)
+    assert.deepEqual(state.json.config.networkProxy,
+      { enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true })
+    assert.equal('url' in state.json.config.networkProxy, false)
+    assert.equal(state.json.networkProxy.envName, 'FEISHU_CHANNEL_PROXY_URL')
+    assert.equal(state.json.networkProxy.enabled, true)
+    assert.equal(state.json.networkProxy.source, 'none')
+    assert.equal(state.json.networkProxy.configured, false)
+    assert.equal(state.json.networkProxy.display, null)
+    const saved = await f.request('/config', 'PUT', { expectedRevision: state.json.revision, config: {
+      networkProxy: { enabled: true, fallbackDirect: false },
+    } }, mutating)
+    assert.equal(saved.status, 200)
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.stateDir, 'admin-config.json'), 'utf8')).config.networkProxy,
+      { enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false })
+    await writeFile(f.envFile, 'FEISHU_CHANNEL_PROXY_URL=http://env.example.com:3128\n', { mode: 0o600 })
+    const envState = await f.request('/state')
+    assert.equal(envState.json.networkProxy.source, 'env')
+    assert.equal(envState.json.networkProxy.envConfigured, true)
+    const managed = await f.request('/config', 'PUT', { expectedRevision: envState.json.revision, config: {
+      networkProxy: { enabled: false, fallbackDirect: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL',
+        url: 'http://managed.example.com:8080' },
+    } }, mutating)
+    assert.equal(managed.status, 200)
+    assert.equal(managed.json.networkProxy.source, 'managed')
+    assert.equal(managed.json.networkProxy.enabled, false)
+  } finally { await f.close() }
+})
+
+test('proxy test times out against a silent proxy with a stable code', async () => {
+  const f = await fixture({ proxyTestTimeoutMs: 150 })
+  const silent = await fakeProxy(() => undefined)
+  try {
+    const result = await f.request('/network-proxy/test', 'POST',
+      { url: 'http://127.0.0.1:' + silent.port }, mutating)
+    assert.equal(result.status, 200)
+    assert.equal(result.json.result.reachable, false)
+    assert.equal(result.json.result.error, 'ETIMEDOUT')
+    assert.doesNotMatch(JSON.stringify(result.json), /127\.0\.0\.1/)
+    assert.ok(result.json.result.latencyMs >= 100)
+  } finally { await silent.close(); await f.close() }
 })

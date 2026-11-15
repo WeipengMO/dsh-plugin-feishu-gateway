@@ -42,7 +42,7 @@
 
 源码中的两个卡片开关**默认仍为 `false`**，上述 `true` 是此次部署的显式管理配置，不是全局默认变更。审批决策由原生 DSH 控制：只授权当前请求的 `allowed-once`，拒绝或超时不放行；卡片只是入口，不能绕过原生策略。审批卡片仅显示工具名称，**不展示完整命令参数**，不要在不了解操作内容时盲目授权。
 
-**待验收的可靠性修复（本分支，未发布）：**增加超时原因审计、工具错误状态卡片、轻量网页查询指南，以及代理优先并在启动预检失败时回退直连的开关。需要同时更新 Gateway 与 Web Admin、通过 CI 并在 VPS 真机复验后才能安装。配置只保存代理环境变量名，不保存代理地址。详见 [可靠性及代理部署说明](docs/RELIABILITY-AND-PROXY.md)。
+**本分支（rc.9 → rc.11）：**rc.9 修复了 `https-proxy-agent@5` 的 CommonJS 导入错误（Gateway 启动即崩溃），并在 CI 中增加 ESM 运行时导入冒烟检查；rc.10/rc.11 在此基础上优化代理配置流程——可在 **DSH Web → 飞书管理 → 模型与配置 → 网络代理** 直接输入/测试/保存代理地址（含认证代理，地址明文显示、不做遮挡，也不再需要填写环境变量名），支持从旧环境变量文件一键导入、清除与「保存并重启飞书通道」，无需再手工编辑 Linux 配置文件。代理 URL 保存在 `stateDir/network-proxy.json`（0600），任何 API、页面和日志都不回显原文。详见 [代理配置流程](docs/PROXY-CONFIG-FLOW.md) 与 [可靠性及代理部署说明](docs/RELIABILITY-AND-PROXY.md)。
 
 操作说明：[审批与流式卡片](docs/APPROVAL-STREAMING.md) · [Web Admin](docs/WEB-ADMIN.md) · [飞书通道](docs/FEISHU-CHANNEL.md)。
 
@@ -55,21 +55,21 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-当前发布版的两个安装包（**以下是历史 rc.7 安装说明，不包含本修复分支**）：
+当前发布版的两个安装包：
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.7.tgz`
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.11.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.11.tgz`
 
-首次安装时分别安装到各自 Profile；已装当前 Gateway `rc.7` 的用户只需安装新的 Web Admin。不要把 Gateway 安装到 Web：
+首次安装时分别安装到各自 Profile；已装旧版 Gateway 的用户需要**同时升级 Gateway 与 Web Admin**（rc.10 的管理端 API 依赖新的管理服务端）。不要把 Gateway 安装到 Web：
 
 ```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.11.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.11.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-**0.2.0-rc.7 的飞书独立 Agent cwd 与旧指令迁移尚未在真实 DSH/飞书租户复验**；先使用隔离测试环境验证全量 CardKit PUT 与终态按钮移除，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
+**rc.9–rc.11 的代理配置界面尚未在真实 DSH Web/飞书租户复验**；先使用隔离测试环境验证 CONNECT 预检、保存/清除/导入与重启流程，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功。不可在未安排维护窗口时随意重启有在途任务的服务。
 
 GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，卡片行为见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)，新版底栏参见 [0.2.0-rc.3 说明](docs/CARD-FOOTER-0.2.0-rc.3.md)；灰色小字见 [0.2.0-rc.4 说明](docs/CARD-FOOTER-0.2.0-rc.4.md)；运维工作台见 [rc.5 操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)；身份与记忆管理见 [rc.6 操作手册](docs/AGENT-PROFILE-MANAGER.md)。
 

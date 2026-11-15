@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appIdLooksValid } from '../../src/config.js'
 
 /**
@@ -14,9 +14,23 @@ const sdkState = vi.hoisted(() => ({
   patched: [] as Array<{ data: unknown; path: unknown }>,
   requests: [] as Array<{ method: string; url: string; data: Record<string, unknown> }>,
   handlers: {} as Record<string, (event: unknown) => unknown>,
+  /** Constructor params of every WSClient (proxy agent inspection). */
+  wsParams: [] as Array<Record<string, unknown>>,
+  /** URLs passed to the mocked HttpsProxyAgent factory. */
+  proxyAgentCalls: [] as string[],
   failCreate: false,
   /** Simulate a misconfigured bot: `start()` resolves but onReady never fires. */
   suppressReady: false,
+}))
+
+// https-proxy-agent@5 is a CommonJS factory; mock it so tests never build a
+// real agent and can assert exactly which URL the transport selected.
+vi.mock('https-proxy-agent', () => ({
+  __esModule: true,
+  default: (url: string) => {
+    sdkState.proxyAgentCalls.push(url)
+    return { mockedAgentFor: url }
+  },
 }))
 
 vi.mock('@larksuiteoapi/node-sdk', () => {
@@ -54,7 +68,9 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     constructor(_params: unknown) {}
   }
   class WSClient {
-    constructor(public params: Record<string, unknown>) {}
+    constructor(public params: Record<string, unknown>) {
+      sdkState.wsParams.push(params)
+    }
     async start(params: { eventDispatcher: unknown }) {
       sdkState.started.push(params)
       if (!sdkState.suppressReady) (this.params.onReady as (() => void) | undefined)?.()
@@ -68,13 +84,41 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
 
 const { LarkTransport } = await import('../../src/channel/lark-transport.js')
 const { silentLogger } = await import('../../src/util/logger.js')
+type NetworkProxyConfig = import('../../src/types.js').NetworkProxyConfig
+type GatewayLogger = import('../../src/types.js').GatewayLogger
 
-function transport(domain: 'feishu' | 'lark' = 'feishu') {
+function transport(
+  domain: 'feishu' | 'lark' = 'feishu',
+  networkProxy?: NetworkProxyConfig,
+  logger: GatewayLogger = silentLogger,
+) {
   return new LarkTransport(
     'default',
     { appId: 'cli_0123456789abcdef', appSecret: 'secret', domain },
-    silentLogger,
+    logger,
+    networkProxy,
   )
+}
+
+/** Recording logger for assertions on warning messages. */
+function recordingLogger() {
+  const warnings: string[] = []
+  return {
+    warnings,
+    logger: {
+      debug: () => {},
+      info: () => {},
+      warn: (message: string, ...args: unknown[]) => { warnings.push([message, ...args].join(' ')) },
+      error: () => {},
+    },
+  }
+}
+
+const savedEnv: Array<[string, string | undefined]> = []
+function setEnv(key: string, value: string | undefined): void {
+  savedEnv.push([key, process.env[key]])
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
 }
 
 const rawEvent = (overrides: Record<string, unknown> = {}) => ({
@@ -98,9 +142,18 @@ beforeEach(() => {
   sdkState.replied.length = 0
   sdkState.patched.length = 0
   sdkState.requests.length = 0
+  sdkState.wsParams.length = 0
+  sdkState.proxyAgentCalls.length = 0
   sdkState.failCreate = false
   sdkState.suppressReady = false
   for (const key of Object.keys(sdkState.handlers)) delete sdkState.handlers[key]
+})
+
+afterEach(() => {
+  for (const [key, value] of savedEnv.splice(0)) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
 })
 
 describe('appIdLooksValid', () => {
@@ -372,5 +425,81 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
       action: { value: { kind: 'approval', nonce: 'nonce' } } }
     const response = await sdkState.handlers['card.action.trigger']!(payload) as object
     expect(JSON.stringify(response)).not.toContain('secret_from_internal_handler')
+  })
+})
+
+describe('network proxy selection (SDK mocked, no real connection)', () => {
+  const proxyConfig = (url?: string, overrides: Partial<NetworkProxyConfig> = {}): NetworkProxyConfig => ({
+    enabled: true,
+    urlEnv: 'FEISHU_TEST_PROXY_URL',
+    fallbackDirect: true,
+    ...(url ? { url } : {}),
+    ...overrides,
+  })
+  const connect = (t: InstanceType<typeof LarkTransport>) =>
+    t.connect({ onMessage: () => {}, onStateChange: () => {} })
+
+  it('builds the agent from the env var when the launcher selected a proxy', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    const t = transport('feishu', proxyConfig())
+    await connect(t)
+    expect(sdkState.proxyAgentCalls).toEqual(['http://env-proxy:3128'])
+    expect(sdkState.wsParams[0]?.agent).toEqual({ mockedAgentFor: 'http://env-proxy:3128' })
+    expect(t.state).toBe('connected')
+  })
+
+  it('prefers the in-memory managed URL over the env var', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    await connect(transport('feishu', proxyConfig('http://managed-proxy:2080')))
+    expect(sdkState.proxyAgentCalls).toEqual(['http://managed-proxy:2080'])
+    expect(sdkState.wsParams[0]?.agent).toEqual({ mockedAgentFor: 'http://managed-proxy:2080' })
+  })
+
+  it('uses the proxy even when no launcher marker is present (standalone plugin)', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', undefined)
+    await connect(transport('feishu', proxyConfig()))
+    expect(sdkState.proxyAgentCalls).toEqual(['http://env-proxy:3128'])
+  })
+
+  it('never uses a proxy when the launcher fell back to a direct connection', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'direct')
+    await connect(transport('feishu', proxyConfig()))
+    expect(sdkState.proxyAgentCalls).toEqual([])
+    expect(sdkState.wsParams[0]).not.toHaveProperty('agent')
+  })
+
+  it('never uses a proxy when the feature is disabled', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    await connect(transport('feishu', proxyConfig(undefined, { enabled: false })))
+    expect(sdkState.proxyAgentCalls).toEqual([])
+    expect(sdkState.wsParams[0]).not.toHaveProperty('agent')
+  })
+
+  it('connects directly when no URL is configured at all', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', undefined)
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    await connect(transport('feishu', proxyConfig()))
+    expect(sdkState.proxyAgentCalls).toEqual([])
+    expect(sdkState.wsParams[0]).not.toHaveProperty('agent')
+  })
+
+  it('falls back to a direct connection and warns without leaking the URL', async () => {
+    setEnv('FEISHU_TEST_PROXY_URL', 'user:pass@not-a-valid-proxy')
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    const recorder = recordingLogger()
+    const t = transport('feishu', proxyConfig(), recorder.logger)
+    await connect(t)
+    expect(sdkState.proxyAgentCalls).toEqual([])
+    expect(sdkState.wsParams[0]).not.toHaveProperty('agent')
+    expect(t.state).toBe('connected')
+    expect(recorder.warnings).toHaveLength(1)
+    expect(recorder.warnings[0]).toMatch(/direct connection/)
+    expect(recorder.warnings[0]).not.toContain('not-a-valid-proxy')
+    expect(recorder.warnings[0]).not.toContain('pass')
   })
 })
