@@ -131,6 +131,12 @@ function UsageDateRange({ from, to, onApply }) {
   const [open, setOpen] = useState(false)
   const [start, setStart] = useState(from)
   const [end, setEnd] = useState(to)
+  useEffect(() => {
+    if (!open) return
+    const onKey = event => { if (event.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
   const span = start && end
     ? Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1 : 0
   const valid = span >= 1 && span <= 366
@@ -144,7 +150,11 @@ function UsageDateRange({ from, to, onApply }) {
       'aria-expanded': open, 'aria-label': '选择日期范围',
       onClick: toggle },
       h('span', { className: 'fgw-usage-range-value' }, from + '  —  ' + to),
-      h('span', { className: 'fgw-usage-range-icon', 'aria-hidden': true }, '▦')),
+      h('svg', { className: 'fgw-usage-range-icon', width: 16, height: 16,
+        viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8,
+        strokeLinecap: 'round', 'aria-hidden': true },
+        h('rect', { x: 3, y: 5, width: 18, height: 16, rx: 2 }),
+        h('path', { d: 'M7 3v4M17 3v4M3 10h18' }))),
     open && h('div', { className: 'fgw-usage-range-popup', role: 'group',
       'aria-label': '自定义日期范围' },
       h('div', { className: 'fgw-usage-range-dates' },
@@ -370,7 +380,7 @@ function UsagePanel() {
       h('option', { value: '' }, '全部'),
       ...[...new Set([...(value ? [value] : []), ...(items || [])])].map(item =>
         h('option', { key: item, value: item }, format(item))))
-  const facets = report?.facets || yearReport?.facets || {}
+  const facets = yearReport?.facets || report?.facets || {}
   const series = report?.series || []
   const totals = report?.summary || {}
   const metricText = { total: '总 Token', input: '输入 Token', output: '输出 Token' }[metric]
@@ -455,7 +465,7 @@ function UsagePanel() {
           h(WbMetric, { title: '日均 Token', value: totals.averagePerDay === null ? '—' :
             wbCount(Math.round(totals.averagePerDay)), caption: '基于已覆盖日期' })),
         h('div', { className: 'fgw-usage-chart-grid' },
-          h(UsageTrendChart, { title: 'API 请求活动',
+          h(UsageTrendChart, { title: 'API 请求次数',
             value: totals.calls, kind: 'calls', unit: '次',
             description: '有 usage 的调用次数 · 非 HTTP 请求总数',
             rows: chartData.rows, granularity: chartData.granularity }),
