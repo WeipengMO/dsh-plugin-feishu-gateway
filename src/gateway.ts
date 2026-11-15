@@ -499,6 +499,8 @@ export class FeishuGateway {
     this.activeTurns.set(key, turn)
     const signal = AbortSignal.any([this.abortController.signal, turn.controller.signal])
     let activeSessionId: string | undefined
+    let unsubscribeProgress: (() => void) | undefined
+    let progressStatus: 'done' | 'cancelled' | 'failed' = 'failed'
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
@@ -520,6 +522,22 @@ export class FeishuGateway {
       turn.sessionId = sessionId
       if (signal.aborted) throw new Error('turn aborted before submit')
       await this.bridge.submit(sessionId, record.text, signal)
+      if (this.config.streamCards && !signal.aborted) {
+        try {
+          const transport = this.transports.get(record.botId)
+          if (transport) {
+            const progress = await TaskProgressCard.start(
+              transport, record.messageId, this.logger, this.config.streamIntervalMs)
+            if (progress) {
+              turn.stream = progress
+              unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => progress.onTextDelta(delta))
+            }
+          }
+        } catch {
+          // Non-durable progress must NEVER prevent a durable final reply.
+          this.logger.warn('Feishu progress card unavailable; keeping durable reply')
+        }
+      }
       const reply = await this.bridge.waitForReply(sessionId, {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
@@ -527,6 +545,7 @@ export class FeishuGateway {
       // Shutdown leaves a running turn uncertain; it may have had side effects.
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
+        progressStatus = 'cancelled'
         await this.finalizeUserCancellation(record, key, activeSessionId)
         return
       }
@@ -539,6 +558,7 @@ export class FeishuGateway {
         await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
+        progressStatus = 'done'
         await this.replyDiagnostic(record, text || '模型未返回文本内容.',
           `reply:${record.messageId}`, text ? this.config.replyFormat : 'text')
       }
@@ -548,6 +568,7 @@ export class FeishuGateway {
     } catch (error) {
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
+        progressStatus = 'cancelled'
         await this.finalizeUserCancellation(record, key, activeSessionId)
         return
       }
@@ -579,6 +600,11 @@ export class FeishuGateway {
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
       }
     } finally {
+      unsubscribeProgress?.()
+      if (turn.stream) {
+        try { await turn.stream.close(progressStatus) }
+        catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
+      }
       if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
     }
   }
