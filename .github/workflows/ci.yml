@@ -36,6 +36,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Proxy startup offline smoke (no real network)
+        run: |
+          bash -n scripts/channel/start-feishu-channel.sh
+          bash -n tests/proxy-startup.smoke.sh
+          bash tests/proxy-startup.smoke.sh
+
       - name: Typecheck
         run: pnpm run typecheck
 
