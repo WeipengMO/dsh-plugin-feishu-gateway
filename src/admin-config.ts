@@ -2,7 +2,7 @@ import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { implicitEnvNames, resolveConfig } from './config.js'
 import { DEFAULT_PROXY_URL_ENV } from './util/proxy-url.js'
-import type { BotSpec, GatewayConfig } from './types.js'
+import type { BotSpec, GatewayConfig, GroupPolicy, GroupRule, GroupSessionScope } from './types.js'
 
 /**
  * Strict reader for the admin-managed proxy URL (`network-proxy.json`).
@@ -21,6 +21,9 @@ export { readStoredProxyUrl as loadStoredProxyUrl } from './util/proxy-url.js'
 export interface ManagedChannelConfig {
   bots?: BotSpec[]
   allowlist?: string[]
+  groupPolicy?: GroupPolicy
+  groupSenderAllowlist?: string[]
+  groups?: GroupRule[]
   workspace?: string
   agent?: { provider?: string; model?: string }
   replyTimeoutMs?: number
@@ -59,7 +62,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect',
     'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
@@ -89,6 +92,44 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
     }
     if (new Set(value.allowlist).size !== value.allowlist.length) throw new Error('duplicate open_id in allowlist')
     result.allowlist = [...value.allowlist]
+  }
+  if (value.groupPolicy !== undefined) {
+    if (value.groupPolicy !== 'disabled' && value.groupPolicy !== 'allowlist' && value.groupPolicy !== 'open')
+      throw new Error('invalid groupPolicy')
+    result.groupPolicy = value.groupPolicy
+  }
+  if (value.groupSenderAllowlist !== undefined) {
+    if (!Array.isArray(value.groupSenderAllowlist) || value.groupSenderAllowlist.length > 200 ||
+      value.groupSenderAllowlist.some(id => typeof id !== 'string' || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) ||
+      new Set(value.groupSenderAllowlist).size !== value.groupSenderAllowlist.length)
+      throw new Error('invalid groupSenderAllowlist')
+    result.groupSenderAllowlist = [...value.groupSenderAllowlist]
+  }
+  if (value.groups !== undefined) {
+    if (!Array.isArray(value.groups) || value.groups.length > 200) throw new Error('invalid groups')
+    const seen = new Set<string>()
+    result.groups = value.groups.map((raw: unknown): GroupRule => {
+      if (!dictionary(raw)) throw new Error('invalid group rule')
+      assertFields(raw, ['chatId', 'enabled', 'name', 'requireMention', 'senderAllowlist', 'sessionScope'])
+      if (typeof raw.chatId !== 'string' || !/^oc_[A-Za-z0-9_-]{2,128}$/.test(raw.chatId) || seen.has(raw.chatId))
+        throw new Error('invalid or duplicate group chatId')
+      seen.add(raw.chatId)
+      if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') throw new Error('invalid enabled')
+      if (raw.name !== undefined && (typeof raw.name !== 'string' || raw.name.length > 100)) throw new Error('invalid group name')
+      if (raw.requireMention !== undefined && typeof raw.requireMention !== 'boolean') throw new Error('invalid requireMention')
+      if (raw.senderAllowlist !== undefined &&
+        (!Array.isArray(raw.senderAllowlist) || raw.senderAllowlist.length > 200 ||
+          raw.senderAllowlist.some(id => typeof id !== 'string' || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) ||
+          new Set(raw.senderAllowlist).size !== raw.senderAllowlist.length)) throw new Error('invalid group senderAllowlist')
+      const scope = raw.sessionScope ?? 'group_sender'
+      if (scope !== 'group' && scope !== 'group_sender' && scope !== 'group_topic' && scope !== 'group_topic_sender')
+        throw new Error('invalid group sessionScope')
+      return { chatId: raw.chatId, enabled: raw.enabled !== false,
+        ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+        requireMention: raw.requireMention !== false,
+        ...(raw.senderAllowlist ? { senderAllowlist: [...raw.senderAllowlist as string[]] } : {}),
+        sessionScope: scope as GroupSessionScope }
+    })
   }
   if (value.workspace !== undefined) {
     if (typeof value.workspace !== 'string' || value.workspace.length > 4096 ||

@@ -1,6 +1,6 @@
 import Schema from '@deepseek-ai/schemastery'
 import { resolveProxyUrl } from './util/proxy-url.js'
-import type { BotCredentials, BotSpec, GatewayConfig } from './types.js'
+import type { BotCredentials, BotSpec, GatewayConfig, GroupRule, GroupSessionScope } from './types.js'
 
 export type { GatewayConfig, BotSpec } from './types.js'
 
@@ -28,8 +28,16 @@ export const Config: ConfigValidator = Schema.object({
   bots: Schema.array(BotSchema).default([]).description('One entry per Feishu app/bot.'),
   allowlist: Schema.array(Schema.string()).default([])
     .description('Allowed sender open_ids. Empty = deny all inbound messages (fail closed).'),
-  allowGroups: Schema.boolean().default(false)
-    .description('Group chats stay OFF in v0.1.0. Enabling this flag is still rejected by the router.'),
+  allowGroups: Schema.boolean().default(false).description('Legacy switch; never enables group chats.'),
+  groupPolicy: Schema.union([Schema.const('disabled'), Schema.const('allowlist'), Schema.const('open')]).default('disabled'),
+  groupSenderAllowlist: Schema.array(Schema.string()).default([]),
+  groups: Schema.array(Schema.object({
+    chatId: Schema.string(), enabled: Schema.boolean().default(true),
+    name: Schema.string(), requireMention: Schema.boolean().default(true),
+    senderAllowlist: Schema.array(Schema.string()),
+    sessionScope: Schema.union([Schema.const('group'), Schema.const('group_sender'),
+      Schema.const('group_topic'), Schema.const('group_topic_sender')]).default('group_sender'),
+  })).default([]),
   workspace: Schema.string().default('')
     .description('Legacy/shared project root. The native Feishu Session uses its own isolated agentWorkspace.'),
   agentWorkspace: Schema.string().default('')
@@ -102,6 +110,21 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     bots,
     allowlist: (raw.allowlist as string[] | undefined) ?? [],
     allowGroups: raw.allowGroups === true,
+    groupPolicy: raw.groupPolicy === 'allowlist' || raw.groupPolicy === 'open' ? raw.groupPolicy : 'disabled',
+    groupSenderAllowlist: Array.isArray(raw.groupSenderAllowlist)
+      ? [...new Set(raw.groupSenderAllowlist.filter((id): id is string => typeof id === 'string' && /^ou_[A-Za-z0-9_-]{2,128}$/.test(id)))]
+      : [],
+    groups: Array.isArray(raw.groups) ? (raw.groups as Partial<GroupRule>[])
+      .filter(g => g && typeof g.chatId === 'string' && /^oc_[A-Za-z0-9_-]{2,128}$/.test(g.chatId))
+      .map(g => ({
+        chatId: g.chatId!,
+        enabled: g.enabled !== false,
+        ...(typeof g.name === 'string' ? { name: g.name.slice(0, 100) } : {}),
+        requireMention: g.requireMention !== false,
+        ...(Array.isArray(g.senderAllowlist) ? { senderAllowlist: g.senderAllowlist.filter(id => /^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) } : {}),
+        sessionScope: (['group', 'group_sender', 'group_topic', 'group_topic_sender'] as GroupSessionScope[])
+          .includes(g.sessionScope as GroupSessionScope) ? g.sessionScope as GroupSessionScope : 'group_sender',
+      })) : [],
     workspace,
     ...(typeof raw.agentWorkspace === 'string' && raw.agentWorkspace.trim() ?
       { agentWorkspace: raw.agentWorkspace } : {}),

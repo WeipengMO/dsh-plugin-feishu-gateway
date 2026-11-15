@@ -1,64 +1,57 @@
-import type { GatewayConfig, InboundMessage } from '../types.js'
+import type { ChatType, GatewayConfig, InboundMessage, GroupRule } from '../types.js'
 
 export type RejectReason =
-  | 'groups-disabled'
-  | 'empty-allowlist'
-  | 'sender-not-allowlisted'
-  | 'sender-not-user'
-  | 'unsupported-message-type'
-  | 'empty-text'
+  | 'groups-disabled' | 'group-not-allowlisted' | 'group-sender-not-allowlisted'
+  | 'mention-required' | 'empty-allowlist' | 'sender-not-allowlisted'
+  | 'sender-not-user' | 'unsupported-message-type' | 'empty-text'
 
 export type RouterDecision =
   | { readonly accepted: true; readonly message: InboundMessage }
   | { readonly accepted: false; readonly reason: RejectReason }
 
-/**
- * Security boundary for inbound messages. Defaults fail closed:
- *   - group chats are OFF (v0.1.0 hard rule, config flag cannot enable them)
- *   - an empty allowlist denies everyone
- *   - only `open_id`s on the allowlist are admitted
- *   - only plain text or text-only Feishu rich post messages are accepted
- *
- * The router is pure (no I/O), so dedup, persistence and Session dispatch stay
- * in the gateway and are independently testable.
- */
+/** Pure authorization boundary; all group modes are explicitly opt-in. */
 export class MessageRouter {
   private readonly allowlist: ReadonlySet<string>
+  private readonly groupSenders: ReadonlySet<string>
+  private readonly groups: ReadonlyMap<string, GroupRule>
 
   constructor(private readonly config: GatewayConfig) {
     this.allowlist = new Set(config.allowlist)
+    this.groupSenders = new Set(config.groupSenderAllowlist)
+    this.groups = new Map(config.groups.map(g => [g.chatId, g]))
+  }
+
+  groupRule(chatId: string): GroupRule | undefined { return this.groups.get(chatId) }
+
+  /** Rechecked on card actions; group permission cannot bypass an actor check. */
+  allowedActor(chatType: ChatType, chatId: string, actor: string): boolean {
+    if (chatType === 'p2p') return this.allowlist.has(actor)
+    const rule = this.groups.get(chatId)
+    if (this.config.groupPolicy === 'disabled' || rule?.enabled === false) return false
+    if (this.config.groupPolicy === 'allowlist' && !rule) return false
+    return this.groupSenders.has(actor) && (!rule?.senderAllowlist || rule.senderAllowlist.includes(actor))
   }
 
   decide(message: InboundMessage): RouterDecision {
-    if (message.chatType !== 'p2p') {
-      // v0.1.0 deliberately does not implement group policy, mention parsing,
-      // or per-group isolation. The legacy flag must never disable DMs.
-      return { accepted: false, reason: 'groups-disabled' }
+    if (message.senderType !== 'user') return { accepted: false, reason: 'sender-not-user' }
+    if (message.chatType === 'group') {
+      if (this.config.groupPolicy === 'disabled') return { accepted: false, reason: 'groups-disabled' }
+      const rule = this.groups.get(message.chatId)
+      if (rule?.enabled === false || (this.config.groupPolicy === 'allowlist' && !rule))
+        return { accepted: false, reason: 'group-not-allowlisted' }
+      if (!this.groupSenders.has(message.senderId) ||
+        (rule?.senderAllowlist && !rule.senderAllowlist.includes(message.senderId)))
+        return { accepted: false, reason: 'group-sender-not-allowlisted' }
+      if ((rule?.requireMention ?? true) && message.mentionedBot !== true)
+        return { accepted: false, reason: 'mention-required' }
+    } else {
+      if (this.allowlist.size === 0) return { accepted: false, reason: 'empty-allowlist' }
+      if (!this.allowlist.has(message.senderId)) return { accepted: false, reason: 'sender-not-allowlisted' }
     }
-    if (this.allowlist.size === 0) {
-      return { accepted: false, reason: 'empty-allowlist' }
-    }
-    if (!this.allowlist.has(message.senderId)) {
-      return { accepted: false, reason: 'sender-not-allowlisted' }
-    }
-    if (message.senderType !== 'user') {
-      return { accepted: false, reason: 'sender-not-user' }
-    }
-    if (message.messageType !== 'text' && message.messageType !== 'post') {
+    if (message.messageType !== 'text' && message.messageType !== 'post')
       return { accepted: false, reason: 'unsupported-message-type' }
-    }
-    const text = truncateCodePoints(message.text.trim(), this.config.maxTextLength)
-    if (text.length === 0) {
-      return { accepted: false, reason: 'empty-text' }
-    }
-    return {
-      accepted: true,
-      message: { ...message, text },
-    }
+    const text = [...message.text.trim()].slice(0, this.config.maxTextLength).join('')
+    if (!text) return { accepted: false, reason: 'empty-text' }
+    return { accepted: true, message: { ...message, text } }
   }
-}
-
-function truncateCodePoints(text: string, limit: number): string {
-  const points = [...text]
-  return points.length > limit ? points.slice(0, limit).join('') : text
 }
