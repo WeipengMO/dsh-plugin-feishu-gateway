@@ -174,8 +174,8 @@ describe('DshSessionBridge', () => {
     ctx.emit('session/event', { id: 'session-tools' }, {
       type: 'tool/result',
       data: { message: { toolCallId: 'call-1',
-        content: [{ type: 'text',
-          text: 'Fetched https://private.invalid (HTTP 567)  External content' }] } },
+        content: [{ type: 'text', text: 'Proxy error page from https://private.invalid' }] },
+        meta: { statusCode: 567, url: 'https://private.invalid' } },
     })
     ctx.emit('session/event', { id: 'session-tools' }, {
       type: 'assistant/message',
