@@ -434,7 +434,12 @@ export class FeishuGateway {
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
-      if (signal.aborted) return
+      if (signal.aborted) {
+        if (turn.cancelledByUser && !this.abortController.signal.aborted) {
+          await this.finalizeUserCancellation(record, key)
+        }
+        return
+      }
       if (!this.bridge.available) {
         await this.replyDiagnostic(record, 'DSH 原生 Session 服务未就绪，插件已按安全默认降级。')
         await this.inbox.markProcessed(record.messageId)
