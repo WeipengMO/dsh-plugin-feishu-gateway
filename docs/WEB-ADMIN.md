@@ -102,7 +102,7 @@ systemctl --user status dsh-feishu-channel.service --no-pager
 # 安装真正的网关，只进入飞书 Profile
 dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz"
 
-# 管理插件仍保持 0.2.0-rc.1，已安装者无需重复安装；首次安装时才执行：
+# 运维后台需要 Admin 0.2.0-rc.3，旧版必须升级：
 dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.3.tgz"
 ```
 
