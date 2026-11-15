@@ -330,7 +330,7 @@ export function createAdminHandler(options = {}) {
         return json(res, 200, { ok: true, history: await listAgentHistory(await agentProfileContext(stateDir), name) })
       }
       if (req.method === 'PUT' && route === PREFIX + '/agent-profile/file') {
-        return serializeMutation(async () => {
+        return await serializeMutation(async () => {
           const body = await readBody(req)
           exactKeys(body, ['name', 'content', 'expectedRevision'])
           const result = await saveAgentFile(await agentProfileContext(stateDir), body)
@@ -338,7 +338,7 @@ export function createAdminHandler(options = {}) {
         })
       }
       if (req.method === 'POST' && route === PREFIX + '/agent-profile/restore') {
-        return serializeMutation(async () => {
+        return await serializeMutation(async () => {
           const body = await readBody(req)
           exactKeys(body, ['name', 'id', 'expectedRevision'])
           const result = await restoreAgentFile(await agentProfileContext(stateDir), body)
@@ -346,7 +346,7 @@ export function createAdminHandler(options = {}) {
         })
       }
       if (req.method === 'PUT' && route === PREFIX + '/agent-profile/settings') {
-        return serializeMutation(async () => {
+        return await serializeMutation(async () => {
           const body = await readBody(req)
           exactKeys(body, ['settings', 'expectedRevision'])
           const result = await saveAgentSettings(await agentProfileContext(stateDir), body)
@@ -354,7 +354,7 @@ export function createAdminHandler(options = {}) {
         })
       }
       if (req.method === 'POST' && route === PREFIX + '/agent-profile/sync') {
-        return serializeMutation(async () => {
+        return await serializeMutation(async () => {
           const body = await readBody(req)
           exactKeys(body, [])
           const result = await applyAgentProfile(await agentProfileContext(stateDir))
