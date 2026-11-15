@@ -234,7 +234,7 @@ function AgentProfilePanel({ onDirtyChange }) {
       placeholder: '查找文件…', 'aria-label': '查找 Agent 档案文件',
       onChange: event => setFilter(event.target.value) }),
     h('div', { className: 'fgw-profile-nav-scroll' },
-      AGENT_PROFILE_GROUPS.map(group => h('section', { key: group.label },
+      AGENT_PROFILE_GROUPS.filter(group => group.names.some(visibleFile)).map(group => h('section', { key: group.label },
         h('h3', null, group.label),
         group.names.filter(visibleFile).map(fileButtons))),
       h('section', null, h('h3', null, '每日记忆'),
