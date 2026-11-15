@@ -206,7 +206,7 @@ function AgentProfilePanel(){
       h(OpsUnavailable,{title:'当前工作区不可访问'})),
     profile&&h(React.Fragment,null,
       h('div',{className:'fgw-profile-status'},
-        h('div',null,h('span',{className:'fgw-muted'},'实际工作区'),h('code',null,profile.workspace)),
+        h('div',null,h('span',{className:'fgw-muted'},'飞书专属工作区'),h('code',null,profile.workspace)),
         h('div',null,h('span',{className:'fgw-muted'},'同步状态'),
           h(WbState,{value:profile.syncNeeded?'pending':'ok'})),
         h('div',null,h('span',{className:'fgw-muted'},'加载文件'),
@@ -214,6 +214,6 @@ function AgentProfilePanel(){
         h('div',null,h('span',{className:'fgw-muted'},'上下文'),
           h('strong',null,profile.contextBytes+' / '+profile.settings.maxBytes+' B'))),
       h('p',{className:'fgw-profile-warning'},
-        '同一 Gateway 的机器人共享此工作区。修改 SOUL、USER、MEMORY 等文件后只保证新 Session 加载；已有 Session 不会强制热替换。每日记忆默认只在 Agent 主动读取时使用。'),
+        '此工作区只用于飞书 Channel 的新 DSH Session，与普通 DSH 项目工作区分开。多个飞书机器人仍共享本目录；旧飞书 Session 必须通过 /new 切换。每日记忆仅按需读取。'),
       h('div',{className:'fgw-profile-columns'},nav,editor,right)))
 }
