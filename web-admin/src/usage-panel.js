@@ -207,10 +207,16 @@ function usageCompact(value) {
   if (value >= 1000) return (value / 1000).toFixed(value % 1000 ? 1 : 0) + 'k'
   return String(Math.round(value))
 }
-function UsageTrendChart({ title, value, unit, rows, kind, description }) {
-  const viewWidth = 720
-  const left = 53
-  const right = 18
+function UsageTrendChart({ title, value, unit, rows, kind, description, granularity }) {
+  const [compact, setCompact] = useState(() => window.innerWidth < 690)
+  useEffect(() => {
+    const onResize = () => setCompact(window.innerWidth < 690)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const viewWidth = compact ? 400 : 720
+  const left = compact ? 42 : 53
+  const right = compact ? 12 : 18
   const top = 22
   const bottom = 222
   const plotWidth = viewWidth - left - right
@@ -246,7 +252,7 @@ function UsageTrendChart({ title, value, unit, rows, kind, description }) {
       h('strong', null, wbCount(value))),
     hasData ? h('div', { className: 'fgw-usage-chart-canvas' },
       h('svg', { className: 'fgw-usage-svg fgw-usage-svg-' + kind,
-        viewBox: '0 0 720 262', role: 'img', 'aria-label': title + '趋势图' },
+        viewBox: '0 0 ' + viewWidth + ' 262', role: 'img', 'aria-label': title + '趋势图' },
         h('defs', null,
           h('linearGradient', { id: 'fgw-usage-requests-gradient', x1: '0',
             x2: '0', y1: '0', y2: '1' },
@@ -294,9 +300,8 @@ function UsageTrendChart({ title, value, unit, rows, kind, description }) {
           rows[index]?.label || ''))))
       : h('div', { className: 'fgw-usage-chart-empty' }, '当前时间段尚无可绘制的历史数据'),
     h('div', { className: 'fgw-usage-chart-foot' },
-      h('span', null, '按' + (rows.length > 0 && rows[0].start.slice(0, 7) !==
-        rows[rows.length - 1].end.slice(0, 7) && rows.length <= 12
-        ? '月' : '日期区间') + '展示 · 不补零'),
+      h('span', null, '按' + ({ day: '日', week: '周', month: '月' }[granularity] || '日') +
+        '展示 · 不补零'),
       h('span', null, '历史未覆盖的日期不计入统计')))
 }
 function UsagePanel() {
@@ -453,7 +458,7 @@ function UsagePanel() {
           h(UsageTrendChart, { title: 'API 请求活动',
             value: totals.calls, kind: 'calls', unit: '次',
             description: '有 usage 的调用次数 · 非 HTTP 请求总数',
-            rows: chartData.rows }),
+            rows: chartData.rows, granularity: chartData.granularity }),
           h(UsageTrendChart, { title: metricText + ' 趋势',
             value: totals.value, kind: 'tokens', unit: 'Token',
             description: '已知用量 · 缺失 usage 不补零',
