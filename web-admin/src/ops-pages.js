@@ -135,6 +135,7 @@ function FeishuSessionsInventory() {
   const [report, setReport] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const update = (key, value) => setFilters(prev => ({ ...prev, [key]: value }))
   const load = useCallback(async () => {
     setBusy(true)
@@ -157,6 +158,31 @@ function FeishuSessionsInventory() {
   const kinds = { inbox: 'Inbox', outbox: 'Outbox', bindings: 'Session 绑定',
     events: '事件审计', runtime: '运行时快照', dedup: '去重记录', usage: 'Token 用量', commands: '操作队列' }
   const pages = report ? Math.ceil(report.total / report.pageSize) : 0
+  const manage = async (type, item) => {
+    setNotice('')
+    setBusy(true)
+    try {
+      const response = await request('/sessions/preview', 'POST', {
+        type, ref: item.sessionRef, expectedLastActiveAt: item.lastActiveAt,
+      })
+      const preview = response.preview
+      const action = type === 'archive-session' ? '归档绑定' : '解除飞书绑定'
+      const details = '操作：' + action + '\n机器人：' + preview.botId +
+        '\nSession 引用：' + preview.sessionRef +
+        '\n聊天引用：' + preview.chatRef +
+        '\n绑定记录估算：' + bytes(preview.estimatedBindingBytes) +
+        '\n原生 DSH Session 历史：保留不删除' +
+        '\n\n请再次确认。'
+      if (!window.confirm(details)) {
+        setNotice('已取消，未提交任何操作。')
+        return
+      }
+      const result = await request('/sessions/commands', 'POST', { token: preview.token })
+      setNotice('已提交操作 ' + result.command.id + '。这仅代表已入队；执行结果请在「告警中心」核对。')
+      void load()
+    } catch (e) { setNotice('操作未提交：' + (e.message || String(e))) }
+    finally { setBusy(false) }
+  }
   return h(React.Fragment, null,
     h('div', { className: 'fgw-metrics fgw-metrics-three' },
       h(WbMetric, { title: '绑定总数', value: report ? wbCount(report.total) : '—', caption: '当前筛选范围' }),
@@ -179,6 +205,7 @@ function FeishuSessionsInventory() {
         h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'submit', disabled: busy }, busy ? '筛选中…' : '应用筛选'),
         h('button', { className: 'fgw-refresh', type: 'button', onClick: () => { setFilters({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' }); setApplied({ page: 1, pageSize: 25, direction: 'desc' }) } }, '重置筛选'))),
     error && h('div', { className: 'fgw-caution', role: 'alert' }, '读取失败：' + error),
+    notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
     h(WbBlock, { title: '飞书绑定列表', aside: '仅引用原生 DSH Session，不访问或修改其会话历史' },
       h(OpsTable, { rows: report?.items ?? [], empty: busy ? '正在载入…' : '没有匹配的 Session',
         columns: [
@@ -189,6 +216,14 @@ function FeishuSessionsInventory() {
           { key: 'lastActiveAt', title: '最近活跃', render: x => opsDate(x.lastActiveAt) },
           { key: 'status', title: '状态', render: x => h(WbState, { value: x.status }) },
           { key: 'estimatedBindingBytes', title: '绑定估算', render: x => bytes(x.estimatedBindingBytes) },
+          { key: 'actions', title: '操作', render: x =>
+            h('div', { className: 'fgw-session-actions' },
+              h('button', { type: 'button', className: 'fgw-refresh',
+                disabled: busy || !report?.runtimeFresh || x.status === 'active' || x.status === 'archived',
+                onClick: () => void manage('archive-session', x) }, '归档'),
+              h('button', { type: 'button', className: 'fgw-refresh',
+                disabled: busy || !report?.runtimeFresh || x.status === 'active',
+                onClick: () => void manage('unbind-session', x) }, '解除绑定')) },
         ] }),
       report && h('div', { className: 'fgw-session-pages' },
         h('span', null, '共 ' + wbCount(report.total) + ' 条 · 第 ' + report.page + '/' + (pages || 1) + ' 页'),
@@ -200,5 +235,5 @@ function FeishuSessionsInventory() {
       h('div', { className: 'fgw-session-storage' },
         (storage?.categories ?? []).map(x => h('div', { key: x.key, className: 'fgw-data-row' },
           h('span', null, kinds[x.key] || x.key), h('strong', null, bytes(x.bytes)))))),
-    h(OpsNote, null, '当前是只读阶段：未开放删除、解绑或自动清理。估算绑定大小不等于实际可回收空间；运行时数据过期时不推断 Session 已安全空闲。'))
+    h(OpsNote, null, '归档仅设置飞书绑定标记；解除绑定只移除飞书→DSH 关联，原生 DSH Session 正文仍保留。所有写操作由 Gateway 在独占状态锁内处理。未开放历史消息/日志删除及自动保留策略。'))
 }
