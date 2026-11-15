@@ -103,7 +103,8 @@ export function summarizeOps(events, snapshot) {
       if (!event.ref) continue
       const previous = messages.get(event.ref) ?? { ref: event.ref, firstAt: event.ts }
       messages.set(event.ref, {
-        ...previous, lastAt: event.ts, state: event.state,
+        ...previous, lastAt: event.ts,
+        ...(event.kind === 'delivery' ? { delivery: event.state } : { state: event.state }),
         ...(event.botId ? { botId: event.botId } : {}),
         ...(event.session ? { session: event.session } : {}),
         ...(event.elapsedMs !== undefined ? { elapsedMs: event.elapsedMs } : {}),
