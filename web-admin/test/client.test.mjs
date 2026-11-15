@@ -51,7 +51,7 @@ test('operations panels display real data and configuration actions', () => {
   }
   assert.match(workbench, /root 'main'/)
   assert.match(workbench, /onConfig/)
-  assert.match(workbench, /h\(Panel, \{ key: configTab, initialTab: configTab \}\)/)
+  assert.match(workbench, /h\(Panel, \{ key: configTab, initialTab: configTab, onChanged: load \}\)/)
   assert.match(pages, /function OpsPage\(/)
   assert.match(pages, /Token 用量趋势/)
   assert.match(pages, /审批审计/)
