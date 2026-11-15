@@ -797,7 +797,7 @@ export class FeishuGateway {
         ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
         botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,
       })),
-      sessions: this.registry.bindings().map(binding => ({
+      sessions: [...this.registry.bindings()].sort((a, b) => b.lastActiveAt - a.lastActiveAt).slice(0, 500).map(binding => ({
         ref: opsRef(binding.sessionId), createdAt: binding.createdAt,
         lastActiveAt: binding.lastActiveAt, persisted: binding.persisted,
       })),
