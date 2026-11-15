@@ -496,3 +496,56 @@ test('authenticated Session inventory endpoint is paginated and does not disclos
     assert.equal(duplicate.status, 400)
   } finally { await f.close() }
 })
+
+
+test('Session action preview requires fresh idle state and a single-use confirmation', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true })
+    const sessionId = 'dsh-sensitive-session'
+    const ref = (await import('node:crypto')).createHash('sha256').update(sessionId).digest('hex').slice(0, 16)
+    const now = Date.now()
+    const lastActiveAt = now - 120_000
+    await writeFile(path.join(f.stateDir, 'sessions.json'), JSON.stringify({ bindings: {
+      'default:oc_private_chat': { sessionId, createdAt: now - 500_000, lastActiveAt, persisted: true },
+    } }))
+    const snapshot = { version: 1, ts: now, status: 'ok', tasks: [],
+      sessions: [], transport: {}, stats: {} }
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'), JSON.stringify(snapshot))
+    const body = { type: 'archive-session', ref, expectedLastActiveAt: lastActiveAt }
+    const unauth = await f.request('/sessions/preview', 'POST', body, {})
+    assert.equal(unauth.status, 401)
+    const preview = await f.request('/sessions/preview', 'POST', body, mutating)
+    assert.equal(preview.status, 200)
+    assert.equal(preview.json.preview.nativeSessionPreserved, true)
+    assert.equal(JSON.stringify(preview.json).includes('oc_private_chat'), false)
+    const noToken = await f.request('/sessions/commands', 'POST', { token: 'bad' }, mutating)
+    assert.equal(noToken.status, 400)
+    const accepted = await f.request('/sessions/commands', 'POST', { token: preview.json.preview.token }, mutating)
+    assert.equal(accepted.status, 202)
+    assert.equal(accepted.json.command.type, 'archive-session')
+    const once = await f.request('/sessions/commands', 'POST', { token: preview.json.preview.token }, mutating)
+    assert.equal(once.status, 409)
+    const requests = await (await import('node:fs/promises')).readdir(path.join(f.stateDir, 'ops-control', 'requests'))
+    assert.equal(requests.length, 1)
+    const command = JSON.parse(await readFile(path.join(f.stateDir, 'ops-control', 'requests', requests[0]), 'utf8'))
+    assert.equal(command.ref, ref)
+    assert.equal(command.expectedLastActiveAt, lastActiveAt)
+    assert.equal(command.type, 'archive-session')
+
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'),
+      JSON.stringify({ ...snapshot, ts: now - 60_000 }))
+    const stale = await f.request('/sessions/preview', 'POST', { ...body, type: 'unbind-session' }, mutating)
+    assert.equal(stale.status, 409)
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'),
+      JSON.stringify({ ...snapshot, ts: Date.now(), stats: { outboxPending: 1 } }))
+    const unsent = await f.request('/sessions/preview', 'POST', body, mutating)
+    assert.equal(unsent.status, 409)
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'),
+      JSON.stringify({ ...snapshot, ts: Date.now(), tasks: [
+        { ref: 'a'.repeat(16), session: ref, botId: 'default', phase: 'running', elapsedMs: 30 },
+      ] }))
+    const active = await f.request('/sessions/preview', 'POST', body, mutating)
+    assert.equal(active.status, 409)
+  } finally { await f.close() }
+})
