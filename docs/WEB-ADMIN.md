@@ -28,7 +28,7 @@ DSH web Profile
 
 1. **同一 Ubuntu 主机、同一 Unix 用户**运行 Web Profile 与 feishu-channel；管理插件默认读写该用户 HOME 下的上述文件。不同用户/主机需要额外的代理与访问控制，当前不支持。
 2. 飞书通道原本已在本机监听仅限环回的健康端点 `127.0.0.1:18095`。Web 管理插件不创建任何新监听端口。
-3. 管理页面使用与本仓库 `dsh-plugin-remote-ssh` 相同的官方客户端插槽 `settings.section` 和 `settings.section.icon`，目标 DSH `0.2.2-rc.1`。需在真实 DSH Web profile 再做端到端验收。
+3. 管理页面使用与本仓库 `dsh-plugin-remote-ssh` 相同的官方客户端插槽 `settings.section` 和 `settings.section.icon`，目标 DSH `0.2.2-rc.1`。已在真实 DSH Web Profile 验证两项卡片开关保存：先遇到服务端缓存旧 0.1.0 导致 HTTP 400，手动重启 dsh-web.service 后新服务端加载并可成功保存。见 [验收快照](ACCEPTANCE-0.2.0-rc.1.md)。
 4. `feishu-channel.env` 的 App Secret 只支持**写入更新，不支持回显**。模型服务提供方密钥继续由原 DSH 凭据库管理。
 5. `admin-config.json` 只覆盖允许的配置字段，其他字段包括 `allowGroups`、`stateDir`、沙箱与审批策略继续由原 Profile 管理。
 6. 独立的 `feishu-channel` Gateway **启动时**读取托管配置，不动态注入到活跃 DSH 会话。
@@ -130,4 +130,4 @@ dsh --profile feishu-channel --dump-config
 - 状态和凭据文件均需为普通文件，拒绝目标目录 symlink；管理配置损坏时拒绝继续覆写。
 - 服务独立运行；只有单进程可以拥有 Gateway 的 stateDir。
 
-**尚未覆盖的内容**：无需 Core 的原生工具审批桥接、群聊、Web 端全局管理权限分层、多租户/跨机器管理、systemd 未安装时的按钮替代实现。这些不应与本次同机单用户 MVP 混为一谈。
+**当前状态（2026-11-15）**：原生工具审批卡片桥接与流式任务卡片已在单用户私聊中实机通过；它们不再是待开发功能。尚未覆盖的是审批超时/重复操作/跨操作者的真实租户测试、群聊、Web 端全局管理权限分层、多租户/跨机器管理、systemd 未安装时的按钮替代实现。这些不应与本次同机单用户 MVP 混为一谈。

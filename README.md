@@ -1,389 +1,82 @@
-# DSH 飞书 Gateway 插件（v0.1.0）
+# DSH Feishu Gateway
 
-> 一个**从零建立、可独立发布、长期运行**的 TypeScript Cordis 插件，把飞书 / Lark 私聊消息通过 WebSocket 长连接桥接到 **DSH 原生 Session / Agent**，目标是逐步替代 OpenClaw 的飞书交互层。
->
-> An independently authored, publishable TypeScript Cordis plugin that bridges Feishu/Lark direct messages to **native DSH Sessions** over a long-lived WebSocket. v0.1.0 covers the WS connection, DM send/receive, an allowlist, native Sessions, and basic durable persistence/dedup. All automated tests use mocks; **no real Feishu tenant was contacted**.
+将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
 
----
+**当前版本：`0.2.0-rc.1`（Gateway 与 Admin）** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
 
-## 状态与边界（请先读）
+> **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
-| 项目 | 状态 |
-| --- | --- |
-| 版本 | `0.1.0` |
-| 已实现 | WebSocket 长连接、私聊收发、白名单、DSH 原生 Session、消息持久化与去重基础、单元 + 集成测试、CI、健康诊断 |
-| 未实现（v0.2.0+） | 卡片 / 流式回复、图片文件双向、原生工具审批桥接、长任务取消、定时任务主动通知、Web 管理面板、多机器人独立工作区与模型 |
-| 真实端到端验证 | **未做**。没有真实飞书凭据，测试全部使用 Mock Transport / Mock SessionBridge |
-| 现有 DSH Web 配置 | **未改动**。本项目不写 `~/.dsh/profiles/web/` 的任何文件 |
-| `allow-version` | **未使用**。通过如实声明 `engines.dsh` 满足官方兼容性检查 |
-| 第二套 Agent / LLM 系统 | **没有**。会话、历史、模型、循环全部由 DSH 自己管理 |
+## 部署架构与隔离
 
----
-
-## 目录结构
-
-```
-dsh-plugin-feishu-gateway/
-├── package.json                # 插件清单（含 dsh.bundle.patch / engines.dsh）
-├── pnpm-workspace.yaml         # pnpm 12 构建脚本白名单
-├── tsconfig*.json              # NodeNext / ESM / 严格模式
-├── vitest.config.ts            # Vitest 配置
-├── cordis.patch.yml            # Bundle 补丁：把插件插入 profile 的 Cordis 树
-├── locale/{en,zh}.json         # 插件显示元数据
-├── src/
-│   ├── index.ts                # Cordis 插件入口（name / inject / Config / apply）
-│   ├── config.ts               # schemastery 配置、密钥解析、脱敏摘要
-│   ├── types.ts                # 领域类型 + 端口接口（SessionBridge / FeishuTransport）
-│   ├── gateway.ts              # 流水线编排 + 生命周期 + 健康诊断
-│   ├── channel/
-│   │   ├── lark-transport.ts   # 真实 @larksuiteoapi/node-sdk WSClient 适配器
-│   │   └── mock-transport.ts   # 内存 Mock（测试用）
-│   ├── router/message-router.ts# 安全边界：白名单 / 群聊 / 消息类型 / 截断
-│   ├── inbox/{inbox,dedup}.ts  # 持久化 JSONL 收件箱 + 去重索引
-│   ├── session/
-│   │   ├── dsh-session-bridge.ts   # 官方 path A：ctx.agents + session/event + assistant-stream
-│   │   ├── mock-session-bridge.ts  # 内存 Mock
-│   │   ├── session-registry.ts     # 聊天 → 原生 Session id 的映射（仅映射）
-│   │   └── session-bridge.ts       # 文本抽取工具
-│   ├── outbox/outbox.ts        # 持久化发件箱 + 重试 + 断线补发
-│   ├── storage/json-store.ts   # 原子 JSON 状态存储（无原生依赖）
-│   ├── util/                   # 日志 / 重试 / id
-│   └── testing/index.ts        # 对外测试工具（子路径导出 ./testing）
-├── tests/
-│   ├── unit/                   # 10 个单元套件
-│   └── integration/            # 真实 Cordis 生命周期 + 全链路 Mock 集成
-├── docs/                       # 架构 / 兼容性 / 测试 Profile / 飞书应用 / Roadmap
-├── profiles/feishu-gateway-test/  # 本地测试 Profile 模板（不覆盖 web）
-├── research/                   # 调研报告（DSH API / 插件范例 / 参考项目）
-└── .github/workflows/ci.yml    # GitHub Actions CI
-```
-
----
-
-## 快速开始
-
-```bash
-# 需要 Node >= 24.9.0、pnpm 12
-pnpm install
-pnpm run typecheck
-pnpm run build
-pnpm run test
-# 一条命令跑完：
-pnpm run verify
-```
-
-构建产物：`lib/index.js`（ESM）+ `lib/types/index.d.ts`。包以 **bundle** 形式发布：`dsh.bundle.patch` 指向 `cordis.patch.yml`。
-
----
-
-## 架构（一句话版）
-
-```
-Feishu WebSocket → FeishuTransport
-  → MessageRouter（白名单 / 群聊关闭 / 类型检查）
-  → DurableInbox（持久化原子入队）+ DedupIndex（非权威缓存）
-  → SessionRegistry → SessionBridge（ctx.agents 原生 Agent/Session）
-  → 监听 session/event + agent/assistant-stream 收集回复
-  → DurableOutbox（串行补发 / 持久 UUID / 幂等键）→ Feishu reply/create
-```
-
-详细设计、官方 API 证据、能力矩阵见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，版本兼容性分析见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
-
----
-
-## 飞书工具审批与流式任务卡片（0.2.0-rc.1）
-
-默认关闭。可在 DSH Web 飞书通道设置中启用：
-
-- 原生审批：只有该飞书聊天正在使用的 DSH Agent 请求工具许可时才发送审批卡片；核验 open_id、bot/chat/message、随机 nonce、有效期及一次性授权。超时、断线与取消一律不放行。
-- CardKit v1 流式任务卡片：通过原生 assistant-stream 增量展示任务进度，限频更新，提供取消按钮。最终完整答复仍然由原始 DurableOutbox 发送。
-- 此插件不会自动将 DSH approval 的 never 策略改为 ask。请在真实飞书环境验收后再有意识地启用 ask，并限制权限。
-
-详见 [docs/APPROVAL-STREAMING.md](docs/APPROVAL-STREAMING.md)。
-
-## 富文本与 Markdown（Gateway 0.1.3 / Admin 0.1.1）
-
-- 入站支持**纯文本型飞书富文本 post**（标题、文本、Markdown 与普通 HTTP(S) 链接）；含图片、@、视频等暂不支持的元素会整体拒绝，而不是丢掉附件后把不完整内容交给 Agent。
-- Agent 回复可在 DSH Web → 设置 → 飞书通道 → 模型与配置中切换为 **Markdown 富文本（post/md）**；代码块、标题、表格等由飞书渲染。默认仍为普通文本，不改变现有部署。
-- 富文本正文限制大小，超限时明确截断；SDK 重试继续复用持久的 UUID。长文本分段/完整附件交付仍属于下一阶段。
-
-## 飞书内会话控制命令（0.1.2）
-
-白名单用户在飞书**私聊**中直接发送 `/help`、`/status`、`/cancel`、`/new`：
-
-- `/help` 显示命令清单；`/status` 显示当前聊天是否有任务、Session 是否可用、飞书连接和待发消息数。
-- `/cancel` 独立于长任务队列，不必等待原有 LLM 响应；只取消**当前聊天**正在运行的 turn。可能已执行的操作不会回滚，不会自动重放取消的 turn。
-- `/new` 在当前聊天任务结束后将下条消息切换到新 Session，原 DSH Session 历史保留。
-
-命令先经过原有白名单、私聊和 Inbox 去重/持久化检查，不会提交给模型。只有文本 DM 支持；没有打开群聊或工具审批。更多详情见 [docs/FEISHU-CHANNEL.md](docs/FEISHU-CHANNEL.md)。
-
-## Web 可视化管理（新增）
-
-新增独立的 `web-admin/` 配套插件 **dsh-plugin-feishu-admin**：通过 DSH Web 的 `settings.section` 插槽提供「飞书通道」后台，可查看状态、修改模型/白名单/机器人和安全更新凭据，使用 systemd 重启独立 Gateway。**请不要把 Gateway 安装到 `web` Profile**；Web 只安装 Admin tarball。完整流程见 [docs/WEB-ADMIN.md](docs/WEB-ADMIN.md)。
-
-## 配置
-
-插件配置由 `schemastery` 的 `Config` 校验。**密钥永远不写进配置**：`appIdEnv` / `appSecretEnv` 只声明环境变量名，值在激活时从 `process.env` 读取，且从不出现在日志里。
-
-```yaml
-# profile 的 cordis.patch.yml 中按 id 覆盖 config
-- id: feishu-gateway
-  config:
-    bots:
-      - id: default
-        enabled: true
-        domain: feishu
-        appIdEnv: FEISHU_GATEWAY_DEFAULT_APP_ID
-        appSecretEnv: FEISHU_GATEWAY_DEFAULT_APP_SECRET
-    allowlist: ['ou_xxxxxxxxxxxxxxxx']   # 空 = 拒绝所有人（fail closed）
-    allowGroups: false                    # v0.1.0 强制关闭群聊
-    workspace: /home/ubuntu/workspace     # 原生 Session 的 cwd
-    stateDir: /home/ubuntu/.dsh/feishu-gateway
-    offline: false
-```
-
-| 字段 | 默认值 | 说明 |
+| DSH Profile | 只安装 | 作用 |
 | --- | --- | --- |
-| `bots` | `[]` | 多机器人条目，每个对应一条 WS 长连接 |
-| `allowlist` | `[]` | 允许的发信人 `open_id`；**空列表拒绝全部** |
-| `allowGroups` | `false` | v0.1.0 即使设为 `true` 也会被路由层拒绝 |
-| `workspace` | `process.cwd()` | 传给 `ctx.agents.create({ meta: { cwd } })` |
-| `agent` | `{}` | 可选 `{ provider, model, reasoningEffort }`，留空继承 profile 默认模型 |
-| `stateDir` | `$DSH_HOME/feishu-gateway` | 收件箱 / 发件箱 / 去重 / Session 映射 |
-| `dedupTtlMs` | `86400000` | `message_id` 记忆时长 |
-| `maxTextLength` | `8000` | 按 Unicode code point 截断 |
-| `replyTimeoutMs` | `120000` | 等待原生 Session 回复的上限 |
-| `sendRetries` | `3` | 发件重试次数 |
-| `offline` | `false` | 硬开关；`FEISHU_GATEWAY_OFFLINE=1` 也会强制开启 |
+| `feishu-channel` | `dsh-plugin-feishu-gateway` | 飞书 WebSocket、消息路由、持久化、原生 Session、卡片与审批 |
+| `web` | `dsh-plugin-feishu-admin` | DSH Web「飞书通道」设置和受保护管理 API；**不运行 Gateway** |
 
-环境变量命名约定（未显式声明时自动使用）：
+两套插件同为 `0.2.0-rc.1`。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
 
-```
-FEISHU_GATEWAY_<BOT_ID_UPPER>_APP_ID
-FEISHU_GATEWAY_<BOT_ID_UPPER>_APP_SECRET
-```
+持久化的 **Inbox、Outbox、Session 绑定**和环境变量凭据在升级时保留，不要清空 `stateDir`。同一 `stateDir` 只允许一个 Gateway 进程持有。
 
-见 [.env.example](.env.example)。生产环境请通过 systemd / 容器 secret 注入环境变量，**不要提交 `.env`**。
+## 已实现
 
----
+- 飞书长连接和白名单私聊、收发消息、去重与持久化 Inbox/Outbox、崩溃后保守恢复。
+- 通过 DSH `ctx.agents` 创建、复用和恢复原生 Session；不另建模型/工具执行引擎。
+- `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
+- 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
+- DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
+- 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片；最终文字回复仍由 DurableOutbox 投递。
 
-## 安全默认
+## 当前已验收的运行配置
 
-1. **私聊白名单**：`allowlist` 为空时拒绝所有入站消息；只按 `open_id` 精确匹配。
-2. **群聊关闭**：v0.1.0 硬编码拒绝 `chat_type === 'group'`，配置开关不能打开。
-3. **只处理文本**：非 `text` 消息直接丢弃；机器人自身消息（`sender_type !== 'user'`）丢弃，避免回声循环。
-4. **密钥**：只从环境变量读取；日志只打印解析来源（如 `env:FEISHU_GATEWAY_DEFAULT_APP_SECRET`），不打印值；`redactedConfigSummary()` 脱敏。
-5. **最小权限**：插件本身不申请任何文件系统 / 网络特许；部署时建议保持 DSH 的 `workspace-write` 沙箱，危险操作走 DSH 原生审批（v0.2.0 桥接）。
-6. **卸载清理**：`ctx.effect` 的 disposer 关闭所有 WebSocket、取消在途任务、`AgentHandle.dispose()` 释放每个原生 Session、移除监听器。
-7. **不绕过兼容性**：`engines.dsh` 如实声明，绝不使用 `allow-version` 精确豁免。
+| 设置 | 值 |
+| --- | --- |
+| `streamCards` | `true` |
+| `approvalCards` | `true` |
+| `streamIntervalMs` | `800` |
+| `approvalTimeoutMs` | `90000` |
+| `feishu-channel` 的原生审批插件及 preset | **`ask`** |
+| Agent 沙箱 | **`workspace-write`**；正常工作区内工具无需逐次审批 |
+| 触发审批的操作 | 需要提升沙箱权限并触发 DSH 原生 `approval/request` 的操作 |
 
----
+源码中的两个卡片开关**默认仍为 `false`**，上述 `true` 是此次部署的显式管理配置，不是全局默认变更。审批决策由原生 DSH 控制：只授权当前请求的 `allowed-once`，拒绝或超时不放行；卡片只是入口，不能绕过原生策略。审批卡片仅显示工具名称，**不展示完整命令参数**，不要在不了解操作内容时盲目授权。
 
-## 本地测试 Profile 安装
+操作说明：[审批与流式卡片](docs/APPROVAL-STREAMING.md) · [Web Admin](docs/WEB-ADMIN.md) · [飞书通道](docs/FEISHU-CHANNEL.md)。
 
-**不要**手改现有 `web` profile。创建一个独立 profile：
+## 构建、验收与安装
 
 ```bash
-# 0. 先构建：lib/ 不在 git 里，干净检出必须生成
-pnpm install --frozen-lockfile && pnpm run build
-
-# 1. 复制模板到独立 Profile（不要动 web）
-PROFILE=feishu-gateway-test
-mkdir -p "$DSH_HOME/profiles/$PROFILE"
-cp -r "profiles/$PROFILE/." "$DSH_HOME/profiles/$PROFILE/"
-
-# 2. 用 dsh 自己的插件管理命令安装（tarball 已含 lib/）
+pnpm install --frozen-lockfile
+pnpm run verify
+pnpm run test:coverage
 pnpm run pack
-dsh plugin --profile "$PROFILE" add "$PWD/dist/dsh-plugin-feishu-gateway-0.1.0.tgz"
-
-# 3. 可选：注入测试凭据（没有凭据就保持模板默认 offline: true）
-# export FEISHU_GATEWAY_DEFAULT_APP_ID='cli_...'
-# export FEISHU_GATEWAY_DEFAULT_APP_SECRET='...'
 ```
 
-> **安装 ≠ 测试**：v0.1.0 没有 Web 管理面板，装进 `web` 也不会出现任何界面或交互入口；
-> 功能验证不需要启动 DSH、也不需要装进任何 Profile，见下一节。
-> 模板用的是 `dsh-headless`，启动需要任务参数且需要 LLM 路由配置（默认模板未配，
-> 直接启动会报 `MISSING_CREDENTIAL`）——详见 [docs/TEST-PROFILE.md](docs/TEST-PROFILE.md) §5。
+生成的文件：
 
----
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz`
 
-## 如何测试（不需要装进 web）
-
-| 层 | 命令 | 验证内容 | 需要 DSH / 飞书 |
-| --- | --- | --- | --- |
-| L1 单元 + 集成 | `pnpm run verify` | 路由安全、去重、持久化、原生 Session 桥接、真实 Cordis Context 装载/卸载、全链路 Mock 集成与故障注入测试 | 否 / 否 |
-| L2 本地全链路 | `pnpm run demo "你好"`（或 `node scripts/demo.mjs "你好"`） | 手动发一条消息，打印入站 → 原生 Session → 出站回复、健康计数 | 否 / 否 |
-| L3 安装与配置树 | `dsh --profile <name> --dump-config`、`import('dsh-plugin-feishu-gateway')` | bundle 层能组合、模块能解析 | 只读，不启动 |
-| L4 完整运行时激活 | `dsh --profile <name> "<任务>"` | `apply()` 在真实 DSH 里执行 | 是 / 否（需先配 LLM 路由） |
-| L5 真实飞书 E2E | 测试应用凭据 + `offline: false` + 从飞书发私聊 | 真实 WS 收发 | 是 / **仅测试应用** |
-
-L2 依赖构建产物 `lib/`，从干净检出先跑一次 `pnpm run build`。换第二个参数可验证拒绝策略：
+分别安装到正确 Profile：
 
 ```bash
-pnpm run demo "你好" ou_stranger     # 白名单外 → 无回复
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz"
+dsh --profile feishu-channel --dump-config
+dsh --profile web --dump-config
 ```
 
-**关键说明**：`offline: true` 下用的是 `MockFeishuTransport`，启动 Profile 也**不会自动产生入站消息**，
-最多只能看到加载日志。要真正驱动消息流，只有 L1/L2（本地 Mock）或 L5（真实测试应用）两条路 ——
-**装进 `web` 并不会让 Mock 产生消息，也不会多出任何 GUI 入口**。
+**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
 
----
+GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。真实部署验收记录及未覆盖的场景见 [验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
-## 飞书测试应用配置
+## 安全边界与剩余工作
 
-见 [docs/FEISHU-APP.md](docs/FEISHU-APP.md)：创建企业自建应用、开启机器人能力、配置 `im.message.receive_v1` 长连接事件订阅、所需权限（`im:message`、`im:message:send_as_bot` 等）、白名单 `open_id` 获取方式。**本项目不会连接任何现有正式飞书应用。**
+私聊只接收白名单 `open_id`；默认拒绝群聊；App Secret 通过环境变量注入且 Web Admin 不回显。部署时请保护 `~/.dsh/feishu-channel.env` 和 `stateDir`，并维持最小权限。
 
----
+**仍待实机验证**：审批超时、重复点击、审批中取消、陌生人或跨聊天卡片点击（已存在模拟/集成测试，不能替代真实租户）。**已知问题**：飞书 WebSocket 初次握手失败可能无法自行恢复，需要健康看门狗/重连兜底。状态监控和异常通知列入后续工作。
 
-## 构建与测试结果
+更多文档：[架构](docs/ARCHITECTURE.md) · [兼容性](docs/COMPATIBILITY.md) · [飞书开发者后台](docs/FEISHU-APP.md) · [测试 Harness](docs/E2E.md) · [后续路线图（含历史计划）](docs/ROADMAP-v0.2.0.md)。
 
-在本机（Node v24.22.2 / pnpm 12.18.0）执行：
+开发早期的完整调查和测试过程保留在 [research/](research/) 与 [历史 README](docs/archive/README-v0.1.0-history.md)，请勿把其历史状态当作当前验收结论。
 
-```
-pnpm install            ✓ (esbuild / protobufjs 构建脚本已在 pnpm-workspace.yaml 白名单)
-pnpm run typecheck      ✓
-pnpm run build          ✓  lib/index.js + lib/types/**
-pnpm run test           # 运行单元 / 集成 / 故障注入测试（修复分支请以 CI 结果为准）
-pnpm run verify         ✓
-```
-
-测试覆盖：配置与密钥解析、路由安全策略、去重 TTL/持久化/容量、JSONL 收件箱与重启恢复、原子存储与损坏文件隔离、Session 映射、原生 Session 桥接（事件订阅 / 流式文本 / 超时 / 取消 / 卸载）、发件箱重试与断线补发、**真实 Cordis Context 的插件装载与卸载**、全链路 Mock 集成（白名单 / 群聊 / 去重 / 会话恢复 / 健康诊断）。
-
-CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build → test → coverage → pack）。
-
----
-
-## 原生 Session 多轮对话（修复分支）
-
-- 同一个飞书聊天在**同一长期运行的 DSH Host** 中，连续消息直接复用同一个活动 AgentHandle，保持 SessionStore 中的原生上下文；**不在每一轮执行 `dispose() → resume()`**。
-- 只有插件启动后没有当前 Session 的活动 Handle、且 Host 的 Agent Loop 和 Session Persistence 处于可用状态时，才按已有会话 ID 执行 `agents.resume()`。
-- 若恢复失败，保留原聊天绑定并提示诊断，不静默替换成空白 Session。
-- 单次任务型 headless Host 在任务完成后可能卸载 Agent Factory。真实多轮测试必须使用保持运行的测试 Host；单元测试成功**不等于**真实模型多轮已通过。
-
-## 消息可靠性与执行安全（修复分支）
-
-- **先持久化再确认收到消息**：入站事件先由 Inbox 原子入队，随后才更新可选去重缓存。异步持久化失败不会被当作成功接收。
-- **运行中断不自动重复执行**：Inbox 明确区分 `pending`、`running`、`done`、`failed` 和 `uncertain`。崩溃后仅自动处理尚未开始执行的 `pending`；`running` 变为 `uncertain`，向用户提示检查会话，不自动重新运行可能修改文件/执行命令的 Agent Turn。
-- **Outbox 串行化与固定 UUID**：同一 Outbox 实例内的入队、发送、重连补发受同一互斥队列保护。每个消息重试都复用持久 UUID，配合本地已发送记录降低重复回复风险。
-- **超时会话隔离**：超时任务触发取消并解除原聊天会话绑定，下一条消息使用独立 DSH Session，避免旧回复混入新轮次。
-- **权限与凭据**：任务入队和执行时都检查当前白名单；仅接收 `open_id` 和明确的 `p2p` 消息，凭据必须从环境变量读取，不再支持在配置中直接填明文 Secret。
-- **`stateDir` 单实例独占（新增）**：启动时以 `O_EXCL` 创建 `stateDir/.owner.lock`；第二个指向同一目录的 Gateway 实例会**启动失败**（fail closed），避免两个实例各自持有一份内存去重 Map 而把同一 `message_id` 执行两次。锁由持有者令牌标识，`stop()` 只释放自己的锁；进程崩溃 / SIGKILL 遗留的陈旧锁会在下次启动时按 PID + `/proc` starttime 检测并接管，不会把插件永久锁死。这是**单机 advisory 锁，不是分布式互斥锁**：`stateDir` 必须位于同一主机、且只被一个 Gateway 实例使用；`JsonStore` 临时文件名也已改为按实例唯一。
-- **崩溃恢复的会话隔离（新增）**：`running → uncertain` 的恢复路径现在会**解除该聊天的 Session 绑定**（此前仅超时/异常路径会解绑），下一条消息创建全新 Session，而不是 resume 那个可能已被中断、且可能已产生副作用的旧 Session。
-- **JSONL 断尾恢复与出站幂等（新增）**：最后一行是合法 JSON 但缺少结尾换行时会在 `open()` 阶段补齐，避免下一次追加把两个对象粘成一行导致随后启动失败；`im.message.create` 路径也复用持久化的 `uuid`，REST 重试具备幂等键；WebSocket 仅在 `onReady`/`onReconnected` 后才报告 `connected`，配置错误的机器人不再被误报为健康；关闭期间到达的入站事件会抛错而不是被静默 ACK。
-
-**交付语义与保证边界（明确、不夸大）：**
-
-- 本插件**不提供端到端 exactly-once**。实际保证是：单实例、单主机、进程（非机器掉电）崩溃范围内的**「Agent 最多自动执行一次」+「回复至少投递一次」+「尽力而为的外部幂等」**（20k 条上限的 `sent` 记录 + 飞书约 1 小时的 `uuid` 窗口 + 稳定的 `idem` 键）。
-- `appendFile` 未 `fsync`：机器掉电可能丢失最近的 `running` 事件，使一次已开始的 Turn 退化为可重放的 `pending` → 理论上重复执行。`inbox.jsonl` 的 append 与 `outbox.send()` / `registry.touch()` / `markProcessed()` 不在同一事务内：回复发出后才标记完成，极窄崩溃窗口内会产生一条「请检查会话后决定是否重发」的二次提示。
-- **`failed` / `uncertain` 是终态且目前没有程序化的重试 / 解决入口**：`health()` / `diagnostics()` 只读，唯一的恢复方式是用户在飞书重新发送（产生新的 `message_id`）。这是刻意的保守取舍（避免重放可能已产生副作用的 Turn），也是已知的人工恢复缺口，见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md) 的死信队列 + 手动重放 TODO。
-- **已完成的非法 JSONL 行**（非尾部断尾）仍会让 `open()` 抛错并导致插件启动失败，尚没有隔离 / 跳过 / 命令行修复入口；只有三个 `JsonStore` 状态文件有 `.corrupt-*` 隔离。
-- 白名单撤销只对**重启后**重放的 `pending` 生效；运行中的实例仍持有构造时的 allowlist 快照，热撤销需要重新加载插件。Outbox 的 `pending` 与 `inbox.jsonl` 均无上限/压缩（`sent` 有 20k 上限）；单个机器人的 `sendText` 没有硬超时，可能阻塞全局 Outbox 互斥队列。
-- 状态文件以 `0o600` 保存**明文**用户消息与回复文本（不含 App Secret 值），`stateDir` 请勿放在会被提交到仓库的位置。飞书服务端对非 200 ACK 的重推行为、超过 1 小时的 `uuid` 去重，均未通过真实租户验证。
-- 网络发送成功与本地记录完成之间仍存在极窄的进程崩溃窗口。固定 UUID 有助于服务端去重，但不能跨任意下游工具保证严格 exactly-once；对非幂等的 DSH 工具操作，本项目明确采用保守的 `uncertain` 恢复策略，而不是声称执行恰好一次。运行前仍需真实 DSH + 飞书测试租户验证。
-
-## 真实 DSH 运行时 / 原生 Session 验证（本次补充）
-
-用**隔离的临时 `DSH_HOME` + Mock 凭据 + 本地 Mock LLM（OpenAI 兼容 SSE）**启动了一次真实
-`dsh 0.2.2-rc.1` headless 运行时：`dsh plugin add` 安装的 `.tgz` 被装载，
-`inject` 的 `ctx.agents/agentLoop/sessions/llm` 均为真实服务，插件 `apply()` 执行并写出
-`stateDir/dedup.json`。注意 `--dump-config` 只组合配置、**不证明激活**，激活以真实启动 +
-状态文件为准。随后用一个**测试专用 probe** 通过公开 `createGateway()`（不注入
-`MockSessionBridge`）把入站消息送入真实 `DshSessionBridge`：
-
-- `session/event` 与 `agent/assistant-stream` **确实**投递到插件级 ctx（澄清了此前文档的
-  未验证假设）；`makeUserMessage` 的回退对象也被 `agent.followup()` 接受（入站消息被
-  splice 进 agent inbox）。
-- **修复前（默认配置，真实缺陷）**：`ctx.agents.create()` 未带 `agentOptions`，每个 turn
-  以 `agent ... has no provider/model` 结束，用户只收到「模型未返回文本内容。」，消息却被
-  标记 `done` —— 原生 Session 默认不可用。**已修复**：未配置 `agent` 路由时从
-  `ctx.agentDefaultModel.currentSelection()` 取 provider/model 填入 `agentOptions`。
-  修复后首条消息经真实 `assistant/message` 返回真实模型文本，`turn/end: completed`，
-  `agent/assistant-stream` 14 个事件，未观察到重复文本拼接。
-- **仍未解决 / BLOCKED**：同一 Session 的**后续消息（上下文复用）**在 headless 测试 profile
-  中失败（先 `cannot append outside a SessionStore`；改为按持久化 `agents.resume()`
-  重新挂载后变为 `no agent factory registered (load an agent-loop plugin)`，该 profile
-  未注册 agent factory）。Agent 超时 / 异常 / 取消后的 Session 隔离、卸载时 Event Listener
-  与 AgentHandle 清理，也**未在真实运行时验证**；`pnpm run demo` 与全部 vitest 用例用的
-  都是 `MockSessionBridge`（模拟 Agent 文本）。
-
-**结论：Gateway 并非只模拟 Agent 文本** —— 修复后首轮确实走 DSH 原生 Session 并拿到真实
-模型回复；但**还不能说「完整使用」**：默认配置原本是坏的、多轮上下文复用仍 BLOCKED，
-真实飞书端到端也未验证。详见 `research/TEST-REPORT.md` 与
-`research/runtime-compat.md`。
-
-## Round 2 真实运行时复验（连续三轮 / 跨 Host / 隔离）
-
-用**同一个持续运行的 DSH Host 进程**（`HOST_KEEPALIVE` 让 headless 自身的任务保持未完成，
-避免 `io.exit()` 触发根 fiber 卸载）驱动真实 `DshSessionBridge`，复验结论见
-`research/ROUND2-TEST-REPORT.md`，可复现 harness 见 [`scripts/real-runtime/`](scripts/real-runtime/README.md)：
-
-- **同一 Host 连续三轮 PASS**：三轮共用同一 Session ID；测试 LLM **无状态且只从 DSH 发来的
-  真实会话历史生成回复**（非硬编码答案），Turn 1 为确认语、Turn 2/3 均返回 `GBM-7429`。
-  `DshSessionBridge` 调用序列为 `create → submit → waitForReply → resume → submit →
-  waitForReply → resume → submit → waitForReply → dispose`；活动 `AgentHandle` 只在 `stop()`
-  **dispose 一次**；AgentRegistry / SessionStore / AgentFactory 在三轮中始终为 true。
-- **跨 Host 重启恢复 PASS**：正常关闭 Host 1 后，用**独立的新 `DSH_HOME` + 新进程**（复制
-  DSH `sessions/` / `storages/` 持久化）以同一 Session ID 冷恢复；新 Host 的 LLM 请求里
-  确实带有前三轮的 3 条 User + 3 条 Assistant 消息，回答 `GBM-7429`。
-- **超时 / 取消 / 异常隔离 PASS**：三种情形后下一条消息都使用**全新 Session**，旧文本未泄漏，
-  `crossAttributed = 0`（旧事件没有进入新 Session）。
-- **本轮修复的真实缺陷**：DSH 的 `turn/end` 在 Agent 失败时携带
-  `data.reason = { kind: 'error', error: {...} }` 且**不产生** `assistant/message`。
-  此前 `DshSessionBridge` 只做 `settle()`，导致 Gateway 把失败的 turn 当作成功：发
-  「模型未返回文本内容。」、标记 `done`、且不解除 Session 绑定。现在仅对
-  `kind === 'error'` 抛出，让既有失败路径 `markFailed` + `unbind` + 诊断生效；
-  `aborted` / `interrupted` 等取消类原因不受影响。补了 4 个单测。
-- **未再出现** `cannot append outside a SessionStore` / `no agent factory registered` /
-  异常创建空白 Session 导致上下文丢失。上一轮这两个错误经 DSH 源码分析确认为
-  **headless 一次性任务结束触发 teardown 的产物**，不是 Gateway 缺陷（见
-  `research/dsh-internals.md`）：`dsh-headless/lib/index.js:383` 的 `io.exit()` 会并发卸载
-  子 fiber，清掉 `agents.factory`（`dsh-agent/lib/index.js:558-567`）并 detach Session
-  （`dsh-session/lib/index.js:1576-1578`）。
-- 冷恢复失败时（H4：删掉持久化文件）Gateway **保留原绑定、不创建空白会话**，回复明确的
-  恢复诊断 —— 不会静默丢上下文。
-
-## 两个 P0 端到端测试（真实商用 LLM / 真实飞书租户）
-
-两项都需要**外部凭据**，因此都做了「凭据缺失 → 明确 BLOCKED，绝不假通过」的处理。
-完整步骤见 [docs/E2E.md](docs/E2E.md)。
-
-```bash
-pnpm run e2e:preflight      # 真实 LLM + 真实飞书：缺哪个环境变量一目了然（exit 3 = BLOCKED）
-pnpm run e2e:mock           # 无需凭据：验证 harness + SessionBridge 全链路（3 轮/跨 Host/隔离）
-pnpm run e2e:daemon-smoke   # 无需凭据：验证长驻 Host 机制（真实 WS 场景必需）
-pnpm run e2e:real-llm       # P0-A：真实商用 LLM
-pnpm run e2e:feishu         # P0-B：真实飞书租户（长驻 Host + 手动发 3 条消息）
-```
-
-要点：
-
-- **长驻 Host**：`dsh-headless` 是一次性应用，任务结束即 `io.exit()` 卸载根 fiber
-  （agent factory 被清、Session 被 detach）。真实飞书长连接需要在人工发消息期间进程常驻，
-  因此 daemon 模式只挂 `dsh-base` + 插件（不含 `dsh-headless`），由测试插件
-  `scripts/e2e/e2e-daemon.mjs` 保活并提供只绑定 `127.0.0.1` 的 `/health`、`/diagnostics`、
-  `/events`、`/shutdown` 控制面。
-- **真实模型容错断言**：不要求逐字相等（真实模型会加散文），而是断言三轮共用同一
-  Session ID、Turn 2/3 的回复**包含**被记住的 token、handle 只 dispose 一次、
-  跨 Host 冷恢复仍能回答、超时/取消/异常后均新建 Session。
-- **隔离**：每次运行 `mktemp -d` 独立 `DSH_HOME`，`dsh plugin add` 安装构建产物；
-  不触碰 `~/.dsh`、`web` profile、`dsh-web.service`、DSH Core。
-- **凭据**：只从环境变量读取，生成的 `cordis.patch.yml` 只写变量**名**，报告只记录
-  变量**名称**与存在性；探针使用独立 `<stateDir>-probe` 以免与插件独占 `.owner.lock` 冲突。
-
-当前状态：`e2e:mock` 与 `e2e:daemon-smoke` **已实测通过**；`e2e:real-llm` 与
-`e2e:feishu` 因本环境**没有任何测试凭据**而处于 **BLOCKED**（未声称通过）。
-
-## 后续版本
-
-见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md)：卡片与流式回复、图片/文件双向、原生审批桥接、长任务取消、Schedule 主动通知、Web 管理面板、多机器人独立工作区/模型、可观测性。
-
----
-
-## 参考与许可
-
-- DSH 官方 API 调研：[research/dsh-api.md](research/dsh-api.md)
-- 插件范例调研：[research/plugin-examples.md](research/plugin-examples.md)
-- 参考项目调研：[research/references.md](research/references.md)
-- 上游：https://github.com/deepseek-ai/deepseek-harness , https://github.com/larksuite/node-sdk
-- 本项目从零编写，未 Fork 任何社区插件。MIT License。
+MIT License。

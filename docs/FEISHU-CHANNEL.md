@@ -26,7 +26,7 @@ DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
 
 ## 原生工具审批和流式任务卡片（0.2.0-rc.1）
 
-功能默认禁用。需要在飞书开发者后台订阅 card.action.trigger 回调并授予 CardKit 写权限，工具审批还必须由 DSH Profile 明确设置为 ask。详细文档：[APPROVAL-STREAMING.md](APPROVAL-STREAMING.md)。
+**源码默认禁用，但本次部署已明确开启** `streamCards=true`、`approvalCards=true`，且 `feishu-channel` 的原生审批插件与 preset 都是 `ask`。当前已发布飞书应用的 CardKit 写入/流式更新与 `card.action.trigger` 回调均实机生效；通常新增应用权限仍需在飞书开发者后台发布。详见 [最终验收快照](ACCEPTANCE-0.2.0-rc.1.md) 与 [APPROVAL-STREAMING.md](APPROVAL-STREAMING.md)。
 
 ## 富文本与 Markdown 回复（0.1.3）
 
@@ -107,7 +107,7 @@ systemctl --user enable --now dsh-feishu-channel.service
 | `outboxRetryIntervalMs` | `30000` | 飞书 REST 失败时，即使长连接未断开也会周期补发 |
 | 模型 | `magpie` / `group/deepseek` | 与 Web 端 `agent-default-model` 一致 |
 | 沙箱 | `workspace-write` | 只能写 workspace |
-| 审批 | `never` | 聊天通道无交互审批 UI，故不阻塞；如需审批请改回 `ask` 并接审批桥 |
+| 审批 | `ask`（当前部署） | 已具备卡片审批 UI；普通 `workspace-write` 工具不触发审批，沙箱权限升级等原生 `approval/request` 才触发 |
 
 ## 排障
 
