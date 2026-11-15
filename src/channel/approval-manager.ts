@@ -14,6 +14,7 @@ export interface ApprovalRequestLike {
 export interface ApprovalOwner {
   readonly botId: string
   readonly chatId: string
+  readonly chatType?: 'p2p' | 'group'
   readonly senderId: string
   readonly replyToMessageId: string
 }
@@ -43,7 +44,7 @@ export class FeishuApprovalManager {
 
   constructor(
     private readonly timeoutMs: number,
-    private readonly allowedSenders: ReadonlySet<string>,
+    private readonly allowedSenders: ReadonlySet<string> | ((owner: ApprovalOwner, actorId: string) => boolean),
     private readonly ownerOf: (sessionId: string) => ApprovalOwner | undefined,
     private readonly transportOf: (botId: string) => FeishuTransport | undefined,
     private readonly logger: GatewayLogger,
@@ -52,6 +53,11 @@ export class FeishuApprovalManager {
 
   get size(): number { return this.pending.size }
 
+  private canAct(owner: ApprovalOwner, actor: string): boolean {
+    return typeof this.allowedSenders === 'function'
+      ? this.allowedSenders(owner, actor) : this.allowedSenders.has(actor)
+  }
+
   /** Return next() only for requests that DO NOT belong to this Feishu channel. */
   async answer(req: ApprovalRequestLike, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome> {
     const id = typeof req.agent?.id === 'string' ? req.agent.id
@@ -59,7 +65,7 @@ export class FeishuApprovalManager {
     const owner = id ? this.ownerOf(id) : undefined
     if (!owner) return next()
     if (this.disposed || req.signal?.aborted) return 'cancelled'
-    if (!this.allowedSenders.has(owner.senderId)) return 'rejected'
+    if (!this.canAct(owner, owner.senderId)) return 'rejected'
     const transport = this.transportOf(owner.botId)
     if (!transport?.sendInteractiveCard) return 'unavailable'
     const nonce = randomUUID()
@@ -117,7 +123,7 @@ export class FeishuApprovalManager {
     if (!pending || this.disposed || Date.now() >= pending.expiresAt) {
       return { toast: { type: 'warning', content: '审批已过期或已处理' } }
     }
-    if (!this.allowedSenders.has(event.actorOpenId) ||
+    if (!this.canAct(pending, event.actorOpenId) ||
       event.actorOpenId !== pending.senderId ||
       event.botId !== pending.botId ||
       event.chatId !== pending.chatId ||

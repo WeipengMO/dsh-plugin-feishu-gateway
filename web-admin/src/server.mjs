@@ -24,7 +24,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy',
+const CFG_KEYS = ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 // The proxy URL is a write-only secret: stored in its own 0600 file, never in
@@ -74,6 +74,46 @@ export function validateConfig(input) {
       input.allowlist.some(id => typeof id !== 'string' || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) ||
       new Set(input.allowlist).size !== input.allowlist.length) throw httpError(400, 'invalid allowlist')
     result.allowlist = [...input.allowlist]
+  }
+  if (input.groupPolicy !== undefined) {
+    if (!['disabled', 'allowlist', 'open'].includes(input.groupPolicy)) throw httpError(400, 'invalid groupPolicy')
+    result.groupPolicy = input.groupPolicy
+  }
+  if (input.groupSenderAllowlist !== undefined) {
+    if (!Array.isArray(input.groupSenderAllowlist) || input.groupSenderAllowlist.length > 200 ||
+      input.groupSenderAllowlist.some(id => typeof id !== 'string' || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) ||
+      new Set(input.groupSenderAllowlist).size !== input.groupSenderAllowlist.length)
+      throw httpError(400, 'invalid groupSenderAllowlist')
+    result.groupSenderAllowlist = [...input.groupSenderAllowlist]
+  }
+  if (input.groups !== undefined) {
+    if (!Array.isArray(input.groups) || input.groups.length > 200) throw httpError(400, 'invalid groups')
+    const seen = new Set()
+    result.groups = input.groups.map(rule => {
+      if (!object(rule)) throw httpError(400, 'invalid group')
+      exactKeys(rule, ['chatId', 'name', 'enabled', 'requireMention', 'senderAllowlist', 'sessionScope'])
+      if (typeof rule.chatId !== 'string' || !/^oc_[A-Za-z0-9_-]{2,128}$/.test(rule.chatId) || seen.has(rule.chatId))
+        throw httpError(400, 'invalid or duplicate group chatId')
+      seen.add(rule.chatId)
+      if (rule.enabled !== undefined && typeof rule.enabled !== 'boolean') throw httpError(400, 'invalid group enabled')
+      if (rule.name !== undefined && (typeof rule.name !== 'string' || rule.name.length > 100))
+        throw httpError(400, 'invalid group name')
+      if (rule.requireMention !== undefined && typeof rule.requireMention !== 'boolean')
+        throw httpError(400, 'invalid requireMention')
+      if (rule.senderAllowlist !== undefined &&
+        (!Array.isArray(rule.senderAllowlist) || rule.senderAllowlist.length > 200 ||
+          rule.senderAllowlist.some(id => typeof id !== 'string' || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(id)) ||
+          new Set(rule.senderAllowlist).size !== rule.senderAllowlist.length))
+        throw httpError(400, 'invalid group senderAllowlist')
+      const scope = rule.sessionScope ?? 'group_sender'
+      if (!['group', 'group_sender', 'group_topic', 'group_topic_sender'].includes(scope))
+        throw httpError(400, 'invalid group sessionScope')
+      return { chatId: rule.chatId, enabled: rule.enabled !== false,
+        ...(rule.name !== undefined ? { name: rule.name } : {}),
+        requireMention: rule.requireMention !== false,
+        ...(rule.senderAllowlist ? { senderAllowlist: [...rule.senderAllowlist] } : {}),
+        sessionScope: scope }
+    })
   }
   if (input.workspace !== undefined) {
     if (typeof input.workspace !== 'string' || input.workspace.length > 4096 ||
@@ -693,13 +733,17 @@ export function createAdminHandler(options = {}) {
       if (req.method === 'PUT' && route === PREFIX + '/config') {
         return await serializeMutation(async () => {
           const body = await readBody(req)
-          exactKeys(body, ['expectedRevision', 'config'])
+          exactKeys(body, ['expectedRevision', 'config', 'confirmOpenGroups'])
           const before = await configFile(managed)
           if (body.expectedRevision !== before.revision) throw httpError(409, 'config changed; reload before saving')
           // The proxy URL is never part of admin-config.json: validate it on
           // its own, then strip it before the strict config validation.
           const split = splitProxyUrl(body.config)
           const config = validateConfig(split.config)
+          if (config.groupPolicy === 'open' && before.config.groupPolicy !== 'open' &&
+            body.confirmOpenGroups !== true) {
+            throw httpError(400, 'opening group access requires explicit confirmation')
+          }
           const storedUrl = split.provided
             ? (split.url === null ? null : validateProxyUrl(split.url))
             : undefined

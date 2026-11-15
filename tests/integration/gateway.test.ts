@@ -538,3 +538,43 @@ describe('fail-closed corrupt startup', () => {
   })
 
 })
+
+describe('group session isolation', () => {
+  it('isolates native sessions by group user while keeping DM bindings separate', async () => {
+    const { gateway, transport, bridge } = await harness({
+      groupPolicy: 'allowlist', groupSenderAllowlist: ['ou_alice', 'ou_bob'],
+      groups: [{ chatId: 'oc_group', enabled: true, requireMention: true, sessionScope: 'group_sender' }],
+    })
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', mentionedBot: false, messageId: 'om_no_mention' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', mentionedBot: true, messageId: 'om_group_a', text: 'group alice first' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', mentionedBot: true, senderId: 'ou_bob', messageId: 'om_group_b', text: 'group bob' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', mentionedBot: true, messageId: 'om_group_a2', text: 'group alice second' }))
+    await transport.emitMessage(alice({ chatType: 'p2p', chatId: 'oc_group', messageId: 'om_dm', text: 'private direct' }))
+    await gateway.whenIdle()
+    expect(gateway.health().rejected['mention-required']).toBe(1)
+    expect(bridge.created).toHaveLength(3)
+    const prompts = new Map(bridge.prompts.map(p => [p.text, p.sessionId]))
+    expect(prompts.get('group alice first')).toBe(prompts.get('group alice second'))
+    expect(prompts.get('group bob')).not.toBe(prompts.get('group alice first'))
+    expect(prompts.get('private direct')).not.toBe(prompts.get('group alice first'))
+    await gateway.stop()
+  })
+
+  it('isolates group topics and rejects unauthorized group users in open mode', async () => {
+    const { gateway, transport, bridge } = await harness({
+      groupPolicy: 'open', groupSenderAllowlist: ['ou_alice'],
+      groups: [{ chatId: 'oc_group', enabled: true, requireMention: false, sessionScope: 'group_topic_sender' }],
+    })
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', threadId: 'omt_a', messageId: 'om_a', text: 'topic first' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', threadId: 'omt_b', messageId: 'om_b', text: 'topic other' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', threadId: 'omt_a', messageId: 'om_a2', text: 'topic again' }))
+    await transport.emitMessage(alice({ chatType: 'group', chatId: 'oc_group', senderId: 'ou_eve', messageId: 'om_eve' }))
+    await gateway.whenIdle()
+    expect(bridge.created).toHaveLength(2)
+    const prompts = new Map(bridge.prompts.map(p => [p.text, p.sessionId]))
+    expect(prompts.get('topic first')).toBe(prompts.get('topic again'))
+    expect(prompts.get('topic first')).not.toBe(prompts.get('topic other'))
+    expect(gateway.health().rejected['group-sender-not-allowlisted']).toBe(1)
+    await gateway.stop()
+  })
+})

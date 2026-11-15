@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { DedupIndex } from './inbox/dedup.js'
 import { FeishuApprovalManager, type ApprovalRequestLike, type ApprovalOutcome } from './channel/approval-manager.js'
 import { TaskProgressCard } from './channel/task-progress-card.js'
@@ -54,6 +55,7 @@ export interface GatewayHealth {
 interface ActiveTurn {
   readonly botId: string
   readonly chatId: string
+  readonly chatType: 'p2p' | 'group'
   readonly senderId: string
   readonly replyToMessageId: string
   stream?: TaskProgressCard
@@ -75,6 +77,9 @@ class SessionResumeError extends Error {
 
 const REJECT_REASONS: readonly RejectReason[] = [
   'groups-disabled',
+  'group-not-allowlisted',
+  'group-sender-not-allowlisted',
+  'mention-required',
   'empty-allowlist',
   'sender-not-allowlisted',
   'sender-not-user',
@@ -133,12 +138,13 @@ export class FeishuGateway {
     this.router = new MessageRouter(deps.config)
     this.approvals = new FeishuApprovalManager(
       deps.config.approvalTimeoutMs,
-      new Set(deps.config.allowlist),
+      (owner, actor) => actor === owner.senderId &&
+        this.router.allowedActor(owner.chatType ?? 'p2p', owner.chatId, actor),
       (sessionId) => {
         const active = [...this.activeTurns.values()].find(turn =>
           turn.sessionId === sessionId && turn.phase === 'running' && !turn.cancelledByUser)
         return active ? {
-          botId: active.botId, chatId: active.chatId,
+          botId: active.botId, chatId: active.chatId, chatType: active.chatType,
           senderId: active.senderId, replyToMessageId: active.replyToMessageId,
         } : undefined
       },
@@ -208,7 +214,7 @@ export class FeishuGateway {
       // next message would resume the interrupted Session).
       for (const record of this.inbox.uncertain()) {
         try {
-          await this.registry.unbind(chatKey(record.botId, record.chatId))
+          await this.registry.unbind(this.scopeKey(record))
         } catch (error) {
           this.logger.error('session isolation during recovery failed for %s: %s', record.messageId, String(error))
         }
@@ -331,7 +337,9 @@ export class FeishuGateway {
       // The dedup index is non-authoritative: Inbox already owns the ID.
       this.logger.warn('dedup index update failed for %s: %s', record.messageId, String(error))
     }
-    this.audit({ kind: 'message', state: 'received', botId: record.botId, ref: record.messageId })
+    this.audit({ kind: 'message',
+      state: record.chatType === 'group' ? 'group-received' : 'received',
+      botId: record.botId, ref: record.messageId })
     this.scheduleRecord(record)
   }
 
@@ -361,7 +369,11 @@ export class FeishuGateway {
   /** Feishu callback handler: verify who clicked, from which chat and card. */
   async handleCardAction(event: CardActionEvent): Promise<{ toast: { type: string; content: string } }> {
     const toast = (type: string, content: string) => ({ toast: { type, content } })
-    if (this.stopped || !this.config.allowlist.includes(event.actorOpenId)) {
+    const matching = [...this.activeTurns.values()].filter(active =>
+      active.botId === event.botId && active.chatId === event.chatId &&
+      active.senderId === event.actorOpenId)
+    if (this.stopped || !matching.some(active =>
+      this.router.allowedActor(active.chatType, active.chatId, event.actorOpenId))) {
       return toast('warning', '无权执行该操作')
     }
     if (this.config.approvalCards) {
@@ -372,7 +384,8 @@ export class FeishuGateway {
       event.value.namespace !== CARD_NAMESPACE || event.value.kind !== 'cancel') {
       return toast('warning', '未知或已过期的卡片操作')
     }
-    const active = this.activeTurns.get(chatKey(event.botId, event.chatId))
+    const active = matching.find(turn => turn.stream?.handle.messageId === event.messageId &&
+      turn.stream.nonce === event.value.nonce)
     if (!active || active.botId !== event.botId || active.chatId !== event.chatId ||
       active.senderId !== event.actorOpenId || active.phase !== 'running' ||
       active.cancelledByUser || event.value.nonce !== active.stream?.nonce ||
@@ -398,6 +411,28 @@ export class FeishuGateway {
     }
   }
 
+  /** Reauthorize persisted messages before any command or native Agent dispatch. */
+  private recordMessage(record: InboxRecord): InboundMessage {
+    return { messageId: record.messageId, botId: record.botId, chatId: record.chatId,
+      chatType: record.chatType ?? 'p2p', senderId: record.senderId, senderType: 'user',
+      text: record.text, createTime: record.receivedAt, messageType: record.messageType ?? 'text',
+      mentionedBot: record.mentionedBot === true,
+      ...(record.threadId ? { threadId: record.threadId } : {}),
+      ...(record.rootId ? { rootId: record.rootId } : {}) }
+  }
+
+  private scopeKey(record: InboxRecord): string {
+    const base = chatKey(record.botId, record.chatId)
+    if (record.chatType !== 'group') return base
+    const scope = this.router.groupRule(record.chatId)?.sessionScope ?? 'group_sender'
+    const topic = record.threadId || record.rootId || record.messageId
+    const parts = scope === 'group' ? [] :
+      scope === 'group_sender' ? [record.senderId] :
+      scope === 'group_topic' ? [topic] : [topic, record.senderId]
+    const suffix = createHash('sha256').update(JSON.stringify([scope, ...parts])).digest('hex').slice(0, 32)
+    return base + ':group:' + suffix
+  }
+
   private async processRecord(record: InboxRecord): Promise<void> {
     const command = parseControlCommand(record.text)
     // A cancellation or status request MUST bypass the current chat's Agent
@@ -408,12 +443,12 @@ export class FeishuGateway {
       return
     }
     await this.enqueue(record.botId, record.chatId, () =>
-      command === 'new' ? this.dispatchControl(record, command) : this.dispatch(record))
+      command === 'new' ? this.dispatchControl(record, command) : this.dispatch(record), this.scopeKey(record))
   }
 
   /** Serialize work per chat so two rapid messages cannot interleave turns. */
-  private enqueue(botId: string, chatId: string, work: () => Promise<void>): Promise<void> {
-    const key = chatKey(botId, chatId)
+  private enqueue(botId: string, chatId: string, work: () => Promise<void>, scope?: string): Promise<void> {
+    const key = scope ?? chatKey(botId, chatId)
     const previous = this.chatQueues.get(key) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(work)
     this.chatQueues.set(key, next)
@@ -440,18 +475,14 @@ export class FeishuGateway {
     if (this.stopped) return
     // Re-validate on crash recovery / dequeuing. Commands are NOT an
     // authorization bypass and never trigger native Agent tool execution.
-    const decision = this.router.decide({
-      messageId: record.messageId, botId: record.botId, chatId: record.chatId,
-      chatType: 'p2p', senderId: record.senderId, senderType: 'user',
-      text: record.text, createTime: record.receivedAt, messageType: 'text',
-    })
+    const decision = this.router.decide(this.recordMessage(record))
     if (!decision.accepted) {
       this.rejected[decision.reason] += 1
       await this.inbox.markProcessed(record.messageId)
       return
     }
 
-    const key = chatKey(record.botId, record.chatId)
+    const key = this.scopeKey(record)
     try {
       await this.inbox.markRunning(record.messageId)
       if (this.stopped) return
@@ -473,7 +504,8 @@ export class FeishuGateway {
         ].join('\n')
       } else if (command === 'cancel') {
         const active = this.activeTurns.get(key)
-        if (!active || active.cancelledByUser || active.phase !== 'running') {
+        if (!active || active.senderId !== record.senderId ||
+          active.cancelledByUser || active.phase !== 'running') {
           reply = '当前聊天没有可以取消的运行中任务。'
         } else {
           // One chat's AbortController cannot affect another chat.
@@ -521,19 +553,15 @@ export class FeishuGateway {
     if (this.stopped) return
     // Recheck authorization on replay / at dequeue time. Revocation must
     // prevent a previously queued message from executing after a restart.
-    const decision = this.router.decide({
-      messageId: record.messageId, botId: record.botId, chatId: record.chatId,
-      chatType: 'p2p', senderId: record.senderId, senderType: 'user',
-      text: record.text, createTime: record.receivedAt, messageType: 'text',
-    })
+    const decision = this.router.decide(this.recordMessage(record))
     if (!decision.accepted) {
       this.rejected[decision.reason] += 1
       await this.inbox.markProcessed(record.messageId)
       return
     }
-    const key = chatKey(record.botId, record.chatId)
+    const key = this.scopeKey(record)
     const turn: ActiveTurn = {
-      botId: record.botId, chatId: record.chatId,
+      botId: record.botId, chatId: record.chatId, chatType: record.chatType ?? 'p2p',
       senderId: record.senderId, replyToMessageId: record.messageId,
       messageId: record.messageId, startedAt: Date.now(),
       controller: new AbortController(), cancelledByUser: false, phase: 'running',
@@ -837,7 +865,7 @@ export class FeishuGateway {
       await this.enqueue(botId, chatId, async () => {
         if (this.stopped || Date.now() - command.ts >= 30_000 ||
           this.activeTurns.has(key) || this.approvals.size > 0 ||
-          this.inbox.hasUnresolvedFor(botId, chatId) ||
+          this.inbox.hasUnresolvedFor(botId, chatId.split(':group:')[0]!) ||
           this.outbox.pending().length > 0) return
         const changed = command.type === 'archive-session'
           ? await this.registry.archiveIfUnchanged(key, binding.sessionId, binding.lastActiveAt)

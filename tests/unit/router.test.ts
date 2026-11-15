@@ -70,3 +70,45 @@ describe('MessageRouter security policy', () => {
     expect(baseMessage.text).toBe('hello')
   })
 })
+
+describe('group access modes', () => {
+  const group = { ...baseMessage, chatType: 'group' as const, chatId: 'oc_group_1' }
+  const rule = { chatId: 'oc_group_1', enabled: true, requireMention: true, sessionScope: 'group_sender' as const }
+
+  it('requires explicit opt-in and ignores legacy allowGroups', () => {
+    const router = new MessageRouter(resolveConfig({ allowGroups: true, allowlist: ['ou_alice'] }))
+    expect(router.decide({ ...group, mentionedBot: true }))
+      .toEqual({ accepted: false, reason: 'groups-disabled' })
+    expect(router.decide(baseMessage).accepted).toBe(true)
+  })
+
+  it('enforces group admission, sender allowlists and structured @bot', () => {
+    const router = new MessageRouter(resolveConfig({
+      groupPolicy: 'allowlist', groupSenderAllowlist: ['ou_alice'],
+      groups: [{ ...rule, senderAllowlist: ['ou_alice'] }],
+    }))
+    expect(router.decide(group)).toEqual({ accepted: false, reason: 'mention-required' })
+    expect(router.decide({ ...group, mentionedBot: true }).accepted).toBe(true)
+    expect(router.decide({ ...group, chatId: 'oc_other', mentionedBot: true }))
+      .toEqual({ accepted: false, reason: 'group-not-allowlisted' })
+    expect(router.decide({ ...group, senderId: 'ou_bob', mentionedBot: true }))
+      .toEqual({ accepted: false, reason: 'group-sender-not-allowlisted' })
+    expect(router.allowedActor('group', 'oc_group_1', 'ou_bob')).toBe(false)
+  })
+
+  it('open mode still protects group senders and honors disabled/per-group restrictions', () => {
+    const router = new MessageRouter(resolveConfig({
+      groupPolicy: 'open', groupSenderAllowlist: ['ou_alice', 'ou_bob'],
+      groups: [{ ...rule, requireMention: false, senderAllowlist: ['ou_alice'] },
+        { ...rule, chatId: 'oc_disabled', enabled: false }],
+    }))
+    expect(router.decide(group).accepted).toBe(true)
+    expect(router.decide({ ...group, senderId: 'ou_bob' }))
+      .toEqual({ accepted: false, reason: 'group-sender-not-allowlisted' })
+    expect(router.decide({ ...group, chatId: 'oc_disabled' }))
+      .toEqual({ accepted: false, reason: 'group-not-allowlisted' })
+    expect(router.decide({ ...group, chatId: 'oc_other' }))
+      .toEqual({ accepted: false, reason: 'mention-required' })
+    expect(router.decide({ ...group, chatId: 'oc_other', mentionedBot: true }).accepted).toBe(true)
+  })
+})

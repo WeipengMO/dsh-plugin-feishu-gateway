@@ -26,6 +26,7 @@ interface LarkMessageApiResult {
   readonly code?: number
   readonly msg?: string
   readonly data?: { readonly message_id?: string; readonly card_id?: string }
+  readonly bot?: { readonly open_id?: string }
 }
 
 interface LarkClientLike {
@@ -43,7 +44,7 @@ interface LarkClientLike {
     }
   }
   request(payload: {
-    method: 'POST' | 'PUT' | 'PATCH'
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH'
     url: string
     data: Record<string, unknown>
   }): Promise<LarkMessageApiResult>
@@ -86,6 +87,9 @@ interface RawReceiveEvent {
     readonly message_type?: string
     readonly content?: string
     readonly create_time?: string
+    readonly thread_id?: string
+    readonly root_id?: string
+    readonly mentions?: readonly { readonly key?: string; readonly id?: { readonly open_id?: string }; readonly mentioned_type?: string }[]
   }
   readonly create_time?: string
 }
@@ -102,6 +106,7 @@ export class LarkTransport implements FeishuTransport {
   private client: LarkClientLike | undefined
   private ws: LarkWsLike | undefined
   private handlers: FeishuEventHandlers | undefined
+  private botOpenId: string | undefined
 
   constructor(
     readonly botId: string,
@@ -134,6 +139,17 @@ export class LarkTransport implements FeishuTransport {
     }
 
     this.client = new mod.Client(common)
+    // Verify @mentions against this bot's own open_id, never against names,
+    // arbitrary @users or @all. If identity lookup fails, fail closed.
+    this.botOpenId = undefined
+    try {
+      const info = await this.client.request({ method: 'GET', url: '/open-apis/bot/v3/info', data: {} })
+      if ((info.code === undefined || info.code === 0) && /^ou_[A-Za-z0-9_-]+$/.test(info.bot?.open_id ?? '')) {
+        this.botOpenId = info.bot!.open_id
+      }
+    } catch {
+      this.logger.warn('bot %s identity lookup unavailable; mention-only group messages will be denied', this.botId)
+    }
 
     const dispatcher = new mod.EventDispatcher({})
     dispatcher.register({
@@ -220,6 +236,7 @@ export class LarkTransport implements FeishuTransport {
     this.ws = undefined
     this.client = undefined
     this.handlers = undefined
+    this.botOpenId = undefined
     this.transition('closed')
   }
 
@@ -344,6 +361,8 @@ export class LarkTransport implements FeishuTransport {
   private async handleEvent(event: RawReceiveEvent): Promise<void> {
     const message = event.message
     if (!message?.message_id || !message.chat_id) return
+    // Unknown chat types must not inherit the group access policy.
+    if (message.chat_type !== 'p2p' && message.chat_type !== 'group') return
     // Never echo bot-originated messages back into a native Session.
     const senderType = event.sender?.sender_type ?? 'user'
     if (senderType !== 'user') return
@@ -354,6 +373,10 @@ export class LarkTransport implements FeishuTransport {
     const messageType = message.message_type ?? 'unknown'
     const text = messageType === 'text' ? extractTextContent(message.content)
       : messageType === 'post' ? extractFeishuPostText(message.content) : ''
+    const botKeys = message.mentions?.filter(m => m.mentioned_type === 'bot' &&
+      Boolean(this.botOpenId) && m.id?.open_id === this.botOpenId &&
+      typeof m.key === 'string' && /^@_user_\d+$/.test(m.key))?.map(m => m.key!) ?? []
+    const cleaned = botKeys.reduce((value, key) => value.replaceAll(key, ''), text).trim()
     const inbound: InboundMessage = {
       messageId: message.message_id,
       botId: this.botId,
@@ -362,7 +385,10 @@ export class LarkTransport implements FeishuTransport {
       chatType: message.chat_type === 'p2p' ? 'p2p' : 'group',
       senderId,
       senderType,
-      text,
+      text: cleaned,
+      mentionedBot: botKeys.length > 0,
+      ...(typeof message.thread_id === 'string' ? { threadId: message.thread_id } : {}),
+      ...(typeof message.root_id === 'string' ? { rootId: message.root_id } : {}),
       createTime: Number(event.create_time ?? message.create_time ?? Date.now()),
       messageType,
     }

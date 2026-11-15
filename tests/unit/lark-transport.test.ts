@@ -54,7 +54,9 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     }
     async request(payload: { method: string; url: string; data: Record<string, unknown> }) {
       sdkState.requests.push(payload)
-      if (payload.method === 'POST' && payload.url === '/open-apis/cardkit/v1/cards')
+      if (payload.method === 'GET' && payload.url === '/open-apis/bot/v3/info')
+         return { code: 0, bot: { open_id: 'ou_this_bot' } }
+       if (payload.method === 'POST' && payload.url === '/open-apis/cardkit/v1/cards')
         return { code: 0, data: { card_id: 'card123' } }
       return { code: 0 }
     }
@@ -285,11 +287,11 @@ describe('LarkTransport (SDK mocked)', () => {
     await sdkState.handlers['im.message.receive_v1']!(rawEvent({
       message: { ...rawEvent().message, chat_type: 'unknown' },
     }))
-    expect(received).toEqual([expect.objectContaining({ chatType: 'group' })])
+    expect(received).toEqual([])
     await sdkState.handlers['im.message.receive_v1']!(rawEvent({
       sender: { sender_id: { user_id: 'id_only' }, sender_type: 'user' },
     }))
-    expect(received).toHaveLength(1)
+    expect(received).toHaveLength(0)
   })
 
   it('reuses the persisted REST UUID on the create path across retries', async () => {
@@ -380,7 +382,7 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
     await t.connect({ onMessage: () => {}, onStateChange: () => {} })
     const handle = await t.startStreamCard({ replyToMessageId: 'om_1' }, 'nonce')
     expect(handle).toEqual({ cardId: 'card123', messageId: 'om_replied' })
-    const cardReq = sdkState.requests[0]!
+    const cardReq = sdkState.requests.find(x => x.url === '/open-apis/cardkit/v1/cards')!
     expect(cardReq.url).toBe('/open-apis/cardkit/v1/cards')
     const createdCard = JSON.parse(cardReq.data.data as string)
     expect(createdCard.config.streaming_mode).toBe(true)
@@ -389,12 +391,13 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
       .toEqual({ type: 'card', data: { card_id: 'card123' } })
     await t.updateStreamCard(handle.cardId!, 'hello', 1)
     await t.finishStreamCard(handle.cardId!, 2)
-    expect(sdkState.requests.map(x => x.method)).toEqual(['POST', 'PUT', 'PATCH'])
-    expect(sdkState.requests[1]?.url).toBe('/open-apis/cardkit/v1/cards/card123/elements/task_progress/content')
-    expect(sdkState.requests[1]?.data).toMatchObject({ content: 'hello', sequence: 1 })
-    expect(sdkState.requests[2]?.url).toBe('/open-apis/cardkit/v1/cards/card123/settings')
-    expect(JSON.parse(sdkState.requests[2]?.data.settings as string).config.streaming_mode).toBe(false)
-    expect(sdkState.requests[2]?.data.sequence).toBe(2)
+    const cardRequests = sdkState.requests.filter(x => x.url !== '/open-apis/bot/v3/info')
+    expect(cardRequests.map(x => x.method)).toEqual(['POST', 'PUT', 'PATCH'])
+    expect(cardRequests[1]?.url).toBe('/open-apis/cardkit/v1/cards/card123/elements/task_progress/content')
+    expect(cardRequests[1]?.data).toMatchObject({ content: 'hello', sequence: 1 })
+    expect(cardRequests[2]?.url).toBe('/open-apis/cardkit/v1/cards/card123/settings')
+    expect(JSON.parse(cardRequests[2]?.data.settings as string).config.streaming_mode).toBe(false)
+    expect(cardRequests[2]?.data.sequence).toBe(2)
   })
 
   it('uses the official full CardKit entity update to remove terminal actions', async () => {
@@ -407,7 +410,7 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
       body: { elements: [{ tag: 'markdown', content: 'answer' }] },
     }
     await t.replaceStreamCard('card123', result, 3)
-    const operation = sdkState.requests[0]!
+    const operation = sdkState.requests.find(x => x.url === '/open-apis/cardkit/v1/cards/card123')!
     expect(operation.method).toBe('PUT')
     expect(operation.url).toBe('/open-apis/cardkit/v1/cards/card123')
     expect(operation.data.sequence).toBe(3)
@@ -501,5 +504,30 @@ describe('network proxy selection (SDK mocked, no real connection)', () => {
     expect(recorder.warnings[0]).toMatch(/direct connection/)
     expect(recorder.warnings[0]).not.toContain('not-a-valid-proxy')
     expect(recorder.warnings[0]).not.toContain('pass')
+  })
+})
+
+describe('group mention identity', () => {
+  it('accepts only this bots structured @mention and strips its placeholder', async () => {
+    const t = transport()
+    const received: Array<{ mentionedBot?: boolean; text: string; threadId?: string }> = []
+    await t.connect({ onMessage: msg => { received.push(msg) }, onStateChange: () => {} })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({ message: {
+      ...rawEvent().message, chat_type: 'group',
+      content: JSON.stringify({ text: '@_user_1 test @_user_2' }),
+      mentions: [
+        { key: '@_user_1', mentioned_type: 'bot', id: { open_id: 'ou_this_bot' } },
+        { key: '@_user_2', mentioned_type: 'user', id: { open_id: 'ou_other' } },
+      ], thread_id: 'omt_topic_1',
+    } }))
+    expect(received[0]).toMatchObject({ mentionedBot: true,
+      text: 'test @_user_2', threadId: 'omt_topic_1' })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({ message: {
+      ...rawEvent().message, chat_type: 'group',
+      content: JSON.stringify({ text: '@_user_1 hi' }),
+      mentions: [{ key: '@_user_1', mentioned_type: 'bot', id: { open_id: 'ou_wrong_bot' } }],
+    } }))
+    expect(received[1]).toMatchObject({ mentionedBot: false, text: '@_user_1 hi' })
+    await t.close()
   })
 })

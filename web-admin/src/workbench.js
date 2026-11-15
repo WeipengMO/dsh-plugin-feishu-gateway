@@ -11,6 +11,7 @@ const WORKBENCH_NAV = [
   ['approvals', '审批审计', '✓'],
   ['agent-profile', 'Agent 档案', '▤'],
   ['bots', '机器人', '◉'],
+  ['groups', '群聊管理', '♟'],
   ['usage', '用量统计', '▥'],
   ['alerts', '告警中心', '!'],
   ['security', '安全与权限', '♧'],
@@ -203,13 +204,17 @@ function Workbench() {
         h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
         h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
+  } else if (selected === 'groups') {
+    body = h(GroupManagementPanel, { onChanged: load })
   } else if (selected === 'agent-profile') {
     body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
   } else if (selected === 'security') {
     body = h(React.Fragment, null,
       h('div', { className: 'fgw-two-column' },
         h(WbBlock, { title: '访问权限' },
-          h(WbRow, { label: '白名单', value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 位允许用户' : '继承原 Profile' }),
+          h(WbRow, { label: '群聊策略', value: flags.groupPolicy || 'disabled（默认关闭）' }),
+           h(WbRow, { label: '已登记群', value: wbCount(flags.groups?.length || 0) }),
+           h(WbRow, { label: '白名单', value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 位允许用户' : '继承原 Profile' }),
           h(WbRow, { label: 'DSH Web 授权', value: '原生浏览器会话' }),
           h(WbRow, { label: '消息正文', value: '运维接口不返回' }),
           h(WbRow, { label: '凭据回显', value: '禁止' })),

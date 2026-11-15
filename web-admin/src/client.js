@@ -185,6 +185,11 @@ window.__ModuleLoader__.load({
 
       function asConfig() {
         const result = {}
+        // Other settings tabs must preserve group access policy on save.
+        const existing = state?.config || {}
+        for (const key of ['groupPolicy', 'groupSenderAllowlist', 'groups']) {
+          if (existing[key] !== undefined) result[key] = existing[key]
+        }
         if (allowOverride) {
           result.allowlist = [...new Set(allowText.split(/[\n,]/).map(x => x.trim()).filter(Boolean))]
         }
@@ -394,7 +399,7 @@ window.__ModuleLoader__.load({
           allowOverride ? field('允许私聊的 Feishu open_id',
             h('textarea', { className: 'fga-input fga-textarea', rows: 7, value: allowText,
               onChange: e => setAllowText(e.target.value), placeholder: 'ou_...，每行一条' }),
-            '空白名单表示拒绝全部消息；本版本仍默认拒绝群聊。')
+            '空白名单表示拒绝全部私聊；群聊使用独立配置且默认禁用。')
             : h('p', { className: 'fga-hint' }, '白名单仍由原 Profile 控制，未在后台覆盖。'),
           h('div', { className: 'fga-warning' }, '飞书聊天中的 Agent 可能拥有工作区写权限。仅将可信任人员加入白名单。'),
           action('保存权限', save, busy || !state)),

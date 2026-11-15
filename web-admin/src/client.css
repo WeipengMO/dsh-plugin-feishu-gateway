@@ -446,3 +446,15 @@
 .fgw-session-pages{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:flex-end;margin-top:14px}
 .fgw-session-storage{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 20px}
 .fgw-session-storage .fgw-data-row{min-width:0}
+
+/* #18 group policy editor */
+.fgw-group-management{display:grid;gap:17px;max-width:1000px}
+.fgw-group-management>.fgw-block{padding:20px}
+.fgw-group-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:15px}
+.fgw-group-field{display:flex;flex-direction:column;gap:7px;min-width:0}
+.fgw-group-field>label{font-size:12px;font-weight:620}
+.fgw-group-field .fgw-muted{font-size:11px;line-height:1.55}
+.fgw-group-entry{padding:17px 0;border-top:1px solid var(--border,#8883)}
+.fgw-group-entry-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.fgw-group-entry-head strong{font-size:13px;overflow-wrap:anywhere}
+@media(max-width:720px){.fgw-group-grid{grid-template-columns:1fr}}

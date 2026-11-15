@@ -34,6 +34,9 @@ export interface InboundMessage {
   readonly text: string
   readonly createTime: number
   readonly messageType: string
+  readonly mentionedBot?: boolean
+  readonly threadId?: string
+  readonly rootId?: string
 }
 
 export interface OutboundTarget {
@@ -149,6 +152,17 @@ export interface NetworkProxyConfig {
   readonly url?: string
 }
 
+export type GroupPolicy = 'disabled' | 'allowlist' | 'open'
+export type GroupSessionScope = 'group' | 'group_sender' | 'group_topic' | 'group_topic_sender'
+export interface GroupRule {
+  readonly chatId: string
+  readonly enabled: boolean
+  readonly name?: string
+  readonly requireMention: boolean
+  readonly senderAllowlist?: readonly string[]
+  readonly sessionScope: GroupSessionScope
+}
+
 export interface AgentRoute {
   readonly provider?: string
   readonly model?: string
@@ -160,8 +174,12 @@ export interface GatewayConfig {
   readonly bots: readonly BotSpec[]
   /** Allowed Feishu `open_id` values. Empty means deny-all (fail closed). */
   readonly allowlist: readonly string[]
-  /** Group chats are disabled by default and stay disabled in v0.1.0. */
+  /** Legacy switch never enables group chats. */
   readonly allowGroups: boolean
+  readonly groupPolicy: GroupPolicy
+  /** Empty means group access is denied even with open policy. */
+  readonly groupSenderAllowlist: readonly string[]
+  readonly groups: readonly GroupRule[]
   /** Legacy/shared project workspace. Not used as the Feishu Session cwd. */
   readonly workspace: string
   /** Optional dedicated Feishu Agent cwd, separate from the normal DSH workspace. */

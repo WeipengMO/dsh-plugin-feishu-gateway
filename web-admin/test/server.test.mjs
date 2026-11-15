@@ -909,3 +909,21 @@ test('Session action preview requires fresh idle state and a single-use confirma
     assert.equal(active.status, 409)
   } finally { await f.close() }
 })
+
+test('group validation and explicit open-mode confirmation', async () => {
+  const rule = { chatId: 'oc_group', enabled: true, requireMention: true, sessionScope: 'group_sender' }
+  assert.equal(validateConfig({ groupPolicy: 'allowlist', groupSenderAllowlist: ['ou_alice'], groups: [rule] }).groups[0].chatId, rule.chatId)
+  assert.throws(() => validateConfig({ groupPolicy: 'everyone' }), /groupPolicy/)
+  assert.throws(() => validateConfig({ groups: [rule, rule] }), /duplicate/)
+  assert.throws(() => validateConfig({ groups: [{ ...rule, sessionScope: 'bad' }] }), /sessionScope/)
+  const f = await fixture()
+  try {
+    const state = await f.request('/state')
+    const payload = { expectedRevision: state.json.revision,
+      config: { groupPolicy: 'open', groupSenderAllowlist: ['ou_alice'], groups: [rule] } }
+    assert.equal((await f.request('/config', 'PUT', payload, mutating)).status, 400)
+    assert.equal((await f.request('/config', 'PUT', { ...payload, confirmOpenGroups: true }, mutating)).status, 200)
+    const saved = await f.request('/state')
+    assert.equal(saved.json.config.groupPolicy, 'open')
+  } finally { await f.close() }
+})
