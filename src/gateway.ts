@@ -22,6 +22,7 @@ import type {
 import { chatKey, newId, sessionIdFor } from './util/id.js'
 import { withTimeout } from './util/retry.js'
 import { OpsTelemetry, opsRef, type OpsEvent, type OpsSnapshot } from './ops/telemetry.js'
+import { processOperatorCommands, type OperatorCommand, type OperatorResult } from './ops/commands.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -99,6 +100,9 @@ export class FeishuGateway {
   private readonly abortController = new AbortController()
   private outboxRetryTimer: ReturnType<typeof setInterval> | undefined
   private opsTimer: ReturnType<typeof setInterval> | undefined
+  private commandTimer: ReturnType<typeof setInterval> | undefined
+  private commandRunning = false
+  private commandPromise: Promise<void> | undefined
   private readonly ops: OpsTelemetry
   private readonly transportStats = new Map<string, { reconnects: number; failures: number; lastConnectedAt?: number; lastDisconnectedAt?: number }>()
   private readonly chatQueues = new Map<string, Promise<void>>()
@@ -210,8 +214,10 @@ export class FeishuGateway {
       this.dedupSnapshot = await this.dedup.size()
       this.audit({ kind: 'system', state: 'started' })
       this.refreshOps()
-      this.opsTimer = setInterval(() => this.refreshOps(), 4000)
+      this.opsTimer = setInterval(() => this.refreshOps(), 10000)
       this.opsTimer.unref?.()
+      this.commandTimer = setInterval(() => this.runOperatorMailbox(), 1500)
+      this.commandTimer.unref?.()
       if (this.config.autoConnect) {
         this.outboxRetryTimer = setInterval(() => {
           if (this.stopped || this.outbox.stats().pending === 0) return
@@ -254,6 +260,9 @@ export class FeishuGateway {
     if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
     if (this.opsTimer) clearInterval(this.opsTimer)
     this.opsTimer = undefined
+    if (this.commandTimer) clearInterval(this.commandTimer)
+    this.commandTimer = undefined
+    await this.commandPromise
     this.outboxRetryTimer = undefined
     this.abortController.abort()
     this.approvals.stop()
@@ -735,6 +744,36 @@ export class FeishuGateway {
         this.logger.warn('outbox drain on reconnect failed: %s', String(drainError))
       })
     }
+  }
+
+  private runOperatorMailbox(): void {
+    if (this.stopped || this.commandRunning) return
+    this.commandRunning = true
+    const pending = processOperatorCommands(this.config.stateDir, async (command) =>
+      this.executeOperatorCommand(command))
+    this.commandPromise = pending.then(() => undefined).catch(() => {
+      this.logger.warn('operations mailbox unavailable')
+    }).finally(() => { this.commandRunning = false })
+  }
+
+  private async executeOperatorCommand(command: OperatorCommand): Promise<OperatorResult['state']> {
+    if (this.stopped) return 'rejected'
+    if (command.type === 'retry-outbox') {
+      // Existing durable Outbox UUID/idempotency and permanent-failure rules
+      // remain intact. This NEVER re-executes an uncertain Agent turn.
+      await this.outbox.drain()
+      this.audit({ kind: 'delivery', state: 'operator-retry' })
+      return 'completed'
+    }
+    if (command.type !== 'cancel-task' || !command.ref) return 'rejected'
+    const matches = [...this.activeTurns.values()].filter(x =>
+      opsRef(x.messageId) === command.ref && x.phase === 'running' && !x.cancelledByUser)
+    if (matches.length !== 1) return 'not-found'
+    const active = matches[0]!
+    this.requestCancel(active) // Same safe path as the owner's CardKit /cancel
+    this.audit({ kind: 'task', state: 'operator-cancel', botId: active.botId,
+      ref: active.messageId, session: active.sessionId })
+    return 'completed'
   }
 
   private audit(event: {
