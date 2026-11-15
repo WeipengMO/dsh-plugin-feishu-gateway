@@ -503,6 +503,8 @@ export class FeishuGateway {
     // Cancelled Agent turns may already have had irreversible side effects.
     // Terminal failed means the Inbox MUST NEVER automatically replay them.
     await this.inbox.markFailed(record.messageId, 'cancelled by user; prior operations may have taken effect')
+    this.audit({ kind: 'task', state: 'cancelled', botId: record.botId,
+      ref: record.messageId, session: sessionId })
   }
 
   private async dispatch(record: InboxRecord): Promise<void> {
@@ -629,11 +631,13 @@ export class FeishuGateway {
       await this.registry.touch(key)
       await this.inbox.markProcessed(record.messageId)
       this.processed += 1
-      this.audit({ kind: 'task', state: 'done', botId: record.botId, ref: record.messageId,
+      const finalState = reply.reason === 'timeout' ? 'timed-out'
+        : reply.reason === 'cancelled' ? 'cancelled' : 'done'
+      this.audit({ kind: 'task', state: finalState, botId: record.botId, ref: record.messageId,
         session: activeSessionId, elapsedMs: Date.now() - turn.startedAt,
-        model: reply.model,
-        tokens: reply.usage ? reply.usage.inputTokens + reply.usage.outputTokens +
-          (reply.usage.cacheReadTokens ?? 0) + (reply.usage.cacheWriteTokens ?? 0) : undefined })
+        ...(finalState === 'done' ? { model: reply.model,
+          tokens: reply.usage ? reply.usage.inputTokens + reply.usage.outputTokens +
+            (reply.usage.cacheReadTokens ?? 0) + (reply.usage.cacheWriteTokens ?? 0) : undefined } : {}) })
     } catch (error) {
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
