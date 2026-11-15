@@ -118,6 +118,41 @@ describe('Feishu callback and native DSH approval integration', () => {
     await b.gateway.stop()
   })
 
+  it('uses one final CardKit reply with no duplicate text and preserves the native Session', async () => {
+    const b = await boot(new MockSessionBridge({ reply: 'final model response' }), { streamCards: true })
+    await b.emit('om_answer', 'hello')
+    await b.gateway.whenIdle()
+    expect(b.t.streamCards).toHaveLength(1)
+    expect(b.t.streamReplacements).toHaveLength(1)
+    expect(b.t.sent.find(x => x.replyToMessageId === 'om_answer')).toBeUndefined()
+    const card = b.t.streamReplacements[0]!.card as any
+    expect(card.body.elements[0].content).toBe('final model response')
+    expect(card.header.title.content).toBe('DSH 已完成')
+    expect(card.config.streaming_mode).toBe(false)
+    expect(JSON.stringify(card)).not.toContain('取消当前任务')
+    expect(b.gateway.health().processed).toBe(1)
+    expect(b.gateway.health().boundSessions).toBe(1)
+    const sent = b.t.streamCards[0]!
+    expect((await b.t.emitCardAction({
+      botId: 'default', chatId: 'oc_one', actorOpenId: 'ou_alice',
+      messageId: sent.messageId,
+      value: { namespace: 'dsh-feishu-gateway', kind: 'cancel', nonce: sent.nonce },
+    })).toast.type).toBe('warning')
+    await b.gateway.stop()
+  })
+
+  it('uses DurableOutbox only when the final CardKit replacement fails', async () => {
+    const b = await boot(new MockSessionBridge({ reply: 'fallback answer' }), { streamCards: true })
+    b.t.replaceStreamCard = async () => { throw new Error('CardKit unavailable') }
+    await b.emit('om_fallback', 'hello')
+    await b.gateway.whenIdle()
+    expect(b.t.streamCards).toHaveLength(1)
+    expect(b.t.streamFinishes).toHaveLength(1)
+    expect(b.t.sent.filter(x => x.replyToMessageId === 'om_fallback').map(x => x.text))
+      .toEqual(['fallback answer'])
+    await b.gateway.stop()
+  })
+
   it('keeps durable text reply when native CardKit start fails', async () => {
     const b = await boot(new MockSessionBridge({ reply: 'final model response' }), { streamCards: true })
     b.t.startStreamCard = async () => { throw new Error('cardkit unlicensed') }
