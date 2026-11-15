@@ -1,4 +1,4 @@
-# 飞书 Agent 档案独立化（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.5）
+# 飞书 Agent 档案独立化（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.6）
 
 ## 目标
 
@@ -96,7 +96,7 @@ pnpm run pack
 dsh plugin --profile feishu-channel add \
   "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
 dsh plugin --profile web add \
-  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.5.tgz"
+  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz"
 ```
 
 在无重要执行中任务的维护窗口，根据服务器**实际** systemd unit 名称分别重启服务；不要重复启动多个 Gateway、也不要清空 `sessions.json` 或 `Inbox/Outbox`。

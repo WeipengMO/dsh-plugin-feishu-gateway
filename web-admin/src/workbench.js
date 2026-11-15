@@ -82,6 +82,7 @@ function Workbench() {
   const [configTab, setConfigTab] = useState('settings')
   const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
+  const [profileUnsaved, setProfileUnsaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState('')
@@ -203,7 +204,7 @@ function Workbench() {
         h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
   } else if (selected === 'agent-profile') {
-    body = h(AgentProfilePanel)
+    body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
   } else if (selected === 'security') {
     body = h(React.Fragment, null,
       h('div', { className: 'fgw-two-column' },
@@ -237,20 +238,24 @@ function Workbench() {
       h('nav', { className: 'fgw-subnav-list', 'aria-label': '管理功能' },
         WORKBENCH_NAV.map(([id, title, symbol]) =>
           h('button', { key: id, type: 'button', className: 'fgw-nav-item' + (selected === id ? ' is-active' : ''),
-            'aria-current': selected === id ? 'page' : undefined, onClick: () => setSelected(id) },
+            'aria-current': selected === id ? 'page' : undefined, onClick: () => {
+              if (id !== selected && selected === 'agent-profile' && profileUnsaved &&
+                !window.confirm('Agent 档案还有未保存的修改。确认离开并放弃修改？')) return
+              setSelected(id)
+            } },
             h('span', { className: 'fgw-nav-symbol', 'aria-hidden': true }, symbol), title))),
       h('div', { className: 'fgw-subnav-foot' },
         h(WbState, { value: health?.status ?? 'unknown' }),
         h('p', null, '只读监控不产生额外模型调用'))),
-    h('main', { className: 'fgw-content' },
+    h('main', { className: 'fgw-content' + (selected === 'agent-profile' ? ' fgw-content-profile' : '') },
       h('div', { className: 'fgw-topbar' },
         h('div', null, h('div', { className: 'fgw-eyebrow' }, 'DSH / FEISHU GATEWAY'),
           h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理')),
         h('div', { className: 'fgw-top-actions' },
-          h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
+          selected !== 'agent-profile' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
           selected !== 'advanced' && selected !== 'agent-profile' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
             onClick: () => onConfig(selected === 'bots' ? 'bots' : selected === 'security' ? 'permissions' : 'settings') }, '配置管理'),
-          h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
+          selected !== 'agent-profile' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
         h('div', null, h('div', { className: 'fgw-hero-kicker' }, 'GATEWAY OPERATIONS'),
@@ -263,7 +268,7 @@ function Workbench() {
       operatorNotice && h('div', { className: 'fgw-caution', role: 'status' }, operatorNotice),
       state && body,
       !state && !loading && h(WbEmpty, { headline: '无法获取管理数据', description: '请检查 DSH Web 的飞书管理插件是否已加载，以及 feishu-channel 服务是否运行。' }),
-      h('footer', { className: 'fgw-footnote' }, 'DSH 原生插件扩展 · 仅使用现有认证 API · 15 秒可见页轻量刷新')))
+      selected !== 'agent-profile' && h('footer', { className: 'fgw-footnote' }, 'DSH 原生插件扩展 · 仅使用现有认证 API · 15 秒可见页轻量刷新')))
 }
 
 function CredentialSettings() {

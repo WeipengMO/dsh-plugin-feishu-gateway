@@ -69,3 +69,42 @@ test('operations panels display real data and configuration actions', () => {
   assert.doesNotMatch(profile, /dangerouslySetInnerHTML|innerHTML/)
   assert.match(built, /function AgentProfilePanel\(/)
 })
+
+
+test('Agent profile uses one focused editor instead of three persistent content columns', () => {
+  const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(profile, /fgw-profile-shell/)
+  assert.match(profile, /fgw-profile-document/)
+  assert.match(profile, /fgw-profile-nav/)
+  assert.match(profile, /fgw-profile-mobile-files/)
+  for (const name of ['编辑', '预览', '版本历史', '加载配置']) {
+    assert.ok(profile.includes(name), name)
+  }
+  assert.match(css, /\.fgw-profile-shell\{display:grid;grid-template-columns:222px minmax\(0,1fr\)/)
+  assert.match(css, /@media\(max-width:690px\)/)
+  assert.match(css, /\.fgw-profile-textarea\{[^}]*flex:1;[^}]*width:100%/)
+  assert.doesNotMatch(css, /\.fgw-profile-columns|\.fgw-profile-right/)
+  assert.doesNotMatch(profile, /fgw-profile-title/)
+  assert.doesNotMatch(profile, /dangerouslySetInnerHTML|\.innerHTML/)
+  assert.match(built, /fgw-profile-document/)
+})
+
+test('Agent profile keeps draft safeguards and native backend contracts', () => {
+  const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  for (const route of ['agent-profile/file', 'agent-profile/history',
+    'agent-profile/settings', 'agent-profile/restore', 'agent-profile/sync',
+    'agent-profile/detach-legacy']) {
+    assert.ok(profile.includes(route), route)
+  }
+  assert.match(profile, /expectedRevision:\s*file\.revision/)
+  assert.match(profile, /event\.ctrlKey\s*\|\|\s*event\.metaKey/)
+  assert.match(profile, /beforeunload/)
+  assert.match(profile, /onDirtyChange/)
+  assert.match(workbench, /profileUnsaved\s*&&/)
+  assert.match(workbench, /fgw-content-profile/)
+  assert.match(css, /fgw-profile-primary/)
+  assert.match(css, /fgw-profile-setting-card/)
+  assert.match(profile, /AGENTS\.local\.md/)
+})

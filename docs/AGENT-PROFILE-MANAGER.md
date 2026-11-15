@@ -1,4 +1,4 @@
-# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.5）
+# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.6）
 
 > **飞书专用目录隔离**：新版不会修改普通 DSH 工作区的身份/记忆文件。独立 cwd、旧共享托管区块安全清理与旧 Session /new 的具体说明参见 [飞书 Agent 身份隔离与迁移指南](AGENT-PROFILE-ISOLATION.md)。
 
@@ -16,11 +16,11 @@
 | 工作规则 | AGENTS.md、TOOLS.md | DSH 工作规范与环境约定；AGENTS.md 继续由 DSH 原生加载 |
 | 长期记忆 | MEMORY.md | 跨会话的重要事实和长期决策 |
 | 每日记忆 | memory/YYYY-MM-DD.md | 按日期选择、创建、编辑、追溯；**不自动注入上下文** |
-| 预览 | 编辑器右侧 | 只渲染 Markdown 的安全文本结构，不执行 HTML 或脚本 |
-| 历史 | 编辑器右侧 | 最近 30 个版本、时间、修订摘要和一键恢复（恢复前二次确认） |
-| 加载控制 | 编辑器右侧 | 勾选纳入上下文的五种档案文件、总/单文件 UTF-8 字节预算及同步详情 |
+| 预览 | 「预览」标签页 | 只渲染 Markdown 的安全文本结构，不执行 HTML 或脚本 |
+| 历史 | 「版本历史」标签页 | 最近 30 个版本、时间、修订摘要和一键恢复（恢复前二次确认） |
+| 加载控制 | 「加载配置」标签页 | 勾选纳入上下文的五种档案文件、总/单文件 UTF-8 字节预算及同步详情 |
 
-编辑器采用三栏自适应布局，深浅主题随 DSH 宿主切换，支持未保存提醒、冲突拒绝、文件未创建状态和同步反馈。管理面板顶部显示真实的 Workspace、是否待同步、已加载文件数量和上下文字节数。**多个飞书机器人共享一个专用 Feishu Gateway Workspace 时会共享档案内容**，本版不假装提供独立机器人隔离。
+编辑器采用 **双栏布局（左侧文件列表 + 右侧单一工作区）**，右侧切换「编辑 / 预览 / 版本历史 / 加载配置」，支持 Ctrl/⌘+S 保存、文件搜索、移动端折叠列表、离开工作台前提醒未保存草稿、冲突拒绝、文件未创建状态和同步反馈；深浅主题随 DSH 切换。管理面板顶部显示真实的 Workspace、是否待同步、已加载文件数量和上下文字节数。**多个飞书机器人共享一个专用 Feishu Gateway Workspace 时会共享档案内容**，本版不假装提供独立机器人隔离。
 
 ## 真正让 SOUL / MEMORY 进入 DSH 上下文
 
@@ -120,7 +120,7 @@ dsh plugin --profile feishu-channel add \
   "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
 
 dsh plugin --profile web add \
-  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.5.tgz"
+  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz"
 \`\`\`
 
 备份原有 \`AGENTS.md\`、\`AGENTS.local.md\`、\`SOUL.md\`、\`USER.md\`、\`MEMORY.md\` 和 Gateway \`stateDir\` 后，使用服务器实际的 systemd user 服务名称分别重启 Web Profile 和 Feishu Profile。不要清空原有 Inbox、Outbox、Session、工作目录和环境变量。
