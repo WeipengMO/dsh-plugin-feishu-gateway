@@ -85,6 +85,10 @@ function statsFooter(stats: CardCompletionStats | undefined): string {
       if (Number.isFinite(speed)) parts.push('速度：' + speed.toFixed(1) + ' tok/s')
     }
   }
+  if (stats.toolCalls !== undefined) {
+    parts.push('工具调用：' + stats.toolCalls + ' 次' +
+      (stats.toolFailures ? '（失败 ' + stats.toolFailures + ' 次）' : ''))
+  }
   if (Number.isFinite(stats.elapsedMs) && stats.elapsedMs >= 0) {
     parts.push('用时：' + (stats.elapsedMs / 1000).toFixed(1) + 's')
   }
