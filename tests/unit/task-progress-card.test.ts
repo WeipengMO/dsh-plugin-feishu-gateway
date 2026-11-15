@@ -34,7 +34,7 @@ describe('CardKit single-message progress lifecycle', () => {
       expect(footer.split('  \n')).toEqual([
         '模型：magpie/group-deepseek',
         'Token 用量：175',
-        '平均速度：25.0 tok/s',
+        '速度：25.0 tok/s',
         '用时：4.2s',
       ])
       expect(footer).not.toContain('入 ')
