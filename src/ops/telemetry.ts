@@ -7,7 +7,8 @@
  * and return inbox.jsonl or outbox.json, which contain private conversations.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import type { ModelTokenUsage } from '../types.js'
 import path from 'node:path'
 
 export type OpsKind = 'message' | 'task' | 'approval' | 'transport' | 'delivery' | 'system'
@@ -91,11 +92,16 @@ async function checkFile(file: string): Promise<void> {
 }
 
 export class OpsTelemetry {
+  private lastRetentionDay: string | undefined
+  private readonly usageRetentionDays: number
   private readonly eventsFile: string
   private readonly snapshotFile: string
   private chain: Promise<unknown> = Promise.resolve()
   private writes = 0
-  constructor(private readonly stateDir: string) {
+  constructor(private readonly stateDir: string, retentionDays = Number(process.env.DSH_FEISHU_USAGE_RETENTION_DAYS ?? 365)) {
+    if (!Number.isInteger(retentionDays) || retentionDays < 7 || retentionDays > 730)
+      throw new Error('DSH_FEISHU_USAGE_RETENTION_DAYS must be an integer between 7 and 730')
+    this.usageRetentionDays = retentionDays
     this.eventsFile = path.join(stateDir, 'ops-events.jsonl')
     this.snapshotFile = path.join(stateDir, 'ops-runtime.json')
   }
@@ -132,6 +138,59 @@ export class OpsTelemetry {
       const raw = await readFile(this.eventsFile, 'utf8')
       const tail = raw.trimEnd().split('\n').slice(-1000).join('\n') + '\n'
       await this.privateWrite(this.eventsFile, tail)
+    })
+  }
+  /**
+   * A separate, retention-bounded, append-only ledger. Each terminal task has
+   * one stable hashed correlation key; the reader deduplicates after retries.
+   * Do not record raw Feishu identities, conversations, or tool output.
+   * A missing model-reported usage object is recorded as UNKNOWN, not zero.
+   */
+  async recordUsage(value: {
+    ref: string; botId: string; session?: string; user?: string; chat?: string
+    model?: string; status: 'done' | 'failed' | 'cancelled' | 'timeout' | 'uncertain'
+    usage?: ModelTokenUsage
+  }): Promise<void> {
+    const botId = safeBot(value.botId)
+    if (!botId || !value.ref) return
+    const validToken = (n: number | undefined): n is number =>
+      typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= 1e13
+    const usage = value.usage
+    const known = usage && validToken(usage.inputTokens) && validToken(usage.outputTokens)
+    const now = Date.now()
+    const day = new Date(now).toISOString().slice(0, 10)
+    const event = {
+      version: 1 as const, ts: now, ref: opsRef(value.ref), botId,
+      status: value.status,
+      ...(value.session ? { session: opsRef(value.session) } : {}),
+      ...(value.user ? { user: opsRef(value.user) } : {}),
+      ...(value.chat ? { chat: opsRef(value.chat) } : {}),
+      ...(safeModel(value.model) ? { model: safeModel(value.model) } : {}),
+      ...(known ? {
+        inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+        ...(validToken(usage.cacheReadTokens) ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+        ...(validToken(usage.cacheWriteTokens) ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
+      } : {}),
+    }
+    await this.queue(async () => {
+      const root = path.join(this.stateDir, 'ops-usage')
+      await mkdir(root, { recursive: true, mode: 0o700 })
+      const st = await lstat(root)
+      if (!st.isDirectory() || st.isSymbolicLink()) throw new Error('unsafe usage directory')
+      const file = path.join(root, day + '.jsonl')
+      await checkFile(file)
+      await appendFile(file, JSON.stringify(event) + '\n', { mode: 0o600 })
+      if (this.lastRetentionDay === day) return
+      this.lastRetentionDay = day
+      // Retain the last N UTC dates; never delete unexpected names or links.
+      const cutoff = new Date(Date.parse(day + 'T00:00:00Z') -
+        (this.usageRetentionDays - 1) * 86400000).toISOString().slice(0, 10)
+      for (const name of await readdir(root)) {
+        if (!/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name) || name.slice(0, 10) >= cutoff) continue
+        const previous = path.join(root, name)
+        const info = await lstat(previous)
+        if (info.isFile() && !info.isSymbolicLink()) await rm(previous)
+      }
     })
   }
   async snapshot(state: OpsSnapshot): Promise<void> {
