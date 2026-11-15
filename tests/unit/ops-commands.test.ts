@@ -64,3 +64,45 @@ describe('at-most-once operator mailbox', () => {
     } finally { await rm(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('Session lifecycle commands', () => {
+  it('dispatches versioned archive/unbind once without carrying sensitive IDs', async () => {
+    const { dir, folder } = await setup()
+    try {
+      const refs = ['archive-session', 'unbind-session'] as const
+      const seen: string[] = []
+      for (const type of refs) {
+        const id = randomUUID()
+        await writeFile(path.join(folder, id + '.json'), JSON.stringify({
+          version: 1, id, ts: Date.now(), type, ref: 'abcdef1234567890',
+          expectedLastActiveAt: 12345,
+        }), { mode: 0o600 })
+      }
+      expect(await processOperatorCommands(dir, async cmd => {
+        seen.push(cmd.type + ':' + cmd.expectedLastActiveAt)
+        return 'completed'
+      })).toBe(2)
+      expect(seen.sort()).toEqual(['archive-session:12345', 'unbind-session:12345'])
+      expect(await processOperatorCommands(dir, async () => 'completed')).toBe(0)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+
+  it('rejects Session commands without a valid version or reference', async () => {
+    const { dir, folder } = await setup()
+    try {
+      const cases = [
+        { type: 'archive-session', ref: 'abcdef1234567890' },
+        { type: 'unbind-session', ref: 'invalid', expectedLastActiveAt: 111 },
+        { type: 'unbind-session', ref: 'abcdef1234567890', expectedLastActiveAt: -1 },
+      ]
+      for (const bad of cases) {
+        const id = randomUUID()
+        await writeFile(path.join(folder, id + '.json'),
+          JSON.stringify({ version: 1, id, ts: Date.now(), ...bad }))
+      }
+      let executed = 0
+      expect(await processOperatorCommands(dir, async () => { executed += 1; return 'completed' })).toBe(3)
+      expect(executed).toBe(0)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+})
