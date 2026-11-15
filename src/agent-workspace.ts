@@ -39,5 +39,15 @@ export async function prepareFeishuWorkspace(
   if (!st.isDirectory() || st.isSymbolicLink() || await realpath(directory) !== directory) {
     throw new Error('Refusing symlinked Feishu Agent workspace')
   }
+  // Reject aliasing through a symlink on the legacy workspace side, too.
+  // Path-string comparisons alone cannot detect an old cwd that resolves
+  // inside the new workspace through a mount or symlink.
+  const sharedReal = await realpath(path.resolve(config.workspace)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (sharedReal && (within(sharedReal, directory) || within(directory, sharedReal))) {
+    throw new Error('Feishu Agent workspace aliases the original DSH workspace')
+  }
   return directory
 }
