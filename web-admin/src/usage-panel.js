@@ -334,6 +334,7 @@ function UsagePanel() {
   const [busy, setBusy] = useState(false)
   const [yearBusy, setYearBusy] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [yearRevision, setYearRevision] = useState(0)
   const [error, setError] = useState('')
   const [yearError, setYearError] = useState('')
   const filterControls = { model, botId, user, chat, session }
@@ -352,6 +353,14 @@ function UsagePanel() {
     }, 30000)
     return () => clearInterval(timer)
   }, [])
+  // A 365-day scan is more expensive than the selected range. Refresh the
+  // heatmap at a lower cadence, while the summary may refresh every 30s.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setYearRevision(v => v + 1)
+    }, 300000)
+    return () => clearInterval(timer)
+  }, [])
   useEffect(() => {
     let active = true
     setBusy(true); setError('')
@@ -367,7 +376,7 @@ function UsagePanel() {
       .catch(e => { if (active) { setYearReport(null); setYearError(e.message || String(e)) } })
       .finally(() => { if (active) setYearBusy(false) })
     return () => { active = false }
-  }, [yearUrl, revision])
+  }, [yearUrl, yearRevision])
   const presetRange = days => {
     const current = usageIsoDate(new Date(), zone)
     setPreset(days); setTo(current)
@@ -420,7 +429,7 @@ function UsagePanel() {
               onClick: () => presetRange(n) }, label))),
         h('div', { className: 'fgw-usage-actions' },
           h('button', { className: 'fgw-refresh', type: 'button',
-            onClick: () => setRevision(x => x + 1) }, '刷新数据'),
+            onClick: () => { setRevision(x => x + 1); setYearRevision(x => x + 1) } }, '刷新数据'),
           h('a', { className: 'fgw-refresh fgw-usage-export',
             href: API + url.replace('/ops/usage?', '/ops/usage/export?'),
             download: 'feishu-token-usage.csv' }, '导出 CSV'))),
