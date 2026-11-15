@@ -99,5 +99,20 @@ export async function processOperatorCommands(
     }
     count += 1
   }
+  // Keep a bounded on-disk outcome history. No operator action is retried
+  // when a result ages out; cleanup is strictly housekeeping.
+  try {
+    const resultNames = (await readdir(results)).filter(name => UUID.test(name))
+    if (resultNames.length > 500) {
+      const dates = await Promise.all(resultNames.map(async name => {
+        const st = await lstat(path.join(results, name))
+        return { name, mtimeMs: st.isFile() && !st.isSymbolicLink() ? st.mtimeMs : Infinity }
+      }))
+      dates.sort((a, b) => a.mtimeMs - b.mtimeMs)
+      for (const old of dates.slice(0, Math.max(0, dates.length - 500))) {
+        if (Number.isFinite(old.mtimeMs)) await rm(path.join(results, old.name), { force: true })
+      }
+    }
+  } catch { /* Retention cleanup must never interrupt the Gateway */ }
   return count
 }
