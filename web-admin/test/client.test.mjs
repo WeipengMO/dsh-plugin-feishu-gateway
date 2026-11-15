@@ -245,6 +245,29 @@ test('network proxy save-and-restart saves first, then restarts with confirmatio
   assert.match(source, /proxyErrorText\(e\?\.message \|\| e\)/)
 })
 
+test('usage heatmap is a labelled calendar with a theme-aware ramp and one shared tooltip', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(panel, /function UsageHeatmap/)
+  // Calendar axes: month labels, weekday gutter and a week-per-column grid.
+  assert.match(panel, /fgw-heatmap-months/)
+  assert.match(panel, /fgw-heatmap-weekdays/)
+  assert.match(panel, /className: 'fgw-heatmap-week'/)
+  assert.match(panel, /role: 'grid'/)
+  // One shared tooltip instead of hundreds of native title attributes.
+  assert.match(panel, /fgw-heat-tip/)
+  assert.match(panel, /aria-label': cellLabel\(day\)/)
+  assert.match(panel, /fgw-heat-today/)
+  assert.doesNotMatch(panel, /title: tooltip/)
+  // Theme-aware ramp and adaptive cell sizes come from CSS variables.
+  assert.match(css, /\.fgw-heat-1 \{ background:color-mix\(in srgb,var\(--primary/)
+  assert.match(css, /\.fgw-heat-today \{/)
+  assert.match(css, /\.fgw-heatmap-scroll \{[^}]*border-radius:11px/)
+  assert.match(css, /\.fgw-heat-tip \{[^}]*position:fixed/)
+  assert.match(css, /\.fgw-heatmap-xl \{ --fgw-heat-cell:26px; \}/)
+  assert.match(built, /fgw-heatmap-foot/)
+})
+
 test('Markdown source editor provides line numbers, cursor highlight and safe colors without network dependencies', () => {
   const editor = readFileSync(path.join(root, 'src/markdown-editor.js'), 'utf8')
   const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')

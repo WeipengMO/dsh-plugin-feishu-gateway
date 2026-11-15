@@ -399,18 +399,44 @@
 .fgw-usage-bars { display:flex; flex-direction:column; gap:7px; max-height:420px; overflow:auto; }
 .fgw-usage-line { width:100%; overflow-x:auto; }
 .fgw-usage-line svg { display:block; min-width:420px; width:100%; height:auto; max-height:260px; }
-.fgw-heatmap-scroll { width:100%; overflow-x:auto; padding:8px 0 10px; }
-.fgw-heatmap-grid { display:grid; grid-auto-flow:column; grid-template-rows:repeat(7,13px); grid-auto-columns:13px; gap:4px; width:max-content; min-width:0; }
-.fgw-heat-day { display:block; width:13px; height:13px; border-radius:3px; background:var(--muted,#9992); border:1px solid rgba(120,120,120,.12); outline-offset:2px; }
-.fgw-heat-0 { background:var(--muted,rgba(128,128,128,.15)); }
-.fgw-heat-1 { background:#9cc8fa; } .fgw-heat-2 { background:#619fe9; }
-.fgw-heat-3 { background:#347fd8; } .fgw-heat-4 { background:#1658aa; }
-.fgw-heat-unknown { background:repeating-linear-gradient(45deg,transparent,transparent 3px,var(--border,#8884) 3px,var(--border,#8884) 5px); }
-.fgw-heat-partial { outline:1px dashed var(--muted-foreground,#808080); }
-.fgw-heat-day:focus-visible { outline:2px solid var(--ring,#467cf4); }
-.fgw-heat-legend { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:11px; color:var(--muted-foreground,#999); }
-.fgw-heat-legend .fgw-heat-unknown { margin-left:12px; }
-@media(max-width:690px) { .fgw-usage-controls { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px; } }
+.fgw-heatmap { --fgw-heat-cell:13px; --fgw-heat-gap:3px; position:relative; display:flex; flex-direction:column; gap:12px; width:fit-content; max-width:100%; margin:0 auto; padding-top:7px; }
+.fgw-heatmap-md { --fgw-heat-cell:15px; }
+.fgw-heatmap-lg { --fgw-heat-cell:18px; }
+.fgw-heatmap-xl { --fgw-heat-cell:26px; }
+.fgw-heatmap-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.fgw-heatmap-hint { font-size:10.5px; line-height:1.4; color:var(--muted-foreground,#8a94a3); }
+.fgw-heatmap-stats { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 18px; font-size:11.5px; color:var(--muted-foreground,#7a8595); font-variant-numeric:tabular-nums; }
+.fgw-heatmap-stats strong { margin-left:4px; font-size:13px; font-weight:680; color:var(--foreground,inherit); letter-spacing:-.01em; }
+.fgw-heatmap-legend { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-left:auto; font-size:11px; color:var(--muted-foreground,#7a8595); }
+.fgw-heatmap-legend .fgw-heat-day { pointer-events:none; }
+.fgw-heatmap-legend-sep { width:1px; height:13px; margin:0 5px; background:var(--border,#8884); }
+.fgw-heatmap-scroll { overflow-x:auto; overflow-y:hidden; padding:12px 14px 10px; border:1px solid color-mix(in srgb,var(--border,#8883) 72%,transparent); border-radius:11px; background:color-mix(in srgb,var(--muted-foreground,#8a94a6) 7%,transparent); scrollbar-width:thin; }
+.fgw-heatmap-inner { display:block; width:max-content; margin:0 auto; }
+.fgw-heatmap-months { display:flex; gap:var(--fgw-heat-gap); margin-left:23px; height:12px; }
+.fgw-heatmap-month { position:relative; flex:none; width:var(--fgw-heat-cell); }
+.fgw-heatmap-month i { position:absolute; left:0; top:0; font-style:normal; font-size:10px; line-height:1; color:var(--muted-foreground,#8a94a3); white-space:nowrap; }
+.fgw-heatmap-main { display:flex; gap:8px; }
+.fgw-heatmap-weekdays { display:grid; grid-template-rows:repeat(7,var(--fgw-heat-cell)); gap:var(--fgw-heat-gap); flex:none; width:15px; }
+.fgw-heatmap-weekdays span { display:flex; align-items:center; justify-content:flex-end; font-size:9.5px; line-height:1; color:var(--muted-foreground,#93a0b1); }
+.fgw-heatmap-grid { display:flex; gap:var(--fgw-heat-gap); }
+.fgw-heatmap-week { display:grid; grid-template-rows:repeat(7,var(--fgw-heat-cell)); gap:var(--fgw-heat-gap); }
+.fgw-heat-day { position:relative; display:block; width:var(--fgw-heat-cell); height:var(--fgw-heat-cell); border-radius:clamp(2px,calc(var(--fgw-heat-cell) * .2),6px); background:color-mix(in srgb,var(--muted-foreground,#8a94a6) 11%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--muted-foreground,#8a94a6) 8%,transparent); outline:none; transition:transform .09s ease,box-shadow .12s ease; }
+.fgw-heat-0 { background:color-mix(in srgb,var(--muted-foreground,#8a94a6) 11%,transparent); }
+.fgw-heat-1 { background:color-mix(in srgb,var(--primary,#4f7adb) 22%,transparent); }
+.fgw-heat-2 { background:color-mix(in srgb,var(--primary,#4f7adb) 44%,transparent); }
+.fgw-heat-3 { background:color-mix(in srgb,var(--primary,#4f7adb) 68%,transparent); }
+.fgw-heat-4 { background:color-mix(in srgb,var(--primary,#4f7adb) 96%,transparent); }
+.fgw-heat-empty { visibility:hidden; }
+.fgw-heat-unknown { background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted-foreground,#8a94a6) 16%,transparent) 0 2px,transparent 2px 4px); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--muted-foreground,#8a94a6) 12%,transparent); }
+.fgw-heat-partial { box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--foreground,#20242a) 28%,transparent); }
+.fgw-heat-today { box-shadow:inset 0 0 0 1.5px var(--primary,#4f7adb),0 0 0 2px color-mix(in srgb,var(--primary,#4f7adb) 16%,transparent); }
+.fgw-heat-day:hover,.fgw-heat-day:focus-visible { transform:scale(1.28); z-index:2; box-shadow:0 0 0 2px var(--card,#fff),0 0 0 3.5px color-mix(in srgb,var(--primary,#4f7adb) 55%,transparent); }
+.fgw-heat-tip { position:fixed; z-index:60; pointer-events:none; transform:translate(-50%,-100%); min-width:170px; padding:9px 11px; border-radius:10px; border:1px solid var(--border,#8884); background:var(--popover,var(--card,#fff)); color:var(--foreground,inherit); box-shadow:0 12px 30px rgba(15,25,40,.18); font-size:11.5px; line-height:1.55; }
+.fgw-heat-tip-date { font-weight:680; margin-bottom:5px; }
+.fgw-heat-tip-row { display:flex; justify-content:space-between; gap:20px; color:var(--muted-foreground,#7a8595); }
+.fgw-heat-tip-row strong { color:var(--foreground,inherit); font-weight:620; font-variant-numeric:tabular-nums; }
+.fgw-heat-tip-note { margin-top:5px; padding-top:5px; border-top:1px solid var(--border,#8883); color:var(--muted-foreground,#7a8595); }
+@media(max-width:690px) { .fgw-usage-controls { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px; } .fgw-heatmap { --fgw-heat-cell:11px; } .fgw-heatmap-scroll { padding:9px 10px 8px; } .fgw-heatmap-stats { gap:3px 12px; } .fgw-heatmap-months { margin-left:20px; } }
 
 
 /* Issue #16: Session history inventory */
