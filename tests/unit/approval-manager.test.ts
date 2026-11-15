@@ -15,6 +15,12 @@ function setup(timeoutMs = 200) {
     botId => botId === 'default' ? transport : undefined,
     silentLogger,
   )
+  const untilPending = async () => {
+    for (let i = 0; i < 100 && manager.size !== 1; i += 1) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    expect(manager.size).toBe(1)
+  }
   const ask = (signal?: AbortSignal) => manager.answer({
     agent: { id: 's_1' }, toolName: 'bash', signal,
   }, async () => 'rejected')
@@ -30,7 +36,7 @@ function setup(timeoutMs = 200) {
       value: btn.behaviors[0].value as { namespace: string; kind: string; nonce: string; decision: string },
     }
   }
-  return { manager, transport, ask, action }
+  return { manager, transport, ask, action, untilPending }
 }
 
 describe('fail-closed native approval card manager', () => {
@@ -47,7 +53,7 @@ describe('fail-closed native approval card manager', () => {
   it('grants only once to the exact allowlisted sender, bot, chat and card', async () => {
     const t = setup()
     const awaiting = t.ask()
-    await Promise.resolve()
+    await t.untilPending()
     expect(t.transport.interactiveCards).toHaveLength(1)
     const sent = t.transport.interactiveCards[0]!
     expect(JSON.stringify(sent.card)).not.toContain('om_original')
@@ -75,7 +81,7 @@ describe('fail-closed native approval card manager', () => {
     const t = setup()
     const waiting = t.manager.answer({ agent: { id: 's_1' },
       toolName: 'bash; TOKEN=private' }, async () => 'unavailable')
-    await Promise.resolve()
+    await t.untilPending()
     expect(JSON.stringify(t.transport.interactiveCards[0]?.card)).not.toContain('private')
     const bad = t.action('reject')
     expect(t.manager.consume({ ...bad, value: { ...bad.value, decision: 'maybe' } })?.toast.type).toBe('warning')
@@ -87,7 +93,7 @@ describe('fail-closed native approval card manager', () => {
   it('expires without granting and makes stale card callbacks inert', async () => {
     const t = setup(25)
     const waiting = t.ask()
-    await Promise.resolve()
+    await t.untilPending()
     const click = t.action('allow')
     expect(await waiting).toBe('unavailable')
     expect(t.manager.consume(click)?.toast.type).toBe('warning')
@@ -98,13 +104,13 @@ describe('fail-closed native approval card manager', () => {
     const t = setup()
     const controller = new AbortController()
     const waiting = t.ask(controller.signal)
-    await Promise.resolve()
+    await t.untilPending()
     const click = t.action('allow')
     controller.abort()
     expect(await waiting).toBe('cancelled')
     expect(t.manager.consume(click)?.toast.type).toBe('warning')
     const second = t.ask()
-    await Promise.resolve()
+    await t.untilPending()
     t.manager.stop()
     expect(await second).toBe('cancelled')
   })
@@ -112,13 +118,29 @@ describe('fail-closed native approval card manager', () => {
   it('revokes pending approvals on a transport disconnect without granting', async () => {
     const t = setup()
     const waiting = t.ask()
-    await Promise.resolve()
+    await t.untilPending()
     const click = t.action('allow')
     t.manager.cancelBot('unrelated')
     expect(t.manager.size).toBe(1)
     t.manager.cancelBot('default')
     expect(await waiting).toBe('unavailable')
     expect(t.manager.consume(click)?.toast.type).toBe('warning')
+    t.manager.stop()
+  })
+
+  it('rejects card delivery completed after the bot disconnected', async () => {
+    const t = setup()
+    let resolveDelivery!: () => void
+    const pendingDelivery = new Promise<void>(resolve => { resolveDelivery = resolve })
+    t.transport.sendInteractiveCard = async () => {
+      await pendingDelivery
+      return { messageId: 'om_late_card' }
+    }
+    const waiting = t.ask()
+    t.manager.cancelBot('default')
+    resolveDelivery()
+    expect(await waiting).toBe('unavailable')
+    expect(t.manager.size).toBe(0)
     t.manager.stop()
   })
 

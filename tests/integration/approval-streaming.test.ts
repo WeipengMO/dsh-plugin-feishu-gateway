@@ -45,7 +45,7 @@ describe('Feishu callback and native DSH approval integration', () => {
     const sessionId = b.bridge.prompts[0]!.sessionId
     const approved = b.gateway.answerApproval({ agent: { id: sessionId }, toolName: 'bash' },
       async () => 'unavailable')
-    await until(() => b.t.interactiveCards.length === 1)
+    await until(() => b.gateway.health().pendingApprovals === 1)
     const card = b.t.interactiveCards[0]!
     const first = (((card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value))
     const event = {
@@ -89,7 +89,7 @@ describe('Feishu callback and native DSH approval integration', () => {
     const session = b.bridge.prompts[0]!.sessionId
     const decision = b.gateway.answerApproval({ agent: { id: session }, toolName: 'shell' },
       async () => 'unavailable')
-    await until(() => b.t.interactiveCards.length === 1)
+    await until(() => b.gateway.health().pendingApprovals === 1)
     const card = b.t.interactiveCards[0]!
     const value = (card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value
     await b.emit('om_cancel', '/cancel')
@@ -109,7 +109,7 @@ describe('Feishu callback and native DSH approval integration', () => {
     const sessionId = b.bridge.prompts[0]!.sessionId
     const decision = b.gateway.answerApproval({ agent: { id: sessionId }, toolName: 'bash' },
       async () => 'unavailable')
-    await until(() => b.t.interactiveCards.length === 1)
+    await until(() => b.gateway.health().pendingApprovals === 1)
     await b.t.simulateReconnect()
     expect(await decision).toBe('unavailable')
     expect(b.gateway.health().pendingApprovals).toBe(0)
