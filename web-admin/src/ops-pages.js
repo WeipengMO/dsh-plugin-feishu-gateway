@@ -110,6 +110,12 @@ function OpsPage({ kind, ops, onConfig, onView }) {
           { key: 'turns', title: '任务数', render: x => wbCount(x.turns) },
           { key: 'tokens', title: 'Token', render: x => wbCount(x.tokens) },
         ] })),
+      h(WbBlock, { title: '按机器人统计' },
+        h(OpsTable, { rows: summary.byBot ?? [], columns: [
+          { key: 'botId', title: '机器人' },
+          { key: 'turns', title: '任务数', render: x => wbCount(x.turns) },
+          { key: 'tokens', title: 'Token', render: x => wbCount(x.tokens) },
+        ] })),
       h(OpsNote, null, '统计依据有限期操作事件，轮转或升级前的历史不在本页；读取数据和渲染图表不产生额外模型 Token。'))
   }
   if (kind === 'alerts') return h(React.Fragment, null,
