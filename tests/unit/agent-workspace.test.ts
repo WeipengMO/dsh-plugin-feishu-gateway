@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm, symlink, lstat } from 'node:fs/promises'
 import { resolveConfig } from '../../src/config.js'
 import { prepareFeishuWorkspace, resolveFeishuWorkspace } from '../../src/agent-workspace.js'
 
@@ -47,6 +47,7 @@ describe('Feishu-only Agent workspace', () => {
       await expect(prepareFeishuWorkspace({
         ...base, workspace: legacyAlias, agentWorkspace: path.join(shared, 'nested'),
       })).rejects.toThrow(/aliases/)
+      await expect(lstat(path.join(shared, 'nested'))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally { await rm(root, { recursive: true, force: true }) }
   })
 })
