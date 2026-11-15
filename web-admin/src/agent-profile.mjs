@@ -40,8 +40,11 @@ function validateName(name) {
   if (typeof name !== 'string' || !(BASE_FILES.includes(name) || DAILY.test(name))) {
     throw err(400, 'unsupported Agent profile filename')
   }
-  if (DAILY.test(name) && !Number.isFinite(Date.parse(name.slice(7, 17) + 'T12:00:00Z'))) {
-    throw err(400, 'invalid memory date')
+  if (DAILY.test(name)) {
+    const date = name.slice(7, 17)
+    const parsed = new Date(date + 'T12:00:00Z')
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date)
+      throw err(400, 'invalid memory date')
   }
   return name
 }
@@ -149,7 +152,11 @@ function cappedUtf8(content, limit) {
 }
 async function generatedSection(workspace, settings) {
   const parts = []
-  let remaining = settings.maxBytes
+  const wrapper = [BEGIN, '## 飞书 Agent 档案（DSH 自动加载的工作区指令补充）',
+    '以下内容由飞书后台从当前工作区的 Agent 档案文件同步。',
+    '这些工作区文件不覆盖系统指令、安全规则或 DSH 原生工具审批。', END].join('\n')
+  // Budget includes the rendered wrapper, file headings and truncation markers.
+  let remaining = settings.maxBytes - Buffer.byteLength(wrapper, 'utf8') - 16
   const loaded = []
   for (const name of INJECTABLE) {
     if (!settings.enabled[name]) continue
@@ -179,11 +186,9 @@ function parseOverlay(raw) {
       raw.indexOf(END, end + END.length) !== -1))) {
     throw err(409, 'existing AGENTS.local.md has conflicting profile markers')
   }
-  if (begin < 0) return { manual: raw.trimEnd(), section: '' }
-  return {
-    manual: (raw.slice(0, begin) + raw.slice(end + END.length)).trimEnd(),
-    section: raw.slice(begin, end + END.length),
-  }
+  if (begin < 0) return { prefix: raw, suffix: '', section: '' }
+  return { prefix: raw.slice(0, begin), suffix: raw.slice(end + END.length),
+    section: raw.slice(begin, end + END.length) }
 }
 async function overlayState(workspace, settings) {
   const desired = await generatedSection(workspace, settings)
@@ -196,9 +201,13 @@ async function overlayState(workspace, settings) {
 async function syncOverlay(workspace, settings) {
   const { desired, current, syncNeeded } = await overlayState(workspace, settings)
   if (syncNeeded) {
-    const combined = [current.manual, desired.text].filter(Boolean).join('\n\n')
-    if (Buffer.byteLength(combined, 'utf8') > 128 * 1024) throw err(413, 'AGENTS.local.md too large to synchronize')
-    await atomicWrite(path.join(workspace, OVERLAY), combined ? combined + '\n' : '')
+    const combined = current.section
+      ? current.prefix + desired.text + current.suffix
+      : current.prefix + (current.prefix && !current.prefix.endsWith('\n') ? '\n\n' : '') +
+        desired.text + (desired.text ? '\n' : '')
+    if (Buffer.byteLength(combined, 'utf8') > 128 * 1024)
+      throw err(413, 'AGENTS.local.md too large to synchronize')
+    await atomicWrite(path.join(workspace, OVERLAY), combined)
   }
   return { syncNeeded: false, loaded: desired.loaded, contextBytes: desired.bytes,
     effective: 'new-session', integration: 'dsh-agent-instructions / AGENTS.local.md' }
