@@ -24,6 +24,19 @@ DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
 
 可额外安装独立的 **dsh-plugin-feishu-admin** 到 `web` Profile，在 DSH Web 设置页查看飞书通道健康、修改模型/白名单/机器人并写入受限凭据。网关仍在 `feishu-channel` Profile 独立运行。安装、systemd 管理及验收步骤详见 [WEB-ADMIN.md](WEB-ADMIN.md)。
 
+## 飞书内管理命令
+
+在已授权的**私聊**里发送以下命令（不作为 Agent 提示词）：
+
+| 命令 | 行为 | 安全边界 |
+| --- | --- | --- |
+| `/help` | 列出命令 | 不创建 Session |
+| `/status` | 当前聊天任务状态、通道健康与 Outbox | 不返回凭据或会话内容 |
+| `/cancel` | 立即请求取消当前聊天运行中的 Agent turn | 仅取消本聊天；命令可绕过该聊天长任务队列，但不会回滚已经执行的工具操作 |
+| `/new` | 当前任务结束后解除旧 Session 绑定，后续消息创建新 Session | 原 DSH 会话历史保留，不会将旧 Session 的任务意外中断 |
+
+只有完整的 `/help` 等命令会被网关拦截；其它文字照常发送给 Agent。重复事件由 Inbox 幂等处理；崩溃时不自动重放已开始的取消操作。取消的 turn 在 Inbox 中记录为终态 `failed`，以防止危险操作重复执行。
+
 ## 凭据（绝不提交）
 
 凭据放在**仓库之外**的 `~/.dsh/feishu-channel.env`（权限 `600`）：

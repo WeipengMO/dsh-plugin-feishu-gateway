@@ -61,7 +61,11 @@
 
 ---
 
-## P0-3 长任务状态与取消
+## P0-3 长任务状态与取消（0.1.2 已完成第一阶段）
+
+**已实现**：`/help`、`/status`、`/cancel`、`/new` 纯文本命令；`/cancel` 使用每聊天独立的 `AbortController` 并绕开其 Agent 等待队列；`/new` 在原有 turn 后执行并安全解除绑定；取消的任务记录为非重放终态。剩余工作是飞书卡片按钮、增量执行进度和长任务交互式审批。
+
+> 以下为历史规划内容，其中“只有全局 AbortController”已被本阶段修复；不要误认为仍未实现。
 
 **现状**：`SessionBridge.cancel(sessionId)` 已实现，调用 `agent.cancel({kind:'user'}, {keepInbox:true})`；
 `waitForReply` 有 `replyTimeoutMs` + AbortSignal。但用户还没有主动取消入口。
