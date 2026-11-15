@@ -88,3 +88,8 @@ GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/
 开发早期的完整调查和测试过程保留在 [research/](research/) 与 [历史 README](docs/archive/README-v0.1.0-history.md)，请勿把其历史状态当作当前验收结论。
 
 MIT License。
+
+
+### Group chat policy (Issue #18)
+
+Group chats default to disabled. Configure the allowed group IDs, trusted sender open_ids, @only/auto replies and native Session isolation from **飞书管理 → 群聊管理**. See [Group chat guide](docs/GROUP-CHAT.md) for permission requirements and operational notes.
