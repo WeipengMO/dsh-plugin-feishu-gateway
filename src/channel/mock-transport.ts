@@ -1,5 +1,7 @@
 import type {
   FeishuEventHandlers,
+  CardActionEvent,
+  FeishuCardHandle,
   FeishuTransport,
   InboundMessage,
   OutboundTarget,
@@ -22,6 +24,11 @@ export class MockFeishuTransport implements FeishuTransport {
   private handlers: FeishuEventHandlers | undefined
   readonly sent: Array<OutboundTarget & { messageId: string; at: number }> = []
   readonly stateChanges: Array<{ state: TransportState; error?: Error }> = []
+  readonly interactiveCards: Array<{ target: { replyToMessageId: string }; card: Record<string, unknown>; messageId: string }> = []
+  readonly patchedCards: Array<{ messageId: string; card: Record<string, unknown> }> = []
+  readonly streamCards: Array<{ messageId: string; cardId: string; nonce: string }> = []
+  readonly streamUpdates: Array<{ cardId: string; text: string; sequence: number }> = []
+  readonly streamFinishes: Array<{ cardId: string; sequence: number }> = []
   remainingFailures: number
 
   constructor(readonly botId: string, private readonly options: MockTransportOptions = {}) {
@@ -53,6 +60,36 @@ export class MockFeishuTransport implements FeishuTransport {
     const messageId = newId('om')
     this.sent.push({ ...target, messageId, at: Date.now() })
     return { messageId }
+  }
+
+  async sendInteractiveCard(target: { replyToMessageId: string }, card: Record<string, unknown>): Promise<FeishuCardHandle> {
+    const messageId = newId('om')
+    this.interactiveCards.push({ target, card, messageId })
+    return { messageId }
+  }
+
+  async updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void> {
+    this.patchedCards.push({ messageId, card })
+  }
+
+  async startStreamCard(_target: { replyToMessageId: string }, nonce: string): Promise<FeishuCardHandle> {
+    const cardId = String(this.streamCards.length + 1)
+    const messageId = newId('om')
+    this.streamCards.push({ cardId, messageId, nonce })
+    return { cardId, messageId }
+  }
+
+  async updateStreamCard(cardId: string, text: string, sequence: number): Promise<void> {
+    this.streamUpdates.push({ cardId, text, sequence })
+  }
+
+  async finishStreamCard(cardId: string, sequence: number): Promise<void> {
+    this.streamFinishes.push({ cardId, sequence })
+  }
+
+  async emitCardAction(event: CardActionEvent): Promise<{ toast: { type: string; content: string } }> {
+    if (!this.handlers?.onCardAction) throw new Error('card action handler is not connected')
+    return this.handlers.onCardAction(event)
   }
 
   /** Simulate one inbound `im.message.receive_v1` delivery. */

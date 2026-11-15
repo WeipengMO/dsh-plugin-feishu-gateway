@@ -91,6 +91,16 @@ Feishu WebSocket → FeishuTransport
 
 ---
 
+## 飞书工具审批与流式任务卡片（0.2.0-rc.1）
+
+默认关闭。可在 DSH Web 飞书通道设置中启用：
+
+- 原生审批：只有该飞书聊天正在使用的 DSH Agent 请求工具许可时才发送审批卡片；核验 open_id、bot/chat/message、随机 nonce、有效期及一次性授权。超时、断线与取消一律不放行。
+- CardKit v1 流式任务卡片：通过原生 assistant-stream 增量展示任务进度，限频更新，提供取消按钮。最终完整答复仍然由原始 DurableOutbox 发送。
+- 此插件不会自动将 DSH approval 的 never 策略改为 ask。请在真实飞书环境验收后再有意识地启用 ask，并限制权限。
+
+详见 [docs/APPROVAL-STREAMING.md](docs/APPROVAL-STREAMING.md)。
+
 ## 富文本与 Markdown（Gateway 0.1.3 / Admin 0.1.1）
 
 - 入站支持**纯文本型飞书富文本 post**（标题、文本、Markdown 与普通 HTTP(S) 链接）；含图片、@、视频等暂不支持的元素会整体拒绝，而不是丢掉附件后把不完整内容交给 Agent。

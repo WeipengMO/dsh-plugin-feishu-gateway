@@ -19,7 +19,8 @@ const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
 const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs',
-  'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect']
+  'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
+  'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 
 function httpError(status, message) { return Object.assign(new Error(message), { status }) }
 function object(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) }
@@ -83,6 +84,14 @@ export function validateConfig(input) {
   }
   if (input.sendRetries !== undefined) result.sendRetries = integer(input.sendRetries, 'sendRetries', 1, 10)
   if (input.outboxRetryIntervalMs !== undefined) result.outboxRetryIntervalMs = integer(input.outboxRetryIntervalMs, 'outboxRetryIntervalMs', 1000, 300000)
+  for (const key of ['approvalCards', 'streamCards']) if (input[key] !== undefined) {
+    if (typeof input[key] !== 'boolean') throw httpError(400, 'invalid ' + key)
+    result[key] = input[key]
+  }
+  if (input.approvalTimeoutMs !== undefined)
+    result.approvalTimeoutMs = integer(input.approvalTimeoutMs, 'approvalTimeoutMs', 5000, 300000)
+  if (input.streamIntervalMs !== undefined)
+    result.streamIntervalMs = integer(input.streamIntervalMs, 'streamIntervalMs', 500, 5000)
   if (input.autoConnect !== undefined) {
     if (typeof input.autoConnect !== 'boolean') throw httpError(400, 'autoConnect must be boolean')
     result.autoConnect = input.autoConnect

@@ -18,6 +18,10 @@ export interface ManagedChannelConfig {
   sendRetries?: number
   outboxRetryIntervalMs?: number
   autoConnect?: boolean
+  approvalCards?: boolean
+  streamCards?: boolean
+  approvalTimeoutMs?: number
+  streamIntervalMs?: number
 }
 
 export function managedConfigPath(stateDir: string): string {
@@ -45,7 +49,8 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
   assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'replyFormat', 'sendRetries',
-    'outboxRetryIntervalMs', 'autoConnect'])
+    'outboxRetryIntervalMs', 'autoConnect',
+    'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
 
   if (value.bots !== undefined) {
@@ -109,6 +114,16 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (value.outboxRetryIntervalMs !== undefined) {
     result.outboxRetryIntervalMs = positiveInteger(value.outboxRetryIntervalMs, 'outboxRetryIntervalMs', 1_000, 300_000)
   }
+  for (const field of ['approvalCards', 'streamCards'] as const) {
+    if (value[field] !== undefined) {
+      if (typeof value[field] !== 'boolean') throw new Error(`invalid ${field}`)
+      result[field] = value[field]
+    }
+  }
+  if (value.approvalTimeoutMs !== undefined)
+    result.approvalTimeoutMs = positiveInteger(value.approvalTimeoutMs, 'approvalTimeoutMs', 5_000, 300_000)
+  if (value.streamIntervalMs !== undefined)
+    result.streamIntervalMs = positiveInteger(value.streamIntervalMs, 'streamIntervalMs', 500, 5_000)
   if (value.autoConnect !== undefined) {
     if (typeof value.autoConnect !== 'boolean') throw new Error('autoConnect must be boolean')
     result.autoConnect = value.autoConnect

@@ -1,5 +1,8 @@
 import { mkdir } from 'node:fs/promises'
 import { DedupIndex } from './inbox/dedup.js'
+import { FeishuApprovalManager, type ApprovalRequestLike, type ApprovalOutcome } from './channel/approval-manager.js'
+import { TaskProgressCard } from './channel/task-progress-card.js'
+import { CARD_NAMESPACE } from './channel/card-content.js'
 import { commandHelp, parseControlCommand, type ControlCommand } from './control/commands.js'
 import { DurableInbox, type InboxRecord } from './inbox/inbox.js'
 import { DurableOutbox } from './outbox/outbox.js'
@@ -9,6 +12,7 @@ import { truncateText } from './session/session-bridge.js'
 import { acquireStateDirOwnerLock, type StateDirOwnerLock } from './storage/owner-lock.js'
 import type {
   FeishuTransport,
+  CardActionEvent,
   GatewayConfig,
   GatewayLogger,
   InboundMessage,
@@ -16,6 +20,7 @@ import type {
   TransportState,
 } from './types.js'
 import { chatKey, newId, sessionIdFor } from './util/id.js'
+import { withTimeout } from './util/retry.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -33,6 +38,7 @@ export interface GatewayHealth {
   readonly dedupEntries: number
   readonly boundSessions: number
   readonly activeTurns: number
+  readonly pendingApprovals: number
   readonly processed: number
   readonly rejected: Record<RejectReason, number>
   readonly errors: number
@@ -40,6 +46,11 @@ export interface GatewayHealth {
 }
 
 interface ActiveTurn {
+  readonly botId: string
+  readonly chatId: string
+  readonly senderId: string
+  readonly replyToMessageId: string
+  stream?: TaskProgressCard
   readonly messageId: string
   readonly startedAt: number
   readonly controller: AbortController
@@ -90,6 +101,7 @@ export class FeishuGateway {
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
   private readonly activeTurns = new Map<string, ActiveTurn>()
+  private readonly approvals: FeishuApprovalManager
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
   private startedAt = 0
@@ -103,6 +115,20 @@ export class FeishuGateway {
     this.logger = deps.logger
     this.bridge = deps.bridge
     this.router = new MessageRouter(deps.config)
+    this.approvals = new FeishuApprovalManager(
+      deps.config.approvalTimeoutMs,
+      new Set(deps.config.allowlist),
+      (sessionId) => {
+        const active = [...this.activeTurns.values()].find(turn =>
+          turn.sessionId === sessionId && turn.phase === 'running' && !turn.cancelledByUser)
+        return active ? {
+          botId: active.botId, chatId: active.chatId,
+          senderId: active.senderId, replyToMessageId: active.replyToMessageId,
+        } : undefined
+      },
+      (botId) => this.transports.get(botId),
+      deps.logger,
+    )
     for (const transport of deps.transports) this.transports.set(transport.botId, transport)
 
     this.dedup = new DedupIndex(deps.config.stateDir, deps.config.dedupTtlMs, deps.config.maxDedupEntries)
@@ -147,6 +173,7 @@ export class FeishuGateway {
             await transport.connect({
               onMessage: (message) => this.handleInbound(message),
               onStateChange: (state, error) => this.onStateChange(transport.botId, state, error),
+              onCardAction: (event) => this.handleCardAction(event),
             })
           } catch (error) {
             this.errors += 1
@@ -217,6 +244,7 @@ export class FeishuGateway {
     if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
     this.outboxRetryTimer = undefined
     this.abortController.abort()
+    this.approvals.stop()
 
     for (const [botId, transport] of this.transports) {
       try {
@@ -285,6 +313,51 @@ export class FeishuGateway {
         throw error
       },
     ))
+  }
+
+  /** DSH native approval waterfall: only active Feishu-owned agents are answered. */
+  async answerApproval(
+    request: ApprovalRequestLike,
+    next: () => Promise<ApprovalOutcome>,
+  ): Promise<ApprovalOutcome> {
+    if (!this.config.approvalCards || this.stopped) return next()
+    return this.approvals.answer(request, next)
+  }
+
+  /** Feishu callback handler: verify who clicked, from which chat and card. */
+  async handleCardAction(event: CardActionEvent): Promise<{ toast: { type: string; content: string } }> {
+    const toast = (type: string, content: string) => ({ toast: { type, content } })
+    if (this.stopped || !this.config.allowlist.includes(event.actorOpenId)) {
+      return toast('warning', '无权执行该操作')
+    }
+    if (this.config.approvalCards) {
+      const result = this.approvals.consume(event)
+      if (result) return result
+    }
+    if (!this.config.streamCards ||
+      event.value.namespace !== CARD_NAMESPACE || event.value.kind !== 'cancel') {
+      return toast('warning', '未知或已过期的卡片操作')
+    }
+    const active = this.activeTurns.get(chatKey(event.botId, event.chatId))
+    if (!active || active.botId !== event.botId || active.chatId !== event.chatId ||
+      active.senderId !== event.actorOpenId || active.phase !== 'running' ||
+      active.cancelledByUser || event.value.nonce !== active.stream?.nonce ||
+      event.messageId !== active.stream?.handle.messageId) {
+      return toast('warning', '任务已结束或无法验证卡片')
+    }
+    this.requestCancel(active)
+    return toast('success', '已请求取消当前任务')
+  }
+
+  private requestCancel(active: ActiveTurn): void {
+    if (active.cancelledByUser || active.phase !== 'running') return
+    active.cancelledByUser = true
+    active.controller.abort()
+    if (active.sessionId) {
+      this.approvals.cancelSession(active.sessionId)
+      try { this.bridge.cancel(active.sessionId) }
+      catch { this.logger.warn('native Agent cancellation failed') }
+    }
   }
 
   private async processRecord(record: InboxRecord): Promise<void> {
@@ -366,12 +439,7 @@ export class FeishuGateway {
           reply = '当前聊天没有可以取消的运行中任务。'
         } else {
           // One chat's AbortController cannot affect another chat.
-          active.cancelledByUser = true
-          active.controller.abort()
-          if (active.sessionId) {
-            try { this.bridge.cancel(active.sessionId) }
-            catch (error) { this.logger.warn('user cancellation failed: %s', String(error)) }
-          }
+          this.requestCancel(active)
           reply = '已请求取消当前任务。可能已经执行的工具操作不会自动回滚；请检查执行结果后再发起新请求。'
         }
       } else {
@@ -425,12 +493,16 @@ export class FeishuGateway {
     }
     const key = chatKey(record.botId, record.chatId)
     const turn: ActiveTurn = {
+      botId: record.botId, chatId: record.chatId,
+      senderId: record.senderId, replyToMessageId: record.messageId,
       messageId: record.messageId, startedAt: Date.now(),
       controller: new AbortController(), cancelledByUser: false, phase: 'running',
     }
     this.activeTurns.set(key, turn)
     const signal = AbortSignal.any([this.abortController.signal, turn.controller.signal])
     let activeSessionId: string | undefined
+    let unsubscribeProgress: (() => void) | undefined
+    let progressStatus: 'done' | 'cancelled' | 'failed' = 'failed'
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
@@ -452,6 +524,27 @@ export class FeishuGateway {
       turn.sessionId = sessionId
       if (signal.aborted) throw new Error('turn aborted before submit')
       await this.bridge.submit(sessionId, record.text, signal)
+      if (this.config.streamCards && !signal.aborted) {
+        try {
+          const transport = this.transports.get(record.botId)
+          if (transport) {
+            const opened = await withTimeout(
+              TaskProgressCard.start(
+                transport, record.messageId, this.logger, this.config.streamIntervalMs),
+              5_000,
+              signal,
+            )
+            const progress = opened.timedOut ? undefined : opened.value
+            if (progress && !signal.aborted) {
+              turn.stream = progress
+              unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => progress.onTextDelta(delta))
+            }
+          }
+        } catch {
+          // Non-durable progress must NEVER prevent a durable final reply.
+          this.logger.warn('Feishu progress card unavailable; keeping durable reply')
+        }
+      }
       const reply = await this.bridge.waitForReply(sessionId, {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
@@ -459,6 +552,7 @@ export class FeishuGateway {
       // Shutdown leaves a running turn uncertain; it may have had side effects.
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
+        progressStatus = 'cancelled'
         await this.finalizeUserCancellation(record, key, activeSessionId)
         return
       }
@@ -471,6 +565,7 @@ export class FeishuGateway {
         await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
+        progressStatus = 'done'
         await this.replyDiagnostic(record, text || '模型未返回文本内容.',
           `reply:${record.messageId}`, text ? this.config.replyFormat : 'text')
       }
@@ -480,6 +575,7 @@ export class FeishuGateway {
     } catch (error) {
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
+        progressStatus = 'cancelled'
         await this.finalizeUserCancellation(record, key, activeSessionId)
         return
       }
@@ -511,6 +607,14 @@ export class FeishuGateway {
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
       }
     } finally {
+      if (activeSessionId) this.approvals.cancelSession(activeSessionId)
+      unsubscribeProgress?.()
+      if (turn.stream) {
+        try {
+          const closing = await withTimeout(turn.stream.close(progressStatus), 5_000)
+          if (closing.timedOut) this.logger.warn('Feishu CardKit stream cleanup exceeded deadline')
+        } catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
+      }
       if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
     }
   }
@@ -555,6 +659,9 @@ export class FeishuGateway {
   }
 
   private onStateChange(botId: string, state: TransportState, error?: Error): void {
+    if (state === 'reconnecting' || state === 'failed' || state === 'closing' || state === 'closed') {
+      this.approvals.cancelBot(botId)
+    }
     if (error) this.logger.error('transport %s -> %s: %s', botId, state, error.message)
     else this.logger.info('transport %s -> %s', botId, state)
     if (state === 'connected') {
@@ -582,6 +689,7 @@ export class FeishuGateway {
       dedupEntries: this.dedupSnapshot,
       boundSessions: this.registry.bindings().length,
       activeTurns: this.activeTurns.size,
+      pendingApprovals: this.approvals.size,
       processed: this.processed,
       rejected: { ...this.rejected },
       errors: this.errors,

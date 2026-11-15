@@ -38,6 +38,7 @@ interface TurnState {
   readonly attempts: string[]
   readonly live: string[]
   readonly done: Promise<void>
+  onTextDelta?: (text: string) => void
   readonly resolve: () => void
   settled: boolean
   events: number
@@ -233,6 +234,15 @@ export class DshSessionBridge implements SessionBridge {
     }
   }
 
+  onTextDelta(sessionId: string, callback: (text: string) => void): () => void {
+    const turn = this.turns.get(sessionId)
+    if (!turn || turn.settled) return () => undefined
+    turn.onTextDelta = callback
+    return () => {
+      if (turn.onTextDelta === callback) turn.onTextDelta = undefined
+    }
+  }
+
   cancel(sessionId: string): void {
     const handle = this.handles.get(sessionId)
     if (!handle) return
@@ -334,6 +344,8 @@ export class DshSessionBridge implements SessionBridge {
       const chunk = frame.chunk as { type?: unknown; text?: unknown } | undefined
       if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
         turn.live.push(chunk.text)
+        try { turn.onTextDelta?.(chunk.text) }
+        catch { /* A failed progress UI must not abort the native Agent turn. */ }
       }
     }
   }

@@ -7,6 +7,7 @@ import { FeishuGateway } from './gateway.js'
 import { DshSessionBridge } from './session/dsh-session-bridge.js'
 import { fromCordisLogger } from './util/logger.js'
 import type { CordisLike, FeishuTransport, GatewayConfig, GatewayLogger, SessionBridge } from './types.js'
+import type { ApprovalRequestLike, ApprovalOutcome } from './channel/approval-manager.js'
 
 /** Stable Cordis plugin name (used for fiber diagnostics and loader rows). */
 export const name = 'feishu-gateway'
@@ -103,10 +104,17 @@ export function apply(ctx: Context, config: GatewayConfig): void {
   })
 
   ctx.effect(() => {
+    // Register the DSH waterfall answerer only while this Gateway fiber lives.
+    // No session policy is changed here: approval=never remains unconditionally
+    // denied inside DSH and never dispatches approval/request.
+    const offApproval = (ctx as unknown as CordisLike).on('approval/request',
+      (request: ApprovalRequestLike, next: () => Promise<ApprovalOutcome>) =>
+        gateway.answerApproval(request, next))
     const start = gateway.start().catch((error: unknown) => {
       logger.error('startup failed: %s', String(error))
     })
     return async () => {
+      offApproval()
       await start
       await gateway.stop()
     }

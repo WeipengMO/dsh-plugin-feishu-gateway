@@ -22,6 +22,8 @@ DSH web Profile
       └─ 独占 ~/.dsh/feishu-channel-state
 ```
 
+工具审批和流式任务卡片默认关闭；在开启前请先阅读 [APPROVAL-STREAMING.md](APPROVAL-STREAMING.md) 的权限申请、测试及回滚步骤。
+
 ## 前提与限制
 
 1. **同一 Ubuntu 主机、同一 Unix 用户**运行 Web Profile 与 feishu-channel；管理插件默认读写该用户 HOME 下的上述文件。不同用户/主机需要额外的代理与访问控制，当前不支持。
@@ -44,8 +46,8 @@ ls -lh dist/*.tgz
 
 构建产物为两个独立 tarball：
 
-- `dsh-plugin-feishu-gateway-0.1.3.tgz`（运行通道）
-- `dsh-plugin-feishu-admin-0.1.1.tgz`（Web 管理插件）
+- `dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz`（运行通道）
+- `dsh-plugin-feishu-admin-0.2.0-rc.1.tgz`（Web 管理插件）
 
 **绝不要将 Gateway 的 tarball 安装到 `web` Profile**：它的 Bundle patch 会插入真正的飞书 Gateway。Web Profile 只安装 `dsh-plugin-feishu-admin`。
 
@@ -94,10 +96,10 @@ systemctl --user status dsh-feishu-channel.service --no-pager
 
 ```bash
 # 安装真正的网关，只进入飞书 Profile
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.1.3.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz"
 
 # 管理插件，只进入 Web Profile
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.1.1.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz"
 ```
 
 重新读取各 Profile 的配置，验证 `web` 中只增加 `feishu-channel-admin`、没有 `feishu-gateway`：

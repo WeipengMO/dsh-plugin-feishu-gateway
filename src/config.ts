@@ -49,6 +49,15 @@ export const Config: ConfigValidator = Schema.object({
     .description('Maximum time to wait for the native Session reply.'),
   replyFormat: Schema.union([Schema.const('text'), Schema.const('markdown')]).default('text')
     .description('Feishu reply type: legacy text (default) or post/md rich Markdown.'),
+  approvalCards: Schema.boolean().default(false)
+    .description('Answer DSH approval/request using authenticated one-shot Feishu cards. Requires DSH approval policy ask.'),
+  streamCards: Schema.boolean().default(false)
+    .description('Show optional CardKit streaming progress while final answer stays in durable Outbox.'),
+  approvalTimeoutMs: Schema.number().default(90_000)
+    .description('Time limit for one interactive tool approval (ms). Timeout denies.'),
+  streamIntervalMs: Schema.number().default(800)
+    .description('CardKit update interval; max one update per interval, never per-token.'),
+
   sendRetries: Schema.number().default(3)
     .description('Outbound send attempts before the message is parked in the durable outbox.'),
   sendRetryBaseDelayMs: Schema.number().default(500),
@@ -93,6 +102,10 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     maxTextLength: numberOr(raw.maxTextLength, 8000),
     replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
     replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
+    approvalCards: raw.approvalCards === true,
+    streamCards: raw.streamCards === true,
+    approvalTimeoutMs: Math.max(5_000, Math.min(300_000, numberOr(raw.approvalTimeoutMs, 90_000))),
+    streamIntervalMs: Math.max(500, Math.min(5_000, numberOr(raw.streamIntervalMs, 800))),
     sendRetries: numberOr(raw.sendRetries, 3),
     sendRetryBaseDelayMs: numberOr(raw.sendRetryBaseDelayMs, 500),
     outboxRetryIntervalMs: Math.max(20, numberOr(raw.outboxRetryIntervalMs, 30_000)),
@@ -192,5 +205,7 @@ export function redactedConfigSummary(config: GatewayConfig): Record<string, unk
     offline: config.offline,
     autoConnect: config.autoConnect,
     replyFormat: config.replyFormat,
+    approvalCards: config.approvalCards,
+    streamCards: config.streamCards,
   }
 }
