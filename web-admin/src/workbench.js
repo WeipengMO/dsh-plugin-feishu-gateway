@@ -5,12 +5,16 @@
 const WORKBENCH_PANEL_ID = 'feishu-management'
 const WORKBENCH_NAV = [
   ['overview', '总览', '▦'],
+  ['tasks', '实时任务', '◷'],
+  ['messages', '消息投递', '⇄'],
+  ['sessions', 'Session 管理', '◇'],
+  ['approvals', '审批审计', '✓'],
   ['bots', '机器人', '◉'],
-  ['delivery', '消息与投递', '⇄'],
-  ['sessions', '会话与审批', '◷'],
-  ['security', '安全与权限', '◇'],
-  ['diagnostics', '运行诊断', '⌁'],
-  ['advanced', '高级管理', '⚙'],
+  ['usage', '用量统计', '▥'],
+  ['alerts', '告警中心', '!'],
+  ['security', '安全与权限', '♧'],
+  ['diagnostics', '日志与诊断', '⌁'],
+  ['advanced', '高级配置', '⚙'],
 ]
 
 function FeishuSidebarIcon({ size = 18 }) {
@@ -73,7 +77,8 @@ function WbEmpty({ headline, description }) {
 function Workbench() {
   const [state, setState] = useState(null)
   const [live, setLive] = useState(undefined)
-  const [diagnostics, setDiagnostics] = useState(null)
+  const [ops, setOps] = useState(null)
+  const [configTab, setConfigTab] = useState('settings')
   const [selected, setSelected] = useState('overview')
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -82,8 +87,11 @@ function Workbench() {
   const load = useCallback(async () => {
     setUpdating(true)
     try {
-      const data = await request('/state')
+      const [data, operations] = await Promise.all([
+        request('/state'), request('/ops').catch(() => null),
+      ])
       setState(data)
+      setOps(operations)
       setLive(data.health?.health ?? null)
       setUpdatedAt(new Date())
       setError('')
@@ -97,20 +105,17 @@ function Workbench() {
     // Monitoring reads the already-running Gateway's health; no model requests.
     const timer = setInterval(() => {
       if (document.visibilityState !== 'visible') return
-      request('/health').then(data => {
-        setLive(data.health?.health ?? null)
+      Promise.all([
+        request('/health').catch(() => null),
+        request('/ops').catch(() => null),
+      ]).then(([data, operations]) => {
+        setLive(data?.health?.health ?? null)
+        setOps(operations)
         setUpdatedAt(new Date())
-      }).catch(() => { setLive(null) })
+      })
     }, 15000)
     return () => clearInterval(timer)
   }, [])
-  useEffect(() => {
-    if (selected !== 'diagnostics') return
-    let active = true
-    request('/diagnostics').then(data => { if (active) setDiagnostics(data.diagnostics) })
-      .catch(() => { if (active) setDiagnostics(null) })
-    return () => { active = false }
-  }, [selected])
   const health = live === undefined ? (state?.health?.health ?? null) : live
   const bots = state?.bots ?? []
   const flags = state?.config ?? {}
@@ -119,7 +124,8 @@ function Workbench() {
       sum + (Number.isSafeInteger(value) && value >= 0 ? value : 0), 0)
     : undefined
   const online = health?.status === 'ok'
-  const refresh = () => { void load(); if (selected === 'diagnostics') request('/diagnostics').then(x => setDiagnostics(x.diagnostics)).catch(() => setDiagnostics(null)) }
+  const refresh = () => { void load() }
+  const onConfig = tab => { setConfigTab(tab || 'settings'); setSelected('advanced') }
 
   let body
   if (selected === 'overview') {
@@ -131,6 +137,22 @@ function Workbench() {
         h(WbMetric, { title: '待发消息', value: wbCount(health?.outbox?.pending), caption: '持久化 Outbox 队列' }),
         h(WbMetric, { title: '已绑定会话', value: wbCount(health?.boundSessions), caption: 'DSH 原生 Session 绑定' }),
         h(WbMetric, { title: '错误数', value: wbCount(health?.errors), caption: '进程内累计', tone: health?.errors ? 'warn' : '' })),
+      ops?.telemetryAvailable && h(WbBlock, { title: '需要关注', aside: '当前规则告警' },
+        (ops.summary?.alerts ?? []).length ?
+          h('div', { className: 'fgw-ops-alerts' },
+            ops.summary.alerts.slice(0, 5).map((alert, i) =>
+              h('div', { className: 'fgw-caution', key: alert.code + i }, alert.message,
+                alert.botId ? ' · ' + alert.botId : ''))) :
+          h('p', { className: 'fgw-muted' }, '暂无当前规则告警。')),
+      ops?.telemetryAvailable && h(WbBlock, { title: '实时任务', aside: '来自 Gateway 快照' },
+        h(OpsTable, { rows: ops.snapshot?.stale ? [] : ops.snapshot?.tasks,
+          empty: '当前没有活跃任务',
+          columns: [
+            { key: 'ref', title: '任务', render: x => h('code', null, x.ref.slice(0, 10)) },
+            { key: 'botId', title: '机器人' },
+            { key: 'phase', title: '阶段', render: x => h(WbState, { value: x.phase }) },
+            { key: 'elapsedMs', title: '已用时', render: x => wbAge(x.elapsedMs) },
+          ] })),
       h('div', { className: 'fgw-two-column' },
         h(WbBlock, { title: '机器人连接', aside: bots.length + ' 个已配置' },
           bots.map(bot => h('div', { className: 'fgw-bot-line', key: bot.id },
@@ -165,69 +187,29 @@ function Workbench() {
         h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
         h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
-  } else if (selected === 'delivery') {
-    body = h(React.Fragment, null,
-      h('div', { className: 'fgw-metrics fgw-metrics-three' },
-        h(WbMetric, { title: '消息处理数', value: wbCount(health?.processed), caption: '进程内累计' }),
-        h(WbMetric, { title: '拒绝的入站请求', value: rejected === undefined ? '—' : wbCount(rejected), caption: '聚合的安全拒绝次数' }),
-        h(WbMetric, { title: '错误数', value: wbCount(health?.errors), caption: '网关运行时累计' })),
-      h('div', { className: 'fgw-two-column' },
-        h(WbBlock, { title: 'Inbox 入站', aside: '持久化队列统计' },
-          ...Object.entries(health?.inbox ?? {}).filter(([k,v]) => typeof v === 'number' && k.length < 40)
-            .map(([k,v]) => h(WbRow, { key: k, label: k, value: wbCount(v) })),
-          !health?.inbox && h(WbEmpty, { headline: '暂无数据', description: '网关健康端点暂未返回 Inbox 数据。' })),
-        h(WbBlock, { title: 'Outbox 出站', aside: '可靠发送队列统计' },
-          ...Object.entries(health?.outbox ?? {}).filter(([k,v]) => typeof v === 'number' && k.length < 40)
-            .map(([k,v]) => h(WbRow, { key: k, label: k, value: wbCount(v) })),
-          !health?.outbox && h(WbEmpty, { headline: '暂无数据', description: '网关健康端点暂未返回 Outbox 数据。' }))),
-      h(WbEmpty, { headline: '消息列表与重试操作预留', description: '当前 Gateway 仅上报队列汇总，没有可安全访问的逐消息审计 API。下一阶段会增加分页、脱敏、明确授权的单条重试，而不是展示虚构的历史消息。' }))
-  } else if (selected === 'sessions') {
-    body = h(React.Fragment, null,
-      h('div', { className: 'fgw-metrics fgw-metrics-three' },
-        h(WbMetric, { title: '绑定会话', value: wbCount(health?.boundSessions), caption: '与飞书会话绑定的原生 Session' }),
-        h(WbMetric, { title: '运行中任务', value: wbCount(health?.activeTurns), caption: 'Agent 正在执行' }),
-        h(WbMetric, { title: '等待审批', value: wbCount(health?.pendingApprovals), caption: '原生 DSH approval/request' })),
-      h(WbBlock, { title: '执行能力',
-        aside: '仅监控，不改变 DSH 原生审批策略' },
-        h(WbRow, { label: '原生 Session Bridge', value: health?.sessionBridge?.available ? '可用' : '不可用' }),
-        h(WbRow, { label: '飞书工具审批卡片', value: flags.approvalCards === true ? '已开启（托管配置）' : '继承 / 未开启' }),
-        h(WbRow, { label: '流式任务卡片', value: flags.streamCards === true ? '已开启（托管配置）' : '继承 / 未开启' }),
-        h('p', { className: 'fgw-muted' }, '会话详情与审批历史需要 Gateway 提供脱敏、分页的只读端点；当前不显示私聊正文或用户标识。')),
-      h(WbEmpty, { headline: '会话详情视图预留', description: '后续可以添加 Session 列表、执行状态、审批审计与取消操作；所有管理操作都应走独立授权接口。' }))
   } else if (selected === 'security') {
-    body = h('div', { className: 'fgw-two-column' },
-      h(WbBlock, { title: '访问边界' },
-        h(WbRow, { label: '访问白名单', value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 个授权用户' : '继承原 Profile' }),
-        h(WbRow, { label: '受保护连接', value: 'DSH Web 登录会话' }),
-        h(WbRow, { label: '凭据回显', value: '禁止' }),
-        h(WbRow, { label: '飞书会话内容', value: '此页面不读取' }),
-        h('p', { className: 'fgw-muted' }, '白名单和策略修改位于「高级管理」；不会在概览中明文列出 open_id。')),
-      h(WbBlock, { title: '审批与传输' },
-        h(WbRow, { label: '审批卡片', value: flags.approvalCards ? '启用' : '继承 / 关闭' }),
-        h(WbRow, { label: '流式卡片', value: flags.streamCards ? '启用' : '继承 / 关闭' }),
-        h(WbRow, { label: '待审批任务', value: wbCount(health?.pendingApprovals) }),
-        h(WbRow, { label: '配置更新', value: state?.pendingRestart ? '待重启' : '无待应用记录' }),
-        h('p', { className: 'fgw-muted' }, '原生工具是否允许执行，始终由 DSH 审批策略决定；后台不会自动放行。')))
-  } else if (selected === 'diagnostics') {
-    const diag = diagnostics?.health ?? diagnostics
     body = h(React.Fragment, null,
       h('div', { className: 'fgw-two-column' },
-        h(WbBlock, { title: '宿主与插件' },
-          h(WbRow, { label: 'systemd', value: wbValue(state?.service) }),
-          h(WbRow, { label: 'Gateway', value: wbValue(diag?.status ?? health?.status) }),
-          h(WbRow, { label: 'DSH Session', value: health?.sessionBridge?.available ? '可用' : '不可用' }),
-          h(WbRow, { label: '运行时长', value: wbAge(health?.uptimeMs) }),
-          h(WbRow, { label: '版本', value: '诊断端点未报告版本' })),
-        h(WbBlock, { title: '运行指标' },
-          h(WbRow, { label: '处理数', value: wbCount(health?.processed) }),
-          h(WbRow, { label: '异常数', value: wbCount(health?.errors) }),
-          h(WbRow, { label: '去重条目', value: wbCount(health?.dedupEntries) }),
-          h(WbRow, { label: '当前活跃任务', value: wbCount(health?.activeTurns) }),
-          h(WbRow, { label: '待投递队列', value: wbCount(health?.outbox?.pending) }))),
-      h(WbEmpty, { headline: '日志流与审计视图预留', description: '此版本没有日志读取接口，因此不会展示未经授权的文件内容或伪造“最近活动”。后续采用服务端过滤、脱敏和有上限的分页接口。' }))
+        h(WbBlock, { title: '访问权限' },
+          h(WbRow, { label: '白名单', value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 位允许用户' : '继承原 Profile' }),
+          h(WbRow, { label: 'DSH Web 授权', value: '原生浏览器会话' }),
+          h(WbRow, { label: '消息正文', value: '运维接口不返回' }),
+          h(WbRow, { label: '凭据回显', value: '禁止' })),
+        h(WbBlock, { title: '审批边界' },
+          h(WbRow, { label: '审批卡片', value: flags.approvalCards ? '已开启' : '继承 / 关闭' }),
+          h(WbRow, { label: '当前等待审批', value: wbCount(health?.pendingApprovals) }),
+          h(WbRow, { label: '配置生效', value: state?.pendingRestart ? '待重启' : '无待生效修改' }),
+          h(OpsNote, null, '不会绕过 DSH 原生审批流程。'))),
+      h(OpsAction, { label: '编辑白名单与安全设置', onClick: () => onConfig('permissions') }),
+      ops?.telemetryAvailable && h(WbBlock, { title: '最近审批安全事件' },
+        h(OpsTimeline, { events: ops.summary?.approvals?.slice(0, 20) })))
+  } else if (selected === 'advanced') {
+    body = h('div', { className: 'fgw-advanced' },
+      h('p', { className: 'fgw-muted' },
+        '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
+      h(Panel, { key: configTab, initialTab: configTab }))
   } else {
-    body = h('div', { className: 'fgw-advanced' }, h('p', { className: 'fgw-muted' },
-      '高级管理可以修改模型、白名单、机器人及卡片开关。凭据请从 DSH 设置 → 飞书 Gateway 更新。重启通道会中断当前任务。'), h(Panel))
+    body = h(OpsPage, { kind: selected, ops, onConfig })
   }
 
   return h('div', { className: 'fgw-root' },
@@ -249,6 +231,8 @@ function Workbench() {
           h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理')),
         h('div', { className: 'fgw-top-actions' },
           h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
+          selected !== 'advanced' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
+            onClick: () => onConfig(selected === 'bots' ? 'bots' : selected === 'security' ? 'permissions' : 'settings') }, '配置管理'),
           h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
