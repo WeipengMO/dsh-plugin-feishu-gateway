@@ -89,7 +89,9 @@ function statsFooter(stats: CardCompletionStats | undefined): string {
     parts.push('用时：' + (stats.elapsedMs / 1000).toFixed(1) + 's')
   }
   // Markdown hard line breaks keep each item on its own line in CardKit.
-  return parts.join('  \n')
+  // Feishu CardKit supports grey inline font color. Keep each line in its
+  // own font span so markdown line breaks remain distinct and predictable.
+  return parts.map(part => "<font color='grey'>" + part + '</font>').join('  \n')
 }
 
 /**
@@ -115,7 +117,7 @@ export function completedProgressCard(
       { tag: 'markdown', element_id: PROGRESS_ELEMENT_ID, content: text },
       ...(footer ? [
         { tag: 'hr' },
-        { tag: 'markdown', content: footer },
+        { tag: 'markdown', text_size: 'notation', content: footer },
       ] : []),
     ] },
   }
