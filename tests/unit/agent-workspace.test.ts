@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdtemp, mkdir, realpath, rm, symlink, lstat } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm, symlink, lstat, readFile, writeFile } from 'node:fs/promises'
 import { resolveConfig } from '../../src/config.js'
 import { prepareFeishuWorkspace, resolveFeishuWorkspace } from '../../src/agent-workspace.js'
 
@@ -18,6 +18,11 @@ describe('Feishu-only Agent workspace', () => {
       expect(privateCwd).not.toBe(shared)
       expect(privateCwd.startsWith(shared + path.sep)).toBe(false)
       expect(await realpath(privateCwd)).toBe(privateCwd)
+      const policy = await readFile(path.join(privateCwd, 'AGENTS.local.md'), 'utf8')
+      expect(policy).toContain('5 次网页检索')
+      await writeFile(path.join(privateCwd, 'AGENTS.local.md'), 'my custom rules')
+      await prepareFeishuWorkspace(config)
+      expect(await readFile(path.join(privateCwd, 'AGENTS.local.md'), 'utf8')).toBe('my custom rules')
     } finally { await rm(root, { recursive: true, force: true }) }
   })
 
