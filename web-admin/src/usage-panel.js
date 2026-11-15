@@ -28,11 +28,18 @@ function UsagePanel() {
   const [session, setSession] = useState('')
   const [report, setReport] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
   const controls = { from, to, tz: zone, period, metric, model, botId, user, chat, session }
   const url = '/ops/usage?' + new URLSearchParams(
     Object.entries(controls).filter(([, value]) => value !== '')
   ).toString()
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setRevision(current => current + 1)
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [])
   useEffect(() => {
     let active = true
     setBusy(true); setError('')
@@ -40,7 +47,7 @@ function UsagePanel() {
       .catch(e => { if (active) { setReport(null); setError(e.message || String(e)) } })
       .finally(() => { if (active) setBusy(false) })
     return () => { active = false }
-  }, [url])
+  }, [url, revision])
   const presetRange = days => {
     const current = usageIsoDate(new Date(), zone)
     setPreset(days)
@@ -127,6 +134,7 @@ function UsagePanel() {
       h(UsageField, { title: 'Session（匿名标识）' }, select(session, setSession, facets.sessions,
         x => x.slice(0, 10) + '…'))),
     h('div', { className: 'fgw-usage-presets' },
+      h('button', { className: 'fgw-refresh', type: 'button', onClick: () => setRevision(x => x + 1) }, '刷新用量'),
       h('a', { className: 'fgw-refresh fgw-ops-cta fgw-usage-export',
         href: API + url.replace('/ops/usage?', '/ops/usage/export?'), download: 'feishu-token-usage.csv' },
         '导出当前筛选 CSV'),
