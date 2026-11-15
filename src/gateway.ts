@@ -673,7 +673,9 @@ export class FeishuGateway {
         session: activeSessionId, elapsedMs: Date.now() - turn.startedAt })
       if (error instanceof SessionResumeError) {
         await this.replyDiagnostic(record,
-          'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
+          String(error).includes('legacy Session uses the shared workspace')
+            ? '本聊天仍绑定旧版共享 DSH 工作区的 Session。为避免继承普通 DSH 的身份与记忆，本次没有继续执行。请在飞书发送 /new 创建独立的飞书 Agent Session；原 Session 历史不会被删除。'
+            : 'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
       } else {
         await this.replyDiagnostic(record,
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
