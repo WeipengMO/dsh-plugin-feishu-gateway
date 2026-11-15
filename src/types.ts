@@ -133,6 +133,13 @@ export interface BotSpec {
   readonly appSecretEnv?: string
 }
 
+/** Optional proxy selected by the launcher before DSH starts; URL lives only in an env var. */
+export interface NetworkProxyConfig {
+  readonly enabled: boolean
+  readonly urlEnv: string
+  readonly fallbackDirect: boolean
+}
+
 export interface AgentRoute {
   readonly provider?: string
   readonly model?: string
@@ -158,6 +165,7 @@ export interface GatewayConfig {
   readonly maxDedupEntries: number
   readonly maxTextLength: number
   readonly replyTimeoutMs: number
+  readonly networkProxy: NetworkProxyConfig
   /** Default plain text; opt-in rich Markdown for AI answers. */
   readonly replyFormat: 'text' | 'markdown'
   /** Advanced Feishu 2.0 cards (off until real-tenant verification). */
