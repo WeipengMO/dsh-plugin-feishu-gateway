@@ -14,7 +14,7 @@ describe('privacy-safe operations telemetry', () => {
       await ops.record({ kind: 'task', state: 'done', botId: 'default',
         ref: chat, session, model: 'deepseek-chat', tokens: 450, elapsedMs: 9000 })
       await ops.record({ kind: 'system', state: 'custom secret /home/private' })
-      await ops.snapshot({ version: 1, ts: Date.now(), status: 'ok',
+      await ops.snapshot({ version: 1, ts: Date.now(), status: 'ok', workspace: dir,
         tasks: [{ ref: opsRef(chat), botId: 'default', phase: 'running', elapsedMs: 123 }],
         sessions: [{ ref: opsRef(session), createdAt: 1, lastActiveAt: 10, persisted: true }],
         transport: { default: { state: 'connected', reconnects: 0, failures: 0 } },
