@@ -203,3 +203,21 @@ test('Cordis registration exposes only a guarded Web management handler', async 
   ctx.dispose()
   assert.equal(disposed, true)
 })
+
+test('admin validates reply format and persists the optional Markdown setting', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.request('/state')
+    const invalid = await f.request('/config', 'PUT', {
+      expectedRevision: first.json.revision, config: { replyFormat: 'html' }
+    }, mutating)
+    assert.equal(invalid.status, 400)
+    const success = await f.request('/config', 'PUT', {
+      expectedRevision: first.json.revision, config: { replyFormat: 'markdown' }
+    }, mutating)
+    assert.equal(success.status, 200)
+    const latest = await f.request('/state')
+    assert.equal(latest.json.config.replyFormat, 'markdown')
+    assert.equal(latest.json.pendingRestart, false) // no running channel health
+  } finally { await f.close() }
+})

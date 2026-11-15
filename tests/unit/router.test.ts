@@ -39,6 +39,13 @@ describe('MessageRouter security policy', () => {
     expect(router.decide(baseMessage).accepted).toBe(true)
   })
 
+  it('accepts text-only rich post messages but keeps binary messages rejected', () => {
+    const router = new MessageRouter(resolveConfig({ allowlist: ['ou_alice'] }))
+    expect(router.decide({ ...baseMessage, messageType: 'post', text: '**报告**' }).accepted).toBe(true)
+    expect(router.decide({ ...baseMessage, messageType: 'post', text: '' }))
+      .toEqual({ accepted: false, reason: 'empty-text' })
+  })
+
   it('rejects non-text messages and bot-originated messages', () => {
     const router = new MessageRouter(resolveConfig({ allowlist: ['ou_alice'] }))
     expect(router.decide({ ...baseMessage, messageType: 'image' })).toEqual({ accepted: false, reason: 'unsupported-message-type' })

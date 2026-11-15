@@ -17,7 +17,13 @@ describe('resolveConfig', () => {
     expect(config.autoConnect).toBe(true)
     expect(config.sendRetries).toBe(3)
     expect(config.replyTimeoutMs).toBe(120_000)
+    expect(config.replyFormat).toBe('text')
     expect(config.workspace).toBe(process.cwd())
+  })
+
+  it('supports opt-in Markdown without changing the default', () => {
+    expect(resolveConfig({ replyFormat: 'markdown' }).replyFormat).toBe('markdown')
+    expect(resolveConfig(undefined).replyFormat).toBe('text')
   })
 
   it('honours FEISHU_GATEWAY_OFFLINE as a hard offline switch', () => {
