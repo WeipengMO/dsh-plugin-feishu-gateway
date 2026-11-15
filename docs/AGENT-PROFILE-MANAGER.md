@@ -1,4 +1,4 @@
-# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.6）
+# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.7）
 
 > **飞书专用目录隔离**：新版不会修改普通 DSH 工作区的身份/记忆文件。独立 cwd、旧共享托管区块安全清理与旧 Session /new 的具体说明参见 [飞书 Agent 身份隔离与迁移指南](AGENT-PROFILE-ISOLATION.md)。
 
@@ -103,7 +103,7 @@ DSH 原生 \`@deepseek-ai/dsh-agent-instructions\` 默认读取 \`AGENTS.md\`、
 
 ## 升级与回滚
 
-版本：**Gateway \`0.2.0-rc.6\`、Web Admin \`0.2.0-rc.4\`**。
+版本：**Gateway \`0.2.0-rc.7\`、Web Admin \`0.2.0-rc.7\`**。
 
 在 **确认没有重要运行中任务的维护窗口**中执行：
 
@@ -120,7 +120,7 @@ dsh plugin --profile feishu-channel add \
   "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
 
 dsh plugin --profile web add \
-  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz"
+  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.7.tgz"
 \`\`\`
 
 备份原有 \`AGENTS.md\`、\`AGENTS.local.md\`、\`SOUL.md\`、\`USER.md\`、\`MEMORY.md\` 和 Gateway \`stateDir\` 后，使用服务器实际的 systemd user 服务名称分别重启 Web Profile 和 Feishu Profile。不要清空原有 Inbox、Outbox、Session、工作目录和环境变量。
