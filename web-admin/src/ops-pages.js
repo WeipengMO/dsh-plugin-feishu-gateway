@@ -63,7 +63,8 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
         columns: [
           { key: 'ref', title: '事件引用', render: x => h('code', null, x.ref.slice(0, 10)) },
           { key: 'botId', title: '机器人' },
-          { key: 'state', title: '阶段', render: x => h(WbState, { value: x.state }) },
+          { key: 'state', title: '任务状态', render: x => h(WbState, { value: x.state || 'unknown' }) },
+          { key: 'delivery', title: '投递状态', render: x => h(WbState, { value: x.delivery || 'unknown' }) },
           { key: 'lastAt', title: '最后更新', render: x => opsDate(x.lastAt) },
           { key: 'elapsedMs', title: '任务耗时', render: x => x.elapsedMs === undefined ? '—' : wbAge(x.elapsedMs) },
         ] })),
