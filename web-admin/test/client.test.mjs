@@ -333,7 +333,7 @@ test('usage dashboard prioritizes a 365-day heatmap, a unified range picker and 
     panel.indexOf("className: 'fgw-usage-filters'"))
   assert.doesNotMatch(panel, /title: '时区（IANA）'/)
   assert.doesNotMatch(panel, /title: '按周期聚合'/)
-  assert.match(panel, /title: 'API 请求活动'/)
+  assert.match(panel, /title: 'API 请求次数'/)
   assert.match(panel, /kind: 'calls'/)
   assert.match(panel, /kind: 'tokens'/)
   assert.match(panel, /usageTrendBuckets\(series\)/)
@@ -357,7 +357,7 @@ test('usage chart buckets maintain partial and unavailable coverage', () => {
   ]
   const daily = buckets(dayRows)
   assert.equal(daily.granularity, 'day')
-  assert.deepEqual(daily.rows.map(x => x.tokens), [100, null, 40])
+  assert.deepEqual(Array.from(daily.rows, x => x.tokens), [100, null, 40])
   assert.equal(daily.rows[1].calls, null)
   assert.equal(daily.rows[2].partial, true)
 
