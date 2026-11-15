@@ -35,6 +35,7 @@ export class DurableOutbox {
     private readonly config: GatewayConfig,
     private readonly logger: GatewayLogger,
     private readonly transportFor: (botId: string) => FeishuTransport | undefined,
+    private readonly onDelivery?: (state: 'sent' | 'failed', botId: string, ref: string) => void,
   ) {
     this.store = new JsonStore<OutboxState>(stateDir, 'outbox', { pending: [], sent: {} })
   }
@@ -110,6 +111,7 @@ export class DurableOutbox {
           sent: boundedSent,
         })
         sent += 1
+        this.onDelivery?.('sent', record.botId, record.target.replyToMessageId ?? record.id)
       } catch (error) {
         await this.persist({
           ...this.state,
@@ -117,6 +119,7 @@ export class DurableOutbox {
             ? { ...entry, attempts: entry.attempts + 1, lastError: String(error), permanentFailure: !isRetryable(error) }
             : entry),
         })
+        this.onDelivery?.('failed', record.botId, record.target.replyToMessageId ?? record.id)
       }
     }
     return sent
