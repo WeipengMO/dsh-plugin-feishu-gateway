@@ -428,3 +428,20 @@ async function harnessUnavailable(): Promise<{ gateway: FeishuGateway; transport
   await gateway.start()
   return { gateway, transport }
 }
+
+describe('periodic parked reply recovery', () => {
+  it('retries a parked reply while the transport remains connected and no new inbound arrives', async () => {
+    const { gateway, transport } = await harness({ outboxRetryIntervalMs: 25 })
+    transport.remainingFailures = 2
+    await transport.emitMessage(alice({ messageId: 'om_periodic_retry' }))
+    await gateway.whenIdle()
+    expect(gateway.health().outbox.pending).toBe(1)
+    expect(transport.state).toBe('connected')
+    for (let i = 0; i < 40 && transport.sent.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(transport.sent).toHaveLength(1)
+    expect(gateway.health().outbox.pending).toBe(0)
+    await gateway.stop()
+  })
+})

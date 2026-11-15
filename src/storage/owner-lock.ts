@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { link, mkdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { GatewayLogger } from '../types.js'
@@ -69,9 +69,10 @@ function ownerAlive(lock: LockPayload): boolean {
  * `message_id` and execute the Agent turn twice. Failing closed is strictly
  * safer than duplicating potentially irreversible side effects.
  *
- * The lock is a plain file created with O_EXCL (no native dependency). A lock
+ * The lock is atomically published with a same-directory hardlink (no native dependency). A lock
  * owned by a dead process (crash / SIGKILL) is treated as stale and taken over,
- * so a restart is never permanently bricked. PID reuse is detected via the
+ * so routine restarts can recover without manual intervention. A crash while holding the
+ * reaper gate fails closed and requires manual inspection. PID reuse is detected via the
  * `/proc` starttime. This is an advisory single-owner guard, NOT a distributed
  * mutex: `stateDir` must be local to one host and one gateway instance.
  */
@@ -90,19 +91,18 @@ export async function acquireStateDirOwnerLock(
     ...(identity ? { procStart: identity.start } : {}),
   }
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  // Publish a fully-written lock atomically via hardlink. A plain O_EXCL open
+  // briefly exposes an empty lock file, which another process could reap.
+  const staging = `${file}.${payload.owner}.tmp`
+  const reaper = `${file}.reaper`
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
-      const handle = await open(file, 'wx', 0o600)
-      try {
-        await handle.writeFile(JSON.stringify(payload), { encoding: 'utf8' })
-      } finally {
-        await handle.close()
-      }
+      await writeFile(staging, JSON.stringify(payload), { mode: 0o600 })
+      await link(staging, file)
       return {
         release: async () => {
           try {
             const current = JSON.parse(await readFile(file, 'utf8')) as LockPayload
-            // Never delete a lock that a newer owner has already taken over.
             if (current.owner !== payload.owner) return
           } catch {
             return
@@ -112,11 +112,28 @@ export async function acquireStateDirOwnerLock(
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    } finally {
+      await rm(staging, { force: true })
+    }
+
+    // Only one process may REAP a stale lock. Without this second exclusive
+    // gate, two concurrent restarters can delete each other's fresh lock.
+    try {
+      await mkdir(reaper, { mode: 0o700 })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      continue
+    }
+    try {
       let existing: LockPayload | undefined
       try {
         existing = JSON.parse(await readFile(file, 'utf8')) as LockPayload
-      } catch {
-        existing = undefined
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.warn('unreadable stateDir owner lock; requiring recovery: %s', String(error))
+          throw new Error('invalid owner lock; inspect and repair the stateDir manually', { cause: error })
+        }
       }
       if (existing && ownerAlive(existing)) {
         throw new Error(
@@ -124,9 +141,11 @@ export async function acquireStateDirOwnerLock(
           'sharing one stateDir across instances would duplicate Agent execution',
         )
       }
-      logger.warn('removing stale stateDir owner lock (pid %s is no longer alive)', existing?.pid ?? 'unknown')
+      if (existing) logger.warn('reaping stale stateDir lock (pid %s)', existing.pid)
       await rm(file, { force: true })
+    } finally {
+      await rmdir(reaper)
     }
   }
-  throw new Error(`could not acquire exclusive owner lock for stateDir ${stateDir}`)
+  throw new Error(`could not acquire exclusive owner lock for stateDir ${stateDir}; check ${reaper} for a crashed reaper`)
 }

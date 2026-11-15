@@ -1,7 +1,7 @@
 import { JsonStore } from '../storage/json-store.js'
 import type { FeishuTransport, GatewayConfig, GatewayLogger, OutboundTarget } from '../types.js'
 import { newId } from '../util/id.js'
-import { withRetry } from '../util/retry.js'
+import { isRetryable, withRetry } from '../util/retry.js'
 
 export interface OutboxRecord {
   readonly id: string
@@ -10,6 +10,8 @@ export interface OutboxRecord {
   readonly createdAt: number
   readonly attempts: number
   readonly lastError?: string
+  /** Do not repeatedly send permanently invalid requests on every timer tick. */
+  readonly permanentFailure?: boolean
 }
 
 interface OutboxState {
@@ -82,6 +84,7 @@ export class DurableOutbox {
   private async drainUnsafe(): Promise<number> {
     let sent = 0
     for (const record of [...this.state.pending]) {
+      if (record.permanentFailure) continue
       const transport = this.transportFor(record.botId)
       if (!transport) {
         this.logger.warn('no transport for bot %s; keeping outbox record %s', record.botId, record.id)
@@ -111,12 +114,17 @@ export class DurableOutbox {
         await this.persist({
           ...this.state,
           pending: this.state.pending.map((entry) => entry.id === record.id
-            ? { ...entry, attempts: entry.attempts + 1, lastError: String(error) }
+            ? { ...entry, attempts: entry.attempts + 1, lastError: String(error), permanentFailure: !isRetryable(error) }
             : entry),
         })
       }
     }
     return sent
+  }
+
+  /** Barrier used during Gateway teardown before releasing the stateDir lock. */
+  async whenIdle(): Promise<void> {
+    await this.chain
   }
 
   pending(): readonly OutboxRecord[] {

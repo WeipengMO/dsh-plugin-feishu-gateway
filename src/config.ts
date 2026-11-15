@@ -50,6 +50,8 @@ export const Config: ConfigValidator = Schema.object({
   sendRetries: Schema.number().default(3)
     .description('Outbound send attempts before the message is parked in the durable outbox.'),
   sendRetryBaseDelayMs: Schema.number().default(500),
+  outboxRetryIntervalMs: Schema.number().default(30_000)
+    .description('Periodic retry for parked replies even if the WebSocket stays connected (ms).'),
   autoConnect: Schema.boolean().default(true)
     .description('Open WebSocket connections on plugin activation.'),
   offline: Schema.boolean().default(false)
@@ -90,6 +92,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
     sendRetries: numberOr(raw.sendRetries, 3),
     sendRetryBaseDelayMs: numberOr(raw.sendRetryBaseDelayMs, 500),
+    outboxRetryIntervalMs: Math.max(20, numberOr(raw.outboxRetryIntervalMs, 30_000)),
     autoConnect: raw.autoConnect !== false,
     offline: raw.offline === true || process.env.FEISHU_GATEWAY_OFFLINE === '1',
     diagnoseOnStart: raw.diagnoseOnStart !== false,

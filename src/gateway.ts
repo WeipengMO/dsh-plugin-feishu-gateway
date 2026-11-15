@@ -74,6 +74,7 @@ export class FeishuGateway {
   private readonly registry: SessionRegistry
   private readonly outbox: DurableOutbox
   private readonly abortController = new AbortController()
+  private outboxRetryTimer: ReturnType<typeof setInterval> | undefined
   private readonly chatQueues = new Map<string, Promise<void>>()
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
@@ -162,6 +163,16 @@ export class FeishuGateway {
       // have changed files or executed shell commands before the crash.
       for (const record of pending) this.scheduleRecord(record)
       this.dedupSnapshot = await this.dedup.size()
+      if (this.config.autoConnect) {
+        this.outboxRetryTimer = setInterval(() => {
+          if (this.stopped || this.outbox.stats().pending === 0) return
+          void this.outbox.drain().catch((error) => {
+            this.errors += 1
+            this.logger.warn('periodic outbox retry failed: %s', String(error))
+          })
+        }, this.config.outboxRetryIntervalMs)
+        this.outboxRetryTimer.unref?.()
+      }
     } catch (error) {
       this.started = false
       await this.releaseOwnerLock()
@@ -184,6 +195,8 @@ export class FeishuGateway {
   async stop(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
+    if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
+    this.outboxRetryTimer = undefined
     this.abortController.abort()
 
     for (const [botId, transport] of this.transports) {
@@ -195,6 +208,7 @@ export class FeishuGateway {
     }
 
     await Promise.allSettled([...this.inFlight])
+    await this.outbox.whenIdle()
     await this.bridge.dispose()
     this.chatQueues.clear()
     this.scheduledMessageIds.clear()

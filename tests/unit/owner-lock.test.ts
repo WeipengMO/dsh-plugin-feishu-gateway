@@ -62,3 +62,20 @@ describe('stateDir owner lock', () => {
     expect(firstOwner).not.toBe('new-owner')
   })
 })
+
+describe('concurrent stale-lock takeover', () => {
+  it('allows exactly one winner even when both contend for a stale owner', async () => {
+    const dir = await fixture()
+    await writeFile(path.join(dir, '.owner.lock'), JSON.stringify({
+      owner: 'dead-owner', pid: 2_147_483_647, host: os.hostname(), acquiredAt: 0,
+    }))
+    const attempts = await Promise.allSettled([
+      acquireStateDirOwnerLock(dir, silentLogger),
+      acquireStateDirOwnerLock(dir, silentLogger),
+    ])
+    const winners = attempts.filter((x): x is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireStateDirOwnerLock>>> => x.status === 'fulfilled')
+    expect(winners).toHaveLength(1)
+    expect(attempts.filter((x) => x.status === 'rejected')).toHaveLength(1)
+    await winners[0]!.value.release()
+  })
+})

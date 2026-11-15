@@ -77,6 +77,7 @@ systemctl --user enable --now dsh-feishu-channel.service
 | `allowGroups` | `false` | 仅私聊 |
 | `workspace` | `/home/ubuntu/dsh-workspace` | Agent 的工作目录 |
 | `replyTimeoutMs` | `300000` | 长任务上限（5 分钟） |
+| `outboxRetryIntervalMs` | `30000` | 飞书 REST 失败时，即使长连接未断开也会周期补发 |
 | 模型 | `magpie` / `group/deepseek` | 与 Web 端 `agent-default-model` 一致 |
 | 沙箱 | `workspace-write` | 只能写 workspace |
 | 审批 | `never` | 聊天通道无交互审批 UI，故不阻塞；如需审批请改回 `ask` 并接审批桥 |

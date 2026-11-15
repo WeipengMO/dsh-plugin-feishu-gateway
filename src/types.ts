@@ -105,6 +105,8 @@ export interface GatewayConfig {
   readonly replyTimeoutMs: number
   readonly sendRetries: number
   readonly sendRetryBaseDelayMs: number
+  /** Recheck parked Outbox replies while the WebSocket stays online (ms). */
+  readonly outboxRetryIntervalMs: number
   /** Skip opening WebSocket connections (used by mock/offline profiles). */
   readonly autoConnect: boolean
   /** Hard offline switch: no network calls of any kind. */

@@ -111,3 +111,30 @@ describe('DurableOutbox', () => {
   })
 
 })
+
+describe('permanent send errors', () => {
+  it('parks a non-retryable response instead of continually re-sending it', async () => {
+    const { dir, transport, make } = await fixture()
+    const outbox = make()
+    await outbox.open()
+    const send = transport.sendText.bind(transport)
+    let calls = 0
+    transport.sendText = async (target) => {
+      calls += 1
+      if (target.text === 'invalid') {
+        const err = new Error('HTTP 403') as Error & { code: number }
+        err.code = 403
+        throw err
+      }
+      return send(target)
+    }
+    await outbox.send('default', { replyToMessageId: 'om_bad', text: 'invalid' }, 'bad')
+    expect(outbox.pending()[0]?.permanentFailure).toBe(true)
+    await outbox.drain()
+    expect(calls).toBe(1)
+    const reopened = new DurableOutbox(dir, resolveConfig({ stateDir: dir }), silentLogger, () => transport)
+    await reopened.open()
+    await reopened.drain()
+    expect(calls).toBe(1)
+  })
+})
