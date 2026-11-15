@@ -177,7 +177,7 @@ function FeishuSessionsInventory() {
           h('select', { className: 'fga-input', value: filters.sort, onChange: e => update('sort', e.target.value) },
             h('option', { value: 'lastActiveAt' }, '最后活动'), h('option', { value: 'createdAt' }, '创建时间'))),
         h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'submit', disabled: busy }, busy ? '筛选中…' : '应用筛选'),
-        h('button', { className: 'fgw-refresh', type: 'button', onClick: () => setApplied({ page: 1, pageSize: 25 }) }, '重置结果'))),
+        h('button', { className: 'fgw-refresh', type: 'button', onClick: () => { setFilters({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' }); setApplied({ page: 1, pageSize: 25, direction: 'desc' }) } }, '重置筛选'))),
     error && h('div', { className: 'fgw-caution', role: 'alert' }, '读取失败：' + error),
     h(WbBlock, { title: '飞书绑定列表', aside: '仅引用原生 DSH Session，不访问或修改其会话历史' },
       h(OpsTable, { rows: report?.items ?? [], empty: busy ? '正在载入…' : '没有匹配的 Session',
