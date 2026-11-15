@@ -1,4 +1,8 @@
-# 飞书通道可视化后台（DSH Web 设置页）
+# 飞书管理工作台已迁入左侧栏（Admin 0.2.0-rc.2）
+
+最新工作台结构、安装与实机验收见 [MANAGEMENT-WORKBENCH.md](MANAGEMENT-WORKBENCH.md)。本文件保留旧 Web Admin 的部署、systemd 和安全配置说明。**当前 DSH 设置页面仅供飞书 Gateway 凭据写入；所有运行概览、模型、机器人列表、白名单与服务操作均在左侧「飞书管理」中。**
+
+# 旧版 Web Admin 部署说明（历史操作）
 
 ## 目标
 
@@ -47,7 +51,7 @@ ls -lh dist/*.tgz
 构建产物为两个独立 tarball：
 
 - `dsh-plugin-feishu-gateway-0.2.0-rc.2.tgz`（运行通道；取消重复回复）
-- `dsh-plugin-feishu-admin-0.2.0-rc.1.tgz`（Web 管理插件）
+- `dsh-plugin-feishu-admin-0.2.0-rc.2.tgz`（Web 管理插件，含原生侧栏工作台）
 
 **绝不要将 Gateway 的 tarball 安装到 `web` Profile**：它的 Bundle patch 会插入真正的飞书 Gateway。Web Profile 只安装 `dsh-plugin-feishu-admin`。
 
@@ -96,10 +100,10 @@ systemctl --user status dsh-feishu-channel.service --no-pager
 
 ```bash
 # 安装真正的网关，只进入飞书 Profile
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.2.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.4.tgz"
 
 # 管理插件仍保持 0.2.0-rc.1，已安装者无需重复安装；首次安装时才执行：
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.2.tgz"
 ```
 
 重新读取各 Profile 的配置，验证 `web` 中只增加 `feishu-channel-admin`、没有 `feishu-gateway`：
