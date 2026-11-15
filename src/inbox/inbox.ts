@@ -9,6 +9,11 @@ export interface InboxRecord {
   readonly botId: string
   readonly chatId: string
   readonly senderId: string
+  readonly chatType?: 'p2p' | 'group'
+  readonly mentionedBot?: boolean
+  readonly threadId?: string
+  readonly rootId?: string
+  readonly messageType?: string
   readonly text: string
   readonly receivedAt: number
   readonly status: InboxStatus
@@ -151,6 +156,11 @@ export class DurableInbox {
         botId: message.botId,
         chatId: message.chatId,
         senderId: message.senderId,
+        chatType: message.chatType,
+        mentionedBot: message.mentionedBot === true,
+        ...(message.threadId ? { threadId: message.threadId } : {}),
+        ...(message.rootId ? { rootId: message.rootId } : {}),
+        messageType: message.messageType,
         text: message.text,
         receivedAt,
         status: 'pending',
