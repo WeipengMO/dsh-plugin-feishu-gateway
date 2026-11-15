@@ -60,6 +60,7 @@ interface ActiveTurn {
   readonly controller: AbortController
   sessionId?: string
   cancelledByUser: boolean
+  cancelSource?: 'card' | 'command' | 'operator'
   phase: 'running' | 'finalizing'
 }
 
@@ -376,14 +377,16 @@ export class FeishuGateway {
       event.messageId !== active.stream?.handle.messageId) {
       return toast('warning', '任务已结束或无法验证卡片')
     }
-    this.requestCancel(active)
+    this.requestCancel(active, 'card')
     return toast('success', '已请求取消当前任务')
   }
 
-  private requestCancel(active: ActiveTurn): void {
+  private requestCancel(active: ActiveTurn, source: 'card' | 'command' | 'operator' = 'command'): void {
     if (active.cancelledByUser || active.phase !== 'running') return
     active.cancelledByUser = true
-    this.audit({ kind: 'task', state: 'cancel-requested', botId: active.botId,
+    active.cancelSource = source
+    this.logger.info('Feishu task cancellation requested: source=%s session=%s', source, active.sessionId ?? 'pending')
+    this.audit({ kind: 'task', state: 'cancel-requested-' + source, botId: active.botId,
       ref: active.messageId, session: active.sessionId })
     active.controller.abort()
     if (active.sessionId) {
@@ -538,6 +541,7 @@ export class FeishuGateway {
     const signal = AbortSignal.any([this.abortController.signal, turn.controller.signal])
     let activeSessionId: string | undefined
     let unsubscribeProgress: (() => void) | undefined
+    let unsubscribeTools: (() => void) | undefined
     let progressStatus: 'done' | 'cancelled' | 'failed' = 'failed'
     let attempted = false
     let reportedUsage: ModelTokenUsage | undefined
@@ -581,6 +585,7 @@ export class FeishuGateway {
             if (progress && !signal.aborted) {
               turn.stream = progress
               unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => progress.onTextDelta(delta))
+              unsubscribeTools = this.bridge.onToolActivity?.(sessionId, (event) => progress.onToolActivity(event))
             }
           }
         } catch {
@@ -592,7 +597,7 @@ export class FeishuGateway {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
       })
-      // A task can consume tokens even when delivery fails or the turn times out.
+      // A task can consume tokens even if delivery fails or the turn times out.
       reportedUsage = reply.usage
       reportedModel = reply.model
       // Shutdown leaves a running turn uncertain; it may have had side effects.
@@ -606,11 +611,15 @@ export class FeishuGateway {
       this.audit({ kind: 'task', state: 'finalizing', botId: record.botId,
         ref: record.messageId, session: sessionId })
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
+        this.logger.warn('Feishu task exceeded reply deadline: session=%s timeoutMs=%d tools=%d failures=%d',
+          sessionId, this.config.replyTimeoutMs, reply.toolCalls ?? 0, reply.toolFailures ?? 0)
         this.bridge.cancel(sessionId)
         // A late reply from the prior Agent must never enter the next turn.
         await this.registry.unbind(key)
         await this.bridge.retire?.(sessionId)
-        await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
+        await this.replyDiagnostic(record, `执行超时（上限 ${Math.round(this.config.replyTimeoutMs / 1000)} 秒），` +
+          `已调用工具 ${reply.toolCalls ?? 0} 次（失败 ${reply.toolFailures ?? 0} 次）。` +
+          '原会话已隔离以避免继续执行；可缩小问题范围后重试。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
         const answer = text || '模型未返回文本内容。'
@@ -623,12 +632,15 @@ export class FeishuGateway {
           turn.stream = undefined
           unsubscribeProgress?.()
           unsubscribeProgress = undefined
+          unsubscribeTools?.()
+          unsubscribeTools = undefined
           try {
             const terminal = await withTimeout(card.close('done', answer, {
               elapsedMs: Date.now() - turn.startedAt,
               ...(reply.model ? { model: reply.model } : {}),
               ...(reply.usage ? { usage: reply.usage } : {}),
               ...(reply.generationMs ? { generationMs: reply.generationMs } : {}),
+              toolCalls: reply.toolCalls, toolFailures: reply.toolFailures,
             }), 5_000)
             deliveredAsCard = !terminal.timedOut && terminal.value === true
             if (terminal.timedOut) this.logger.warn('Feishu CardKit final delivery timed out; falling back to text')
@@ -693,6 +705,7 @@ export class FeishuGateway {
     } finally {
       if (activeSessionId) this.approvals.cancelSession(activeSessionId)
       unsubscribeProgress?.()
+      unsubscribeTools?.()
       if (turn.stream) {
         try {
           const closing = await withTimeout(turn.stream.close(progressStatus), 5_000)
@@ -808,7 +821,7 @@ export class FeishuGateway {
       opsRef(x.messageId) === command.ref && x.phase === 'running' && !x.cancelledByUser)
     if (matches.length !== 1) return 'not-found'
     const active = matches[0]!
-    this.requestCancel(active) // Same safe path as the owner's CardKit /cancel
+    this.requestCancel(active, 'operator') // Same safe path as the owner's CardKit /cancel
     this.audit({ kind: 'task', state: 'operator-cancel', botId: active.botId,
       ref: active.messageId, session: active.sessionId })
     return 'completed'

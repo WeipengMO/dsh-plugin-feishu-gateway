@@ -64,6 +64,9 @@ window.__ModuleLoader__.load({
       const [provider, setProvider] = useState('')
       const [model, setModel] = useState('')
       const [timeout, setTimeout] = useState('')
+      const [proxyEnabled, setProxyEnabled] = useState(false)
+      const [proxyEnv, setProxyEnv] = useState('FEISHU_CHANNEL_PROXY_URL')
+      const [proxyFallback, setProxyFallback] = useState(true)
       const [retry, setRetry] = useState('')
       const [interval, setIntervalValue] = useState('')
       const [autoConnect, setAutoConnect] = useState('inherit')
@@ -84,6 +87,9 @@ window.__ModuleLoader__.load({
         setProvider(c.agent?.provider || '')
         setModel(c.agent?.model || '')
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
+        setProxyEnabled(c.networkProxy?.enabled === true)
+        setProxyEnv(c.networkProxy?.urlEnv || 'FEISHU_CHANNEL_PROXY_URL')
+        setProxyFallback(c.networkProxy?.fallbackDirect !== false)
         setRetry(c.sendRetries === undefined ? '' : String(c.sendRetries))
         setIntervalValue(c.outboxRetryIntervalMs === undefined ? '' : String(c.outboxRetryIntervalMs / 1000))
         setAutoConnect(c.autoConnect === undefined ? 'inherit' : c.autoConnect ? 'enabled' : 'disabled')
@@ -121,6 +127,7 @@ window.__ModuleLoader__.load({
           if (model.trim()) result.agent.model = model.trim()
         }
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
+        result.networkProxy = { enabled: proxyEnabled, urlEnv: proxyEnv.trim(), fallbackDirect: proxyFallback }
         if (retry.trim()) result.sendRetries = Number(retry)
         if (interval.trim()) result.outboxRetryIntervalMs = Number(interval) * 1000
         if (autoConnect !== 'inherit') result.autoConnect = autoConnect === 'enabled'
@@ -201,6 +208,19 @@ window.__ModuleLoader__.load({
           streamCards && field('任务卡片刷新间隔（毫秒）',
             textInput(streamInterval, setStreamIntervalValue, '800', { type: 'number', min: 500, max: 5000 }),
             '增量文本用于预览；终态卡片成功时原卡片显示完整回复，仅卡片失败时 Outbox 兜底。'),
+          h('div', { className: 'fga-divider' }),
+          h('h3', null, '网络代理（仅飞书独立 Profile）'),
+          h('label', { className: 'fga-check' },
+            h('input', { type: 'checkbox', checked: proxyEnabled, onChange: e => setProxyEnabled(e.target.checked) }),
+            '启动时优先使用代理'),
+          proxyEnabled && field('代理 URL 环境变量名', textInput(proxyEnv, setProxyEnv, 'FEISHU_CHANNEL_PROXY_URL'),
+            'URL 请写入服务器的私有环境文件，不保存在仓库或管理配置中。'),
+          proxyEnabled && h('label', { className: 'fga-check' },
+            h('input', { type: 'checkbox', checked: proxyFallback, onChange: e => setProxyFallback(e.target.checked) }),
+            '代理预检失败则启动时回退直连'),
+          h('p', { className: 'fga-hint' },
+            '通过 start-feishu-channel.sh 启动时生效；适用于同一 DSH 进程内的 HTTP 请求。' +
+            ' WebSocket 使用独立代理 Agent，运行期断线由 SDK 重连；单次请求不自动重放。'),
           h('div', { className: 'fga-fields-row' },
             field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
             field('发送尝试次数', textInput(retry, setRetry, '继承 Profile', { type: 'number', min: 1, max: 10 })),

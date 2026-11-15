@@ -46,6 +46,16 @@ test('strict config validation rejects secrets, forged paths, and env name colli
   assert.throws(() => validateConfig({ allowlist: ['bad'] }), /allowlist/)
   assert.throws(() => validateConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'feishu' }] }), /colliding/)
   assert.throws(() => validateConfig({ agent: { secret: 'xxx' } }), /unsupported/)
+  const proxy = validateConfig({ networkProxy: {
+    enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true,
+  } })
+  assert.equal(proxy.networkProxy.urlEnv, 'HTTPS_PROXY')
+  assert.throws(() => validateConfig({ networkProxy: {
+    enabled: true, urlEnv: 'BAD;SHELL', fallbackDirect: true,
+  } }), /networkProxy/)
+  assert.throws(() => validateConfig({ networkProxy: {
+    enabled: true, urlEnv: 'HTTPS_PROXY', url: 'http://secret.invalid', fallbackDirect: true,
+  } }), /unsupported/)
 })
 
 test('every read and mutation requires authorized DSH browser session', async () => {
@@ -435,7 +445,6 @@ test('Agent profile removes only tagged legacy shared DSH instructions after exp
     assert.equal(now.json.profile.legacy.detected,false)
   } finally { await f.close() }
 })
-
 
 test('historical usage and CSV endpoints inherit DSH browser authorization', async () => {
   const f = await fixture()

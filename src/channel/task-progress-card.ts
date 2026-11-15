@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { completedProgressCard } from './card-content.js'
-import type { CardCompletionStats, FeishuCardHandle, FeishuTransport, GatewayLogger } from '../types.js'
+import type { CardCompletionStats, FeishuCardHandle, FeishuTransport, GatewayLogger, SessionToolActivity } from '../types.js'
 
 /**
  * Best-effort progress UI. On successful CardKit terminal replacement the
@@ -14,6 +14,10 @@ export class TaskProgressCard {
   private readonly transport: FeishuTransport
   private readonly logger: GatewayLogger
   private text = ''
+  private readonly startedAt = Date.now()
+  private toolCalls = 0
+  private toolFailures = 0
+  private currentTool = '正在准备'
   private lastRendered = ''
   private sequence = 0
   private writing: Promise<void> = Promise.resolve()
@@ -21,7 +25,8 @@ export class TaskProgressCard {
   private failed = false
   private textBytes = 0
   /** CardKit message/card JSON must stay below Feishu's payload limit. */
-  private readonly maxTextBytes = 18_000
+  // Reserve headroom for the tool-status header in the same CardKit element.
+  private readonly maxTextBytes = 17_000
   private readonly maxFinalBytes = 27_000
 
   private constructor(
@@ -60,9 +65,25 @@ export class TaskProgressCard {
     }
   }
 
+  onToolActivity(activity: SessionToolActivity): void {
+    if (this.closed || this.failed) return
+    this.toolCalls = activity.calls
+    this.toolFailures = activity.failures
+    const phase = activity.phase === 'started' ? '执行中'
+      : activity.phase === 'failed' ? '失败' : '完成'
+    this.currentTool = `${activity.name} · ${phase}` +
+      (activity.httpStatus ? ` (HTTP ${activity.httpStatus})` : '')
+  }
+
   private scheduleFlush(): void {
-    if (this.closed || this.failed || this.text === this.lastRendered) return
-    const snapshot = this.text
+    if (this.closed || this.failed) return
+    const elapsed = Math.floor((Date.now() - this.startedAt) / 1000)
+    // Keep a heartbeat at most every ten seconds when no new text arrives.
+    const seconds = Math.floor(elapsed / 10) * 10
+    const summary = `**运行状态**：${seconds}s · 工具 ${this.toolCalls} 次 · 失败 ${this.toolFailures} 次` +
+      `\n**最近工具**：${this.currentTool}`
+    const snapshot = summary + '\n\n' + (this.text || '正在处理请求…')
+    if (snapshot === this.lastRendered) return
     this.lastRendered = snapshot
     const next = ++this.sequence
     this.writing = this.writing.then(async () => {

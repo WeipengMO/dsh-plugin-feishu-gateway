@@ -22,7 +22,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs',
+const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 
@@ -88,6 +88,15 @@ export function validateConfig(input) {
     result.agent = agent
   }
   if (input.replyTimeoutMs !== undefined) result.replyTimeoutMs = integer(input.replyTimeoutMs, 'replyTimeoutMs', 5000, 1800000)
+  if (input.networkProxy !== undefined) {
+    const p = input.networkProxy
+    if (!object(p)) throw httpError(400, 'networkProxy must be an object')
+    exactKeys(p, ['enabled', 'urlEnv', 'fallbackDirect'])
+    if (typeof p.enabled !== 'boolean' || typeof p.fallbackDirect !== 'boolean' ||
+        typeof p.urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(p.urlEnv))
+      throw httpError(400, 'invalid networkProxy')
+    result.networkProxy = { enabled: p.enabled, urlEnv: p.urlEnv, fallbackDirect: p.fallbackDirect }
+  }
   if (input.replyFormat !== undefined) {
     if (input.replyFormat !== 'text' && input.replyFormat !== 'markdown') throw httpError(400, 'invalid replyFormat')
     result.replyFormat = input.replyFormat

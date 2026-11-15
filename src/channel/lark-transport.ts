@@ -1,4 +1,6 @@
 import { appIdLooksValid } from '../config.js'
+// https-proxy-agent@5 exports a CommonJS constructor, not a named ESM export.
+import HttpsProxyAgent from 'https-proxy-agent'
 import type {
   BotCredentials,
   CardActionEvent,
@@ -7,6 +9,7 @@ import type {
   FeishuTransport,
   GatewayLogger,
   InboundMessage,
+  NetworkProxyConfig,
   OutboundTarget,
   SendReceipt,
   TransportState,
@@ -103,6 +106,7 @@ export class LarkTransport implements FeishuTransport {
     readonly botId: string,
     private readonly credentials: BotCredentials,
     private readonly logger: GatewayLogger,
+    private readonly networkProxy?: NetworkProxyConfig,
   ) {}
 
   get state(): TransportState {
@@ -160,8 +164,16 @@ export class LarkTransport implements FeishuTransport {
       },
     })
 
+    // The channel launcher chooses a proxy only after an outbound CONNECT
+    // preflight. Never embed proxy URLs in profile config, logs or source.
+    // REST uses Axios' HTTPS_PROXY support; WS needs the SDK's explicit agent.
+    const envName = this.networkProxy?.urlEnv ?? 'FEISHU_CHANNEL_PROXY_URL'
+    const proxyUrl = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED === 'proxy'
+      ? process.env[envName] : undefined
+    const wsAgent = proxyUrl ? HttpsProxyAgent(proxyUrl) : undefined
     this.ws = new mod.WSClient({
       ...common,
+      ...(wsAgent ? { agent: wsAgent } : {}),
       autoReconnect: true,
       onReady: () => this.transition('connected'),
       onReconnecting: () => this.transition('reconnecting'),

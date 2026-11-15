@@ -49,6 +49,12 @@ export const Config: ConfigValidator = Schema.object({
     .description('Inbound text is truncated to this many code points.'),
   replyTimeoutMs: Schema.number().default(120_000)
     .description('Maximum time to wait for the native Session reply.'),
+  networkProxy: Schema.object({
+    enabled: Schema.boolean().default(false),
+    urlEnv: Schema.string().default('FEISHU_CHANNEL_PROXY_URL'),
+    fallbackDirect: Schema.boolean().default(true),
+  }).default({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true })
+    .description('Optional startup proxy for Feishu channel and DSH Agent HTTP requests; proxy URL is read from the named env variable only.'),
   replyFormat: Schema.union([Schema.const('text'), Schema.const('markdown')]).default('text')
     .description('Feishu reply type: legacy text (default) or post/md rich Markdown.'),
   approvalCards: Schema.boolean().default(false)
@@ -105,6 +111,15 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     maxDedupEntries: numberOr(raw.maxDedupEntries, 50_000),
     maxTextLength: numberOr(raw.maxTextLength, 8000),
     replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
+    networkProxy: {
+      enabled: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.enabled === true,
+      urlEnv: (() => {
+        const value = (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.urlEnv
+        return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+          ? value : 'FEISHU_CHANNEL_PROXY_URL'
+      })(),
+      fallbackDirect: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.fallbackDirect !== false,
+    },
     replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
     approvalCards: raw.approvalCards === true,
     streamCards: raw.streamCards === true,
@@ -212,5 +227,7 @@ export function redactedConfigSummary(config: GatewayConfig): Record<string, unk
     replyFormat: config.replyFormat,
     approvalCards: config.approvalCards,
     streamCards: config.streamCards,
+    proxy: { enabled: config.networkProxy.enabled, urlEnv: config.networkProxy.urlEnv,
+      fallbackDirect: config.networkProxy.fallbackDirect, selected: process.env.FEISHU_GATEWAY_PROXY_SELECTED ?? 'unmanaged' },
   }
 }
