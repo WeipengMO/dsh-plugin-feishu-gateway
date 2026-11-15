@@ -33,9 +33,10 @@ describe('MessageRouter security policy', () => {
     expect(router.decide(baseMessage)).toEqual({ accepted: false, reason: 'sender-not-allowlisted' })
   })
 
-  it('rejects group chats even when allowGroups is true (v0.1.0 hard rule)', () => {
+  it('rejects group chats but keeps private chats enabled if allowGroups is true', () => {
     const router = new MessageRouter(resolveConfig({ allowlist: ['ou_alice'], allowGroups: true }))
     expect(router.decide({ ...baseMessage, chatType: 'group' })).toEqual({ accepted: false, reason: 'groups-disabled' })
+    expect(router.decide(baseMessage).accepted).toBe(true)
   })
 
   it('rejects non-text messages and bot-originated messages', () => {

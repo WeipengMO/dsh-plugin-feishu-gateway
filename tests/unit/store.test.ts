@@ -34,12 +34,14 @@ describe('JsonStore', () => {
     expect((await store.load()).values).toHaveLength(20)
   })
 
-  it('quarantines a corrupt file and starts clean', async () => {
+  it('quarantines corrupt durable state and refuses to silently lose it', async () => {
     const { dir, store } = await fixture()
     await writeFile(path.join(dir, 'doc.json'), '{not json', 'utf8')
-    expect(await store.load()).toEqual({ values: [] })
-    await store.save({ values: [9] })
-    expect(await store.load()).toEqual({ values: [9] })
+    await expect(store.load()).rejects.toThrow(/manual recovery required/)
+    expect(await readFile(path.join(dir, 'doc.json'), 'utf8')).toBe('{not json')
+    // A daemon restart must NOT convert corruption into an empty Outbox.
+    const restarted = new JsonStore<Doc>(dir, 'doc', { values: [] })
+    await expect(restarted.load()).rejects.toThrow(/manual recovery required/)
   })
 
   it('never leaves a temp file behind', async () => {
@@ -47,5 +49,17 @@ describe('JsonStore', () => {
     await store.save({ values: [1] })
     const { readdir } = await import('node:fs/promises')
     expect((await readdir(dir)).filter((f) => f.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('two stores in one process do not share a colliding temp file', async () => {
+    // Regression: the old `${pid}.tmp` name meant instance A's rename could
+    // observe instance B's half-written buffer (ENOENT / lost state).
+    const { dir } = await fixture()
+    const a = new JsonStore<Doc>(dir, 'shared', { values: [] })
+    const b = new JsonStore<Doc>(dir, 'shared', { values: [] })
+    await Promise.all([a.load(), b.load()])
+    await Promise.all([a.save({ values: [1] }), b.save({ values: [2] })])
+    const raw = await readFile(path.join(dir, 'shared.json'), 'utf8')
+    expect([1, 2]).toContain((JSON.parse(raw) as Doc).values[0])
   })
 })

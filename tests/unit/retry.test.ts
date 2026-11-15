@@ -79,3 +79,13 @@ describe('withTimeout', () => {
     expect((await promise).timedOut).toBe(true)
   })
 })
+
+describe('pre-aborted timeout', () => {
+  it('resolves immediately without waiting for a never-ending task', async () => {
+    const { withTimeout } = await import('../../src/util/retry.js')
+    const controller = new AbortController()
+    controller.abort()
+    const result = await withTimeout(new Promise<void>(() => undefined), 60_000, controller.signal)
+    expect(result.timedOut).toBe(true)
+  })
+})

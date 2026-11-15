@@ -25,15 +25,24 @@ interface AgentHandleLike {
 interface AgentRegistryLike {
   create(options: Record<string, unknown>): Promise<AgentHandleLike>
   resume(options: Record<string, unknown>): Promise<AgentHandleLike>
+  /** The official registry exposes a live-agent lookup (not an owner handle). */
+  get?(sessionId: string): AgentHandleLike['agent'] | undefined
+}
+
+interface SessionStoreLike {
+  get?(sessionId: string): unknown
 }
 
 interface TurnState {
   readonly durable: string[]
+  readonly attempts: string[]
   readonly live: string[]
   readonly done: Promise<void>
   readonly resolve: () => void
   settled: boolean
   events: number
+  /** Set when `turn/end` reports a non-completed reason (native Agent failure). */
+  failure?: string
 }
 
 /**
@@ -96,14 +105,39 @@ export class DshSessionBridge implements SessionBridge {
     return this.agents
   }
 
+  /** Optional: the host's `agent-default-model` service (absent in mocks). */
+  private defaultModelSelection(): { provider?: string; model?: string; reasoningEffort?: string } | undefined {
+    try {
+      const service = this.ctx.get('agentDefaultModel') as {
+        currentSelection?: () => { provider?: string; model?: string; reasoningEffort?: string }
+      } | undefined
+      return typeof service?.currentSelection === 'function' ? service.currentSelection() : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
     if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
     const meta: Record<string, unknown> = { cwd }
+
+    // A native Agent created through ctx.agents.create() has NO provider/model
+    // unless one is supplied: the `agent-default-model` service only records a
+    // model selection for agents the host creates itself. Verified in a real
+    // DSH 0.2.2-rc.1 runtime — without this, every turn ends with
+    // "agent ... has no provider/model" and the user gets an empty-reply
+    // fallback. Fall back to the profile's own default selection when the
+    // plugin's `agent` route is not configured (the default case).
+    const selection = this.defaultModelSelection()
+    const provider = route?.provider ?? selection?.provider
+    const model = route?.model ?? selection?.model
+    const reasoningEffort = route?.reasoningEffort ?? selection?.reasoningEffort
     const agentOptions: Record<string, unknown> = {}
-    if (route?.provider) agentOptions.provider = route.provider
-    if (route?.model) agentOptions.model = route.model
-    if (route?.reasoningEffort) agentOptions.reasoningEffort = route.reasoningEffort
+    if (provider) agentOptions.provider = provider
+    if (model) agentOptions.model = model
+    if (reasoningEffort) agentOptions.reasoningEffort = reasoningEffort
+
     const handle = await agents.create({
       sessionId,
       meta,
@@ -114,18 +148,50 @@ export class DshSessionBridge implements SessionBridge {
   }
 
   async resume(sessionId: string): Promise<void> {
-    if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
-    const handle = await agents.resume({ resumeSessionId: sessionId })
-    this.handles.set(sessionId, handle)
-    this.logger.info('resumed native DSH session %s', sessionId)
+    const cached = this.handles.get(sessionId)
+
+    if (cached) {
+      // Normal follow-up in the SAME live host: reuse the owning AgentHandle.
+      // AgentHandle.dispose() removes the Session from SessionStore. Disposing
+      // it before every turn destroys the very context we want to preserve.
+      // A cold resume belongs ONLY to a new bridge/host after persistence has
+      // been mounted and agent-loop has registered its factory.
+      if (typeof agents.get === 'function' && agents.get(sessionId) !== cached.agent) {
+        throw new Error(
+          `native DSH Agent ${sessionId} is no longer registered; ` +
+          'the host/agent-loop may have unloaded. Refusing to reuse a stale handle.',
+        )
+      }
+      const sessions = this.ctx.get('sessions') as SessionStoreLike | undefined
+      if (typeof sessions?.get === 'function' && !sessions.get(sessionId)) {
+        throw new Error(
+          `native DSH Session ${sessionId} is not in the active SessionStore; ` +
+          'the host may have shut down. Refusing to append to a detached Session.',
+        )
+      }
+      this.logger.debug('reusing live native DSH session %s', sessionId)
+      return
+    }
+
+    try {
+      const handle = await agents.resume({ resumeSessionId: sessionId })
+      this.handles.set(sessionId, handle)
+      this.logger.info('restored persisted native DSH session %s', sessionId)
+    } catch (error) {
+      throw new Error(
+        `cannot resume persisted DSH Session ${sessionId}; ensure a persistent DSH host ` +
+        `has agent-loop and session-persistence mounted: ${String(error)}`,
+        { cause: error },
+      )
+    }
   }
 
   async submit(sessionId: string, text: string, signal: AbortSignal): Promise<void> {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error(`session ${sessionId} is not live`)
     if (signal.aborted) throw new Error('submit aborted')
-    this.ensureTurn(sessionId)
+    const submittedTurn = this.ensureTurn(sessionId)
     handle.agent.followup(await makeUserMessage(text))
 
     // Secondary completion signal. `turn/end` is the authoritative boundary,
@@ -137,7 +203,9 @@ export class DshSessionBridge implements SessionBridge {
     if (typeof whenIdle === 'function') {
       void whenIdle.call(handle.agent).then(() => {
         const turn = this.turns.get(sessionId)
-        if (turn && (turn.durable.length > 0 || turn.live.length > 0)) this.settle(sessionId)
+        if (turn === submittedTurn && (turn.durable.length > 0 || turn.attempts.length > 0 || turn.live.length > 0)) {
+          this.settle(sessionId)
+        }
       }).catch(() => undefined)
     }
   }
@@ -147,9 +215,17 @@ export class DshSessionBridge implements SessionBridge {
     if (!turn) return { text: '', reason: 'empty' }
     const result = await withTimeout(turn.done, options.timeoutMs, options.signal)
     const durable = turn.durable.join('').trim()
-    const text = durable || turn.live.join('').trim()
+    const text = durable || turn.attempts.join('').trim() || turn.live.join('').trim()
     const reason = !result.timedOut ? 'idle' : 'timeout'
+    const failure = turn.failure
     this.turns.delete(sessionId)
+    // A `turn/end` with reason.kind === 'error' means the native Agent loop
+    // failed (e.g. LLM 5xx after retries) WITHOUT producing an assistant
+    // message. Returning an empty "success" here would make the Gateway mark
+    // the message `done` with a useless "model returned no text" reply and keep
+    // the (possibly half-updated) Session bound. Propagate it so the existing
+    // failure path marks `failed` + unbinds, isolating the next message.
+    if (failure) throw new Error(`native DSH Agent turn failed (${failure})`)
     return {
       text,
       reason,
@@ -166,6 +242,22 @@ export class DshSessionBridge implements SessionBridge {
       this.logger.warn('cancel failed for %s: %s', sessionId, String(error))
     }
     this.settle(sessionId)
+  }
+
+  async retire(sessionId: string): Promise<void> {
+    // An aborted Session must not retain a Handle until the entire Host exits.
+    // Never invoke this on a healthy follow-up turn.
+    this.settle(sessionId)
+    this.turns.delete(sessionId)
+    const handle = this.handles.get(sessionId)
+    if (!handle) return
+    this.handles.delete(sessionId)
+    try {
+      const result = await withTimeout(handle.dispose(), 5_000)
+      if (result.timedOut) this.logger.warn('retired AgentHandle %s did not dispose within 5s', sessionId)
+    } catch (error) {
+      this.logger.warn('retired AgentHandle %s disposal failed: %s', sessionId, String(error))
+    }
   }
 
   async dispose(): Promise<void> {
@@ -190,7 +282,7 @@ export class DshSessionBridge implements SessionBridge {
     const done = new Promise<void>((r) => {
       resolve = r
     })
-    const turn: TurnState = { durable: [], live: [], done, resolve, settled: false, events: 0 }
+    const turn: TurnState = { durable: [], attempts: [], live: [], done, resolve, settled: false, events: 0 }
     this.turns.set(sessionId, turn)
     return turn
   }
@@ -210,9 +302,23 @@ export class DshSessionBridge implements SessionBridge {
     const type = (event as { type?: unknown })?.type
     if (type === 'assistant/message' || type === 'assistant/attempt') {
       const text = extractText((event as { data?: unknown })?.data)
-      if (text) turn.durable.push(text)
+      if (text) (type === 'assistant/message' ? turn.durable : turn.attempts).push(text)
       turn.events += 1
     } else if (type === 'turn/end') {
+      // dsh-session emits the authoritative outcome here. Verified on
+      // 0.2.2-rc.1: a failed Agent turn ends with
+      // data.reason = { kind: 'error', error: { message, code } } and produces
+      // no assistant/message. Only `completed` is a real success.
+      const reason = (event as {
+        data?: { reason?: { kind?: string; error?: { message?: string; code?: string } } }
+      })?.data?.reason
+      // Only a genuine Agent failure is surfaced as an error. `aborted` /
+      // `interrupted` are user/cancellation outcomes that the Gateway already
+      // handles via its own signal + `cancelled` reply path.
+      if (reason?.kind === 'error') {
+        const detail = reason.error?.message ?? reason.error?.code ?? 'unknown error'
+        turn.failure = `error: ${detail}`
+      }
       this.settle(sessionId)
     }
   }

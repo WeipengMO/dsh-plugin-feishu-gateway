@@ -75,7 +75,11 @@ function fakeAgents() {
     }
   }
 
-  const agents = {
+  const agents: {
+    create: (options: Record<string, unknown>) => Promise<FakeHandle>
+    resume: (options: Record<string, unknown>) => Promise<FakeHandle>
+    get?: (sessionId: string) => FakeHandle['agent'] | undefined
+  } = {
     create: async (options: Record<string, unknown>) => {
       created.push(options)
       return makeHandle()
@@ -197,5 +201,207 @@ describe('DshSessionBridge', () => {
     expect(ctx.listenerCount('session/event')).toBe(0)
     expect(ctx.listenerCount('agent/assistant-stream')).toBe(0)
     expect(bridge.available).toBe(false)
+  })
+  it('does not concatenate assistant/attempt with the final assistant/message', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/attempt',
+      data: { message: { content: [{ type: 'text', text: 'draft' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'final' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: {} })
+    expect((await waiting).text).toBe('final')
+  })
+
+  it('falls back to the host default model selection when no route is configured', async () => {
+    // Real-runtime regression: ctx.agents.create() without agentOptions leaves
+    // the Agent with no provider/model, so every turn errors with
+    // "agent ... has no provider/model" and the user gets an empty reply.
+    const { ctx, bridge, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'mock-route', model: 'mock-model' }),
+    })
+    await bridge.create('session-1', '/workspace')
+    expect(fake.created[0]).toMatchObject({
+      agentOptions: { provider: 'mock-route', model: 'mock-model' },
+    })
+  })
+
+  it('prefers an explicit plugin route over the host default', async () => {
+    const { ctx, bridge, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'host-default', model: 'host-model' }),
+    })
+    await bridge.create('session-1', '/workspace', { provider: 'explicit', model: 'explicit-model' })
+    expect(fake.created[0]).toMatchObject({
+      agentOptions: { provider: 'explicit', model: 'explicit-model' },
+    })
+  })
+
+  it('stays usable (no agentOptions) when the default-model service is absent or throws', async () => {
+    const { bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    expect(fake.created[0]).not.toHaveProperty('agentOptions')
+    const ctx2 = new FakeCtx()
+    const fake2 = fakeAgents()
+    ctx2.services.set('agents', fake2.agents)
+    ctx2.services.set('agentDefaultModel', { currentSelection: () => { throw new Error('no route') } })
+    const bridge2 = new DshSessionBridge(ctx2, silentLogger)
+    await bridge2.create('session-2', '/workspace')
+    expect(fake2.created[0]).not.toHaveProperty('agentOptions')
+  })
+
+  it('keeps one live AgentHandle for three sequential turns without destroying context', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    for (const [index, prompt] of ['remember alpha', 'what was it?', 'repeat it'].entries()) {
+      await bridge.resume('session-1')
+      await bridge.submit('session-1', prompt, new AbortController().signal)
+      const waiting = bridge.waitForReply('session-1', {
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      })
+      ctx.emit('session/event', { id: 'session-1' }, {
+        type: 'assistant/message',
+        data: { message: { content: [{ type: 'text', text: `turn-${index + 1}` }] } },
+      })
+      ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: {} })
+      expect((await waiting).text).toBe(`turn-${index + 1}`)
+    }
+    expect(fake.created).toHaveLength(1)
+    expect(fake.resumed).toHaveLength(0)
+    expect(fake.disposed).toHaveLength(0)
+    expect(fake.followups).toHaveLength(3)
+    await bridge.dispose()
+    expect(fake.disposed).toHaveLength(1)
+  })
+
+  it('cold-resumes a persisted Session exactly once in a new bridge', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.dispose()
+    const restored = new DshSessionBridge(ctx, silentLogger)
+    await restored.resume('session-1')
+    await restored.resume('session-1')
+    expect(fake.resumed).toEqual([{ resumeSessionId: 'session-1' }])
+    expect(fake.disposed).toHaveLength(1)
+    await restored.dispose()
+    expect(fake.disposed).toHaveLength(2)
+  })
+
+  it('refuses to use a cached Agent when the official registry no longer owns it', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    ctx.services.set('agents', fake.agents)
+    fake.agents.get = () => undefined
+    await expect(bridge.resume('session-1')).rejects.toThrow(/no longer registered/)
+    expect(fake.resumed).toHaveLength(0)
+    expect(fake.disposed).toHaveLength(0)
+    await bridge.dispose()
+  })
+
+  it('refuses to append to a detached SessionStore', async () => {
+    const { ctx, bridge, fake } = setup()
+    await bridge.create('session-1', '/workspace')
+    ctx.services.set('sessions', { get: (_sessionId: string) => undefined })
+    await expect(bridge.resume('session-1')).rejects.toThrow(/not in the active SessionStore/)
+    expect(fake.followups).toHaveLength(0)
+    await bridge.dispose()
+  })
+
+  it('reports a missing Agent Factory during cold restore without creating a new Session', async () => {
+    const ctx = new FakeCtx()
+    const fake = fakeAgents()
+    ctx.services.set('agents', {
+      ...fake.agents,
+      resume: async () => { throw new Error('no agent factory registered (load an agent-loop plugin)') },
+    })
+    const bridge = new DshSessionBridge(ctx, silentLogger)
+    await expect(bridge.resume('previous-session')).rejects.toThrow(/no agent factory registered/)
+    expect(fake.created).toHaveLength(0)
+  })
+
+  it('propagates a native `turn/end` error instead of faking a successful empty reply', async () => {
+    // Real-runtime regression (dsh 0.2.2-rc.1): an LLM 5xx ends the turn with
+    // data.reason = { kind:'error', error:{ message, code } } and NO
+    // assistant/message. Treating it as success silently marked the message
+    // `done` and kept the Session bound.
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end',
+      data: { turn: 1, reason: { kind: 'error', error: { message: '500: upstream failure', code: 'SERVER' } } },
+    })
+    await expect(waiting).rejects.toThrow(/native DSH Agent turn failed \(error: 500: upstream failure\)/)
+  })
+
+  it('accepts a `turn/end` with reason.kind completed', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'ok' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } },
+    })
+    expect(await waiting).toMatchObject({ text: 'ok', reason: 'idle' })
+  })
+
+  it('does not treat a user-aborted `turn/end` as an Agent failure', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { reason: { kind: 'aborted', cause: 'user' } },
+    })
+    expect(await waiting).toMatchObject({ text: '', reason: 'idle' })
+  })
+
+  it('isolates the next turn after a native Agent error (turn state is cleared)', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const failed = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end', data: { reason: { kind: 'error', error: { message: 'boom' } } },
+    })
+    await expect(failed).rejects.toThrow(/boom/)
+    // The failed turn must not poison the next one on the same Session.
+    await bridge.submit('session-1', 'again', new AbortController().signal)
+    const next = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'fresh' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    expect(await next).toMatchObject({ text: 'fresh' })
+  })
+
+})
+
+describe('abandoned native handles', () => {
+  it('retires a cancelled Session without affecting a later healthy Session', async () => {
+    const { bridge, fake } = setup()
+    await bridge.create('timed-out', '/workspace')
+    await bridge.create('healthy', '/workspace')
+    bridge.cancel('timed-out')
+    await bridge.retire('timed-out')
+    expect(fake.disposed).toHaveLength(1)
+    await bridge.submit('healthy', 'still alive', new AbortController().signal)
+    expect(fake.followups).toHaveLength(1)
+    await bridge.dispose()
+    expect(fake.disposed).toHaveLength(2)
   })
 })

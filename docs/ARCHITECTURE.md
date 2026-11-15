@@ -100,8 +100,8 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 └───────────────▲──────────────────────────────────────────────────────────┘
                 │ accepted
 ┌───────────────┴──────────────────────────────────────────────────────────┐
-│  DedupIndex (durable)  →  DurableInbox (JSONL, append-before-dispatch)    │
-│  重启时回放 pending 记录（at-least-once + 去重 = exactly-once 效果）       │
+│  DurableInbox (JSONL 原子准入) → DedupIndex (非权威可选缓存)               │
+│  仅安全回放 pending；running → uncertain，不重复执行 Agent 副作用          │
 └───────────────▲──────────────────────────────────────────────────────────┘
                 │ 每个 chat 串行队列
 ┌───────────────┴──────────────────────────────────────────────────────────┐
@@ -133,33 +133,55 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 1. `WSClient` 推 `im.message.receive_v1` → `LarkTransport` 归一化成 `InboundMessage`
    （取 `open_id`、`chat_id`、`chat_type`、`message_type`，`content` 是 JSON 字符串里的 `text`）。
 2. `MessageRouter.decide()` 安全判定；拒绝则只计数、debug 日志、**不回复**（避免探测泄露）。
-3. `DedupIndex.checkAndRemember(message_id)`：断线重连后的重复投递在这里被挡掉，索引持久化。
-4. `DurableInbox.record()` **先落盘**再交给处理器；崩溃 / reload 后 `open()` 返回 pending 记录。
+3. `DurableInbox.recordIfAbsent()`：以单一持久化入口原子处理重复的 `message_id`，先落盘后确认接收；落盘失败不 ACK。
+4. `DedupIndex.checkAndRemember()`：Inbox 成功后才更新的可选缓存，失败不阻断已经可靠入队的工作。
 5. 按 `botId:chatId` 进入串行队列，避免同一会话两个 turn 交错。
 6. `SessionRegistry` 查映射：
-   - 无 → `sessionIdFor(botId, chatId)` 生成稳定 id → `bridge.create()` → `bind()`；
-   - 有 → `bridge.resume(existing.sessionId)`；恢复失败则换新 id 重新 create（防陈旧 id 卡死）。
+   - 无 → 以聊天键与随机后缀生成新的 Session id → `bridge.create()` → `bind()`；
+   - 有 → `bridge.resume(existing.sessionId)`：如果当前 Bridge 已持有活动 AgentHandle，**直接复用**；只有新进程 / 新 Bridge 缺失 Handle 才从持久化 `agents.resume()`。恢复失败**保留原 Session 绑定**并回复诊断，不创建空白会话。
 7. `bridge.submit()` → `agent.followup(createUserMessage(...))`，DSH 自己的 loop 驱动模型。
 8. `bridge.waitForReply()` 同时收集：
    - **durable**：`session/event` 的 `assistant/message` / `assistant/attempt`（`event.data.message.content` 文本块）；
    - **live**：`agent/assistant-stream` 的 `text-delta` chunk；
    - 结束条件：`turn/end`；超时 / abort 由 `withTimeout` 兜底。
-9. 回复文本经 `truncateText` 后写入 `DurableOutbox`，用 `im.message.reply`（优先，保持会话上下文）
-   或 `im.message.create` 发送；失败重试，仍失败则留在 outbox，`connected` 事件时再 drain。
-10. `registry.touch()` + `inbox.markProcessed()`；异常则 `markFailed()` 并回复通用错误提示（不泄露细节）。
+9. 在 Agent 提交前将 Inbox 持久标记为 `running`。超时/异常/取消则取消并解绑原 Session；崩溃恢复时 `running` 变 `uncertain`、**同样解除该聊天的 Session 绑定**（下一条消息创建全新 Session），并通知用户检查操作结果。`uncertain` / `failed` 不自动重放，目前也没有程序化的重试 / 解决入口（见 ROADMAP v0.2.0 的死信队列 + 手动重放 TODO）。
+10. 回复经 `truncateText` 后送入串行 Outbox，按入站消息设置幂等键，持久记录发送 UUID；失败重试或重连补发。成功后 `markProcessed()`；运行失败终结为 `failed`，不自动重放。
 
 ### 2.3 持久化模型（v0.1.0 的「基础」部分）
 
 | 文件 | 格式 | 作用 |
 | --- | --- | --- |
-| `dedup.json` | 原子 JSON（`message_id → 首次时间`） | 去重；TTL + 容量上限裁剪 |
-| `inbox.jsonl` | 追加日志（`received`/`processed`/`failed`） | 崩溃恢复、状态可追溯 |
-| `outbox.json` | 原子 JSON（pending 数组） | 未送达回复、重试、断线补发 |
+| `dedup.json` | 原子 JSON（`message_id → 首次时间`） | 非权威加速索引；TTL + 容量上限裁剪 |
+| `inbox.jsonl` | 追加日志（`received`/`running`/`processed`/`failed`/`uncertain`） | 防止崩溃重放 Agent 副作用，保守恢复 |
+| `outbox.json` | 原子 JSON（pending + sent ledger） | 单进程串行补发、固定 UUID、消息幂等键 |
 | `sessions.json` | 原子 JSON（chat → sessionId） | 重启后 `ctx.agents.resume` |
 
-所有写操作都是「同目录临时文件 + `rename`」，单进程内用 Promise chain 串行化，避免并发丢写。
+三个 `JsonStore` 状态文件使用「同目录**按实例唯一**的临时文件 + `rename`」原子写入；
+`inbox.jsonl` 是 **append-only 日志**（`appendFile`，带 `0o600`），不是 `rename` 路径，
+且**没有 `fsync`**——「持久化」指交给内核页缓存，可抵御进程崩溃，不能保证机器掉电不丢。
+各存储内部用各自的 Promise chain 串行化；**但 Inbox / Registry / Outbox 之间没有跨库事务**：
+`outbox.send()`（外部 REST 副作用）发生在 `registry.touch()` 与 `markProcessed()` 之前。
 **没有引入 SQLite / 原生依赖**，也没有引入第二套会话存储 —— 会话内容完全由 DSH 的
-`dsh-session-persistence-jsonl` 管理。损坏的状态文件会被隔离成 `.corrupt-*` 并干净启动。
+`dsh-session-persistence-jsonl` 管理。
+
+损坏文件处理**仅覆盖三个 `JsonStore` 文件**：它们会被隔离成 `.corrupt-*` 并干净启动。
+`inbox.jsonl` 只修复**尾部断行**：损坏的不完整末行会被 `truncate` 掉；合法但缺结尾换行
+的末行会补齐 `\n`（否则下一次追加会把两个 JSON 对象粘成一行）。**一条已完成的非法
+JSONL 行仍会让 `open()` 抛错并使插件启动失败**，目前没有隔离 / 跳过 / 命令行修复入口。
+
+### 2.3.1 `stateDir` 单实例独占（fail closed）
+
+Inbox 的准入权威是**实例内的内存 Map**。两个 Gateway 实例（或两个进程）共用同一
+`stateDir` 时，会各自把同一个 `message_id` 判定为新消息并**执行两次 Agent**（不可逆副作用）。
+该场景已由 `scripts/fault-injection.mjs` 的 S6 复现并修复：启动时以 `O_EXCL` 创建
+`stateDir/.owner.lock`（内容含 owner 令牌、pid、host、`/proc` starttime），第二个实例
+`start()` 直接失败。锁由持有者在 `stop()` / 启动失败时按令牌释放；陈旧锁通过 PID 存活
+与 starttime 比对（可识别 PID 复用与僵尸进程）被接管，因此 SIGKILL 后的重启不会被永久锁死。
+
+> 这是**单机 advisory 锁，不是分布式互斥锁**。`stateDir` 必须位于同一主机且只被一个
+> Gateway 实例使用；跨主机 / 网络文件系统共享目录不在支持范围内。长期方案是把准入权威
+> 换成真正的磁盘唯一性检查（或 SQLite）。`JsonStore` 临时文件名也已由
+> `<file>.<pid>.tmp` 改为 `<file>.<pid>.<随机实例令牌>.tmp`，避免同进程内两个实例互踩。
 
 ### 2.4 生命周期与清理清单
 
@@ -186,7 +208,7 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 | Session 接入 | `ctx.agents` path A | 跨 profile、有明确 dispose、非 Web-only |
 | 服务声明 | `inject: ['agents','agentLoop','sessions','llm']` | 缺失时插件**不激活**而不是抛错 |
 | `SessionId` / `UserMessage` | 运行时字符串 + 动态 import 官方构造函数 | 避免编译期依赖 DSH 内部 branded 类型 |
-| 去重 vs 恢复 | 回放 pending 时**跳过** dedup | 否则重启恢复会被自己的去重索引挡住 |
+| 去重 vs 恢复 | 以 Inbox 为准；running/failed 不自动重放 | 避免重复执行不可逆 Agent 操作 |
 | 群聊 | 硬编码拒绝 | 需要 mention 解析、群隔离、审批策略，属于 v0.2.0 |
 | 存储 | 原子 JSON / JSONL | 零原生依赖、易审计；v0.2.0 可换 SQLite |
 | 真实凭据 | 完全不接触 | 用户明确要求；测试全 Mock |
@@ -205,10 +227,45 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
   `EventDispatcher.register`、`im.message.reply/create`、`Domain`），但**没有用真实凭据连过**。
   `im.message.reply` 在本机安装包的 `types/index.d.ts` 中已确认（GitHub README 的两段示例
   只用了 `create`，调研报告据此把 `reply` 标为「未从 README 验证」，此处以本机类型声明为准）。
-- 未做真实 DSH 运行时验证：`session/event` 是 **scope-filtered** 事件，理论上注册在插件根 ctx
-  的监听器应收到全部 Session 的事件，但这一行为只在带 FakeCtx 的集成测试中验证过，
-  **未在真实 DSH 进程中确认**。因此 `DshSessionBridge` 增加了 `agent.whenIdle()` 作为二次
-  完成信号（仅在已观察到 assistant 内容后才生效），并且即使收不到 `turn/end`，
-  `waitForReply` 也会在超时时把已收集到的文本返回。v0.2.0 应在真实租户中复核事件投递，
-  必要时改用 `ctx.sessionController.follow({ assistantStream: true }, signal)`。
+- **真实 DSH 运行时已验证（本次补充，隔离 `DSH_HOME` + Mock LLM）**：`session/event` 与
+  `agent/assistant-stream` **确实**投递到插件级 ctx，包括插件自建 Session 的事件
+  （实测 `assistant/message` / `turn/end` / `agent/assistant-stream` 均到达）。
+  `makeUserMessage` 的动态 import 回退对象也被 `agent.followup()` 接受（入站消息被
+  splice 进 agent inbox）。此前「scope-filtered 事件可能收不到」的担忧在 0.2.2-rc.1
+  headless 运行时**不成立**。
+- **实测发现两个历史缺陷（第二项需通过新的多轮回归重新验证）**：(1) 默认配置下 `ctx.agents.create()` 未带 `agentOptions`，
+  Agent 无 provider/model，每个 turn 以 `agent ... has no provider/model` 结束，用户只
+  收到空回复兜底且消息被标记 `done`；已修复为从 `ctx.agentDefaultModel.currentSelection()`
+  补默认 provider/model。(2) **同一 Session 的后续消息（上下文复用）历史上失败**：之前每条消息
+  `dispose()` 原有 Handle 并重新 `agents.resume()`。而 `dispose()` 会把原
+  Session 从活动 SessionStore 移除；当一次性 headless 运行时已卸载 Agent Loop 时，
+  `resume()` 又会因缺少 Factory 报
+  `no agent factory registered (load an agent-loop plugin)`。
+  现在同进程活动 Handle 直接复用，冷恢复只在新的 Bridge 启动时发生；
+  若 Agent Registry / SessionStore 已经卸载则明确失败，**不会悄悄新建无上下文 Session**。
+  该行为有 Mock 回归测试，但跨多轮真实模型上下文、冷恢复与
+  超时 / 异常 / 取消后的隔离仍须在长期存活的真实 DSH Host 中验收。
+  若 Host 生命周期本身只维持单次任务，需要提供常驻 Host 后再测试。
 - 社区参考项目调研报告已标注可达性与「已验证 / 推断」；本项目代码从零编写，未 Fork。
+
+---
+
+## 5. Round 2 真实运行时复验（补充，2026-11-14）
+
+上述「跨多轮真实模型上下文、冷恢复与超时 / 异常 / 取消后的隔离仍须验收」已在
+**持续运行的真实 DSH 0.2.2-rc.1 Host** 中完成，复现步骤见
+`scripts/real-runtime/README.md`，完整报告见 `research/ROUND2-TEST-REPORT.md`：
+
+- 同一进程连续三轮共用同一 Session；上下文由 DSH 真实会话历史承载（无状态测试 LLM
+  只依据请求中的历史生成回复）；活动 `AgentHandle` 仅在 `stop()` dispose 一次；
+  AgentRegistry / SessionStore / AgentFactory 始终为真。
+- 独立新 `DSH_HOME` + 新进程从 DSH 持久化冷恢复同一 Session ID，LLM 请求含前三轮
+  3 条 User + 3 条 Assistant 消息并回答 `GBM-7429`。
+- 超时 / 取消 / 异常后均创建新 Session，旧文本与旧事件无跨 Session 归因。
+- 上一轮的 `no agent factory registered` / `cannot append outside a SessionStore`
+  经 DSH 源码分析确认为 `dsh-headless` 一次性任务 `io.exit()` 触发根 fiber 并发卸载的
+  产物（`research/dsh-internals.md`），不是 Gateway 缺陷。
+- **本轮修复**：`turn/end` 的 `data.reason.kind === 'error'`（Agent 失败且无
+  `assistant/message`）此前被当成成功 → 空回复 + `done` + 不隔离；现在仅该 kind
+  抛出，复用既有 `markFailed` + `unbind` 路径，`aborted`/`interrupted` 不受影响。
+- 仍**未**在真实飞书租户 / 真实 Web profile 中验证；`dsh-web.service` 未受影响。

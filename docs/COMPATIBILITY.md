@@ -161,7 +161,7 @@ SDK 依赖 `protobufjs`（有 postinstall）与 `ws`；pnpm 12 的构建脚本�
 ```bash
 dsh --version                       # 应输出 0.2.2-rc.1
 node -p "require('./package.json').engines"
-pnpm run verify                     # typecheck + build + 86 tests
+pnpm run verify                     # typecheck + build + tests（数量以 CI 为准）
 pnpm pack --pack-destination dist   # 检查发布内容
 # 如需确认兼容性判定（只读）：
 node -e "const s=require('semver'); console.log(s.satisfies('0.2.2-rc.1','>=0.2.2-rc.1 <0.3.0-0',{includePrerelease:true}))"

@@ -67,6 +67,7 @@ export async function withTimeout<T>(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ value: T; timedOut: false } | { value: undefined; timedOut: true }> {
+  if (signal?.aborted) return { value: undefined, timedOut: true }
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   const abort = new Promise<{ value: undefined; timedOut: true }>((resolve) => {

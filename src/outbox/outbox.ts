@@ -1,7 +1,7 @@
 import { JsonStore } from '../storage/json-store.js'
 import type { FeishuTransport, GatewayConfig, GatewayLogger, OutboundTarget } from '../types.js'
 import { newId } from '../util/id.js'
-import { withRetry } from '../util/retry.js'
+import { isRetryable, withRetry } from '../util/retry.js'
 
 export interface OutboxRecord {
   readonly id: string
@@ -10,10 +10,13 @@ export interface OutboxRecord {
   readonly createdAt: number
   readonly attempts: number
   readonly lastError?: string
+  /** Do not repeatedly send permanently invalid requests on every timer tick. */
+  readonly permanentFailure?: boolean
 }
 
 interface OutboxState {
   readonly pending: readonly OutboxRecord[]
+  readonly sent?: Record<string, number>
 }
 
 /**
@@ -24,7 +27,7 @@ interface OutboxState {
  */
 export class DurableOutbox {
   private readonly store: JsonStore<OutboxState>
-  private state: OutboxState = { pending: [] }
+  private state: OutboxState = { pending: [], sent: {} }
   private chain: Promise<unknown> = Promise.resolve()
 
   constructor(
@@ -33,7 +36,7 @@ export class DurableOutbox {
     private readonly logger: GatewayLogger,
     private readonly transportFor: (botId: string) => FeishuTransport | undefined,
   ) {
-    this.store = new JsonStore<OutboxState>(stateDir, 'outbox', { pending: [] })
+    this.store = new JsonStore<OutboxState>(stateDir, 'outbox', { pending: [], sent: {} })
   }
 
   private serialize<R>(work: () => Promise<R>): Promise<R> {
@@ -42,12 +45,10 @@ export class DurableOutbox {
     return next
   }
 
-  private async write(next: OutboxState): Promise<OutboxState> {
-    return this.serialize(async () => {
-      await this.store.save(next)
-      this.state = next
-      return next
-    })
+  /** This method is only called with the Outbox mutex held. */
+  private async persist(next: OutboxState): Promise<void> {
+    await this.store.save(next)
+    this.state = next
   }
 
   async open(): Promise<number> {
@@ -55,31 +56,42 @@ export class DurableOutbox {
     return this.state.pending.length
   }
 
-  /** Persist then attempt delivery. Returns true when the message was sent. */
-  async send(botId: string, target: OutboundTarget): Promise<boolean> {
-    const record: OutboxRecord = {
-      id: newId('out'),
-      botId,
-      target,
-      createdAt: Date.now(),
-      attempts: 0,
-    }
-    await this.write({ pending: [...this.state.pending, record] })
-    await this.drain()
-    return !this.state.pending.some((entry) => entry.id === record.id)
+  /** Serialize admission and draining as ONE critical section. */
+  async send(botId: string, target: OutboundTarget, idempotencyKey?: string): Promise<boolean> {
+    return this.serialize(async () => {
+      const id = idempotencyKey ? `idem:${botId}:${idempotencyKey}` : newId('out')
+      if (Object.prototype.hasOwnProperty.call(this.state.sent ?? {}, id)) return true
+      if (!this.state.pending.some((record) => record.id === id)) {
+        const record: OutboxRecord = {
+          id,
+          botId,
+          target: { ...target, uuid: target.uuid ?? newId('fg') },
+          createdAt: Date.now(),
+          attempts: 0,
+        }
+        await this.persist({ ...this.state, pending: [...this.state.pending, record] })
+      }
+      await this.drainUnsafe()
+      return Object.prototype.hasOwnProperty.call(this.state.sent ?? {}, id)
+    })
   }
 
-  /** Try every pending record once, with bounded retry per record. */
+  /** Single-flight drain: simultaneous reconnects cannot send twice. */
   async drain(): Promise<number> {
-    const pending = [...this.state.pending]
+    return this.serialize(() => this.drainUnsafe())
+  }
+
+  private async drainUnsafe(): Promise<number> {
     let sent = 0
-    for (const record of pending) {
+    for (const record of [...this.state.pending]) {
+      if (record.permanentFailure) continue
       const transport = this.transportFor(record.botId)
       if (!transport) {
         this.logger.warn('no transport for bot %s; keeping outbox record %s', record.botId, record.id)
         continue
       }
       try {
+        // The same UUID is reused across retries AND process restarts.
         await withRetry(() => transport.sendText(record.target), {
           retries: this.config.sendRetries,
           baseDelayMs: this.config.sendRetryBaseDelayMs,
@@ -88,24 +100,31 @@ export class DurableOutbox {
             attempt, this.config.sendRetries, record.id, String(error),
           ),
         })
-        await this.remove(record.id)
+        const priorSent = { ...(this.state.sent ?? {}), [record.id]: Date.now() }
+        // Bound the delivery ledger; Inbox records remain the durable
+        // authority for old inbound events.
+        const boundedSent = Object.fromEntries(Object.entries(priorSent)
+          .sort((a, b) => b[1] - a[1]).slice(0, 20_000))
+        await this.persist({
+          pending: this.state.pending.filter((entry) => entry.id !== record.id),
+          sent: boundedSent,
+        })
         sent += 1
       } catch (error) {
-        await this.markFailure(record.id, String(error))
+        await this.persist({
+          ...this.state,
+          pending: this.state.pending.map((entry) => entry.id === record.id
+            ? { ...entry, attempts: entry.attempts + 1, lastError: String(error), permanentFailure: !isRetryable(error) }
+            : entry),
+        })
       }
     }
     return sent
   }
 
-  private async remove(id: string): Promise<void> {
-    await this.write({ pending: this.state.pending.filter((entry) => entry.id !== id) })
-  }
-
-  private async markFailure(id: string, error: string): Promise<void> {
-    const pending = this.state.pending.map((entry) => entry.id === id
-      ? { ...entry, attempts: entry.attempts + 1, lastError: error }
-      : entry)
-    await this.write({ pending })
+  /** Barrier used during Gateway teardown before releasing the stateDir lock. */
+  async whenIdle(): Promise<void> {
+    await this.chain
   }
 
   pending(): readonly OutboxRecord[] {
@@ -120,6 +139,6 @@ export class DurableOutbox {
   }
 
   async clear(): Promise<void> {
-    await this.write({ pending: [] })
+    await this.serialize(() => this.persist({ ...this.state, pending: [] }))
   }
 }

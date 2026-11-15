@@ -70,7 +70,12 @@
     "test:coverage": "vitest run --coverage",
     "demo": "node scripts/demo.mjs",
     "verify": "pnpm run typecheck && pnpm run build && pnpm run test",
-    "pack": "pnpm pack --pack-destination dist"
+    "pack": "pnpm pack --pack-destination dist",
+    "e2e:preflight": "node scripts/e2e/run.mjs preflight --llm real --feishu live",
+    "e2e:mock": "node scripts/e2e/run.mjs session-bridge --llm mock",
+    "e2e:real-llm": "node scripts/e2e/run.mjs session-bridge --llm real",
+    "e2e:daemon-smoke": "node scripts/e2e/run.mjs daemon-smoke",
+    "e2e:feishu": "node scripts/e2e/run.mjs feishu --llm real"
   },
   "packageManager": "pnpm@12.18.0"
 }

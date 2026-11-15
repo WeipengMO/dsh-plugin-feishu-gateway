@@ -13,7 +13,7 @@ describe('resolveConfig', () => {
     expect(config.bots).toEqual([])
     expect(config.allowlist).toEqual([])
     expect(config.allowGroups).toBe(false)
-    expect(config.offline).toBe(false)
+    expect(config.offline).toBe(process.env.FEISHU_GATEWAY_OFFLINE === '1')
     expect(config.autoConnect).toBe(true)
     expect(config.sendRetries).toBe(3)
     expect(config.replyTimeoutMs).toBe(120_000)
@@ -75,10 +75,10 @@ describe('resolveBotCredentials', () => {
     expect(result.source).toContain('env:FEISHU_GATEWAY_DEFAULT_APP_ID')
   })
 
-  it('accepts literals for local development and reports the source', () => {
-    const result = resolveBotCredentials({ ...bot, appId: 'cli_lit', appSecret: 'sec_lit' }, {})
-    expect(result.credentials?.appSecret).toBe('sec_lit')
-    expect(result.source).toBe('config-literal,config-literal')
+  it('rejects missing secrets instead of falling back to config literals', () => {
+    const result = resolveBotCredentials(bot, {})
+    expect(result.credentials).toBeUndefined()
+    expect(result.missing).toContain('FEISHU_GATEWAY_DEFAULT_APP_SECRET')
   })
 
   it('fails closed and reports missing names without exposing values', () => {
@@ -96,8 +96,8 @@ describe('resolveBotCredentials', () => {
 
   it('keeps the lark domain', () => {
     const result = resolveBotCredentials(
-      { ...bot, domain: 'lark', appId: 'cli', appSecret: 'sec' },
-      {},
+      { ...bot, domain: 'lark' },
+      { FEISHU_GATEWAY_DEFAULT_APP_ID: 'cli', FEISHU_GATEWAY_DEFAULT_APP_SECRET: 'sec' },
     )
     expect(result.credentials?.domain).toBe('lark')
   })
@@ -106,7 +106,7 @@ describe('resolveBotCredentials', () => {
 describe('redactedConfigSummary', () => {
   it('never includes secrets or allowlist contents', () => {
     const config = resolveConfig({
-      bots: [{ id: 'default', enabled: true, domain: 'feishu', appSecret: 'SUPER_SECRET', appId: 'cli_x' }],
+      bots: [{ id: 'default', enabled: true, domain: 'feishu', appIdEnv: 'APP_ID', appSecretEnv: 'APP_SECRET' }],
       allowlist: ['ou_secret_person'],
     })
     const summary = JSON.stringify(redactedConfigSummary(config))

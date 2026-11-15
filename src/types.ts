@@ -42,6 +42,8 @@ export interface OutboundTarget {
   /** Feishu `message_id` to reply to (preferred, keeps the conversation). */
   readonly replyToMessageId?: string
   readonly text: string
+  /** Stable per-message idempotency UUID reused on every REST retry. */
+  readonly uuid?: string
 }
 
 export interface SendReceipt {
@@ -76,9 +78,6 @@ export interface BotSpec {
   readonly appIdEnv?: string
   /** Name of the environment variable holding the app secret. */
   readonly appSecretEnv?: string
-  /** Literal values are accepted for local development but discouraged. */
-  readonly appId?: string
-  readonly appSecret?: string
 }
 
 export interface AgentRoute {
@@ -106,6 +105,8 @@ export interface GatewayConfig {
   readonly replyTimeoutMs: number
   readonly sendRetries: number
   readonly sendRetryBaseDelayMs: number
+  /** Recheck parked Outbox replies while the WebSocket stays online (ms). */
+  readonly outboxRetryIntervalMs: number
   /** Skip opening WebSocket connections (used by mock/offline profiles). */
   readonly autoConnect: boolean
   /** Hard offline switch: no network calls of any kind. */
@@ -153,6 +154,8 @@ export interface SessionBridge {
   waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply>
   /** Cancel the active turn (long-task cancellation hook for v0.2.0). */
   cancel(sessionId: string): void
+  /** Release an abandoned Session handle after timeout/error (not normal follow-ups). */
+  retire?(sessionId: string): Promise<void>
   /** Release every owned AgentHandle and listener. */
   dispose(): Promise<void>
 }

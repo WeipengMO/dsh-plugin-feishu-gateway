@@ -49,6 +49,15 @@ export class SessionRegistry {
     return this.state.bindings[chatKey]!
   }
 
+  /** Abandon a potentially still-running Session after a timeout. */
+  async unbind(chatKey: string): Promise<void> {
+    this.state = await this.store.update((current) => {
+      const bindings = { ...current.bindings }
+      delete bindings[chatKey]
+      return { bindings }
+    })
+  }
+
   async touch(chatKey: string, now = Date.now()): Promise<void> {
     this.state = await this.store.update((current) => {
       const existing = current.bindings[chatKey]
