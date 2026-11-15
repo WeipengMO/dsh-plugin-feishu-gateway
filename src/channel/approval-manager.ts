@@ -37,6 +37,8 @@ interface PendingApproval extends ApprovalOwner {
  */
 export class FeishuApprovalManager {
   private readonly pending = new Map<string, PendingApproval>()
+  // Remember disconnect epochs even during in-flight REST delivery.
+  private readonly botEpoch = new Map<string, number>()
   private disposed = false
 
   constructor(
@@ -60,6 +62,7 @@ export class FeishuApprovalManager {
     const transport = this.transportOf(owner.botId)
     if (!transport?.sendInteractiveCard) return 'unavailable'
     const nonce = randomUUID()
+    const initialEpoch = this.botEpoch.get(owner.botId) ?? 0
     const toolName = typeof req.toolName === 'string' ? req.toolName : '受保护工具'
     let cardMessageId: string
     try {
@@ -76,7 +79,13 @@ export class FeishuApprovalManager {
       this.logger.warn('Feishu tool approval card delivery failed; denying request')
       return 'unavailable'
     }
+    if (initialEpoch !== (this.botEpoch.get(owner.botId) ?? 0)) return 'unavailable'
     if (!cardMessageId || req.signal?.aborted || this.disposed) return 'cancelled'
+    // Deny a card that arrived after its Session was cancelled/finished.
+    const nowOwner = this.ownerOf(id)
+    if (!nowOwner || nowOwner.botId !== owner.botId ||
+      nowOwner.chatId !== owner.chatId || nowOwner.senderId !== owner.senderId ||
+      nowOwner.replyToMessageId !== owner.replyToMessageId) return 'cancelled'
     // A single request may only be granted ONCE. Every callback must match
     // nonce, chat id, app/bot, sender open_id and this message id.
     const result = await new Promise<ApprovalOutcome>(resolve => {
@@ -139,6 +148,7 @@ export class FeishuApprovalManager {
 
   /** WebSocket disconnect revokes all pending approvals for that bot. */
   cancelBot(botId: string): void {
+    this.botEpoch.set(botId, (this.botEpoch.get(botId) ?? 0) + 1)
     for (const [nonce, pending] of this.pending) {
       if (pending.botId === botId) this.decide(nonce, 'unavailable')
     }
