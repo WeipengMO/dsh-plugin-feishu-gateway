@@ -11,6 +11,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -203,6 +204,26 @@ async function credentialStatus(filename, bots) {
     return { id: bot.id, configured: present(keys.appId) && present(keys.appSecret) }
   })
 }
+async function queueOperatorCommand(stateDir, body) {
+  exactKeys(body, ['type', 'ref'])
+  if (body.type !== 'cancel-task' && body.type !== 'retry-outbox')
+    throw httpError(400, 'unsupported operator action')
+  if (body.type === 'cancel-task' && (typeof body.ref !== 'string' || !/^[a-f0-9]{16}$/.test(body.ref)))
+    throw httpError(400, 'invalid task correlation reference')
+  if (body.type === 'retry-outbox' && body.ref !== undefined)
+    throw httpError(400, 'retry-outbox takes no task reference')
+  // Verified directory chain: refuse to write through a symlinked parent.
+  await ensurePrivateDir(stateDir)
+  const root = path.join(stateDir, 'ops-control')
+  await ensurePrivateDir(root)
+  const dir = path.join(root, 'requests')
+  await ensurePrivateDir(dir)
+  const command = { version: 1, id: randomUUID(), ts: Date.now(), type: body.type,
+    ...(body.ref ? { ref: body.ref } : {}) }
+  await atomicPrivateWrite(path.join(dir, command.id + '.json'), JSON.stringify(command) + '\n')
+  return { id: command.id, type: command.type }
+}
+
 async function setCredential(filename, body, knownBots) {
   exactKeys(body, ['botId', 'appId', 'appSecret'])
   const id = body.botId
@@ -269,6 +290,29 @@ export function createAdminHandler(options = {}) {
       }
       if (req.method === 'GET' && route === PREFIX + '/diagnostics') {
         return json(res, 200, { ok: true, diagnostics: await loopback(healthPort, '/diagnostics') })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/ops') {
+        // Only the explicit, redacted telemetry DTO is readable here.
+        // Never return raw Inbox/Outbox/Sessions storage or journalctl output.
+        const [snapshot, events] = await Promise.all([
+          readOpsSnapshot(stateDir), readOpsEvents(stateDir, { limit: 200 }),
+        ])
+        const commands = await readOpsResults(stateDir)
+        return json(res, 200, { ok: true, snapshot, events, commands,
+          summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/ops/events') {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const limit = params.has('limit') ? Number(params.get('limit')) : 100
+        const kind = params.get('kind') || undefined
+        return json(res, 200, { ok: true, events: await readOpsEvents(stateDir, { kind, limit }) })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/ops/commands') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          const command = await queueOperatorCommand(stateDir, body)
+          return json(res, 202, { ok: true, command, queued: true })
+        })
       }
       if (req.method === 'PUT' && route === PREFIX + '/config') {
         return await serializeMutation(async () => {

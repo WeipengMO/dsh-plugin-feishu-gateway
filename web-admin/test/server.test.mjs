@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -219,5 +219,77 @@ test('admin validates reply format and persists the optional Markdown setting', 
     const latest = await f.request('/state')
     assert.equal(latest.json.config.replyFormat, 'markdown')
     assert.equal(latest.json.pendingRestart, false) // no running channel health
+  } finally { await f.close() }
+})
+
+test('operations API requires DSH login and strips arbitrary private fields', async () => {
+  const f = await fixture()
+  try {
+    const unauth = await f.request('/ops', 'GET', undefined, {})
+    assert.equal(unauth.status, 401)
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    const runtime = { version: 1, ts: Date.now(), status: 'ok', secret: 'MUST-NOT-LEAK',
+      tasks: [{ ref: '1234567890abcdef', botId: 'default', phase: 'running', elapsedMs: 900, text: 'PRIVATE' }],
+      sessions: [{ ref: 'fedcba0987654321', createdAt: 10, lastActiveAt: 20, persisted: true, chatId: 'CHAT' }],
+      transport: { default: { state: 'connected', reconnects: 2, failures: 0 } },
+      stats: { activeTurns: 1, boundSessions: 1, pendingApprovals: 0, processed: 4, errors: 0,
+        inboxPending: 0, outboxPending: 0 } }
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'), JSON.stringify(runtime), { mode: 0o600 })
+    await writeFile(path.join(f.stateDir, 'ops-events.jsonl'),
+      JSON.stringify({ version: 1, kind: 'task', state: 'done', ts: Date.now(),
+        ref: '1234567890abcdef', botId: 'default', model: 'deepseek-chat', tokens: 400,
+        text: 'chat content', password: 'secret' }) + '\n', { mode: 0o600 })
+    const result = await f.request('/ops')
+    assert.equal(result.status, 200)
+    assert.equal(result.json.telemetryAvailable, true)
+    assert.equal(result.json.snapshot.tasks.length, 1)
+    assert.equal(result.json.summary.usage[0].tokens, 400)
+    assert.equal(result.json.summary.messages[0].state, 'done')
+    assert.doesNotMatch(JSON.stringify(result.json), /MUST-NOT-LEAK|PRIVATE|CHAT|chat content|password|secret/)
+    const filtered = await f.request('/ops/events?kind=task&limit=5')
+    assert.equal(filtered.status, 200)
+    assert.equal(filtered.json.events.length, 1)
+    const invalid = await f.request('/ops/events?kind=unknown')
+    assert.equal(invalid.status, 400)
+  } finally { await f.close() }
+})
+
+test('operations API refuses symlinked telemetry files', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    const outside = path.join(f.dir, 'private.txt')
+    await writeFile(outside, 'DO-NOT-READ')
+    await symlink(outside, path.join(f.stateDir, 'ops-runtime.json'))
+    const result = await f.request('/ops')
+    assert.equal(result.status, 500)
+    assert.doesNotMatch(JSON.stringify(result.json), /DO-NOT-READ|private.txt/)
+  } finally { await f.close() }
+})
+
+test('operator command writes are authenticated, narrow and do not execute a command in Web', async () => {
+  const f = await fixture()
+  try {
+    const unauth = await f.request('/ops/commands', 'POST', { type: 'retry-outbox' },
+      { 'content-type': 'application/json', 'x-dsh-feishu-admin': '1' })
+    assert.equal(unauth.status, 401)
+    const bad = await f.request('/ops/commands', 'POST', { type: 'shell', command: 'rm -rf /' }, mutating)
+    assert.equal(bad.status, 400)
+    const malformed = await f.request('/ops/commands', 'POST', { type: 'cancel-task', ref: 'bad' }, mutating)
+    assert.equal(malformed.status, 400)
+    const accepted = await f.request('/ops/commands', 'POST',
+      { type: 'cancel-task', ref: 'abcdef0123456789' }, mutating)
+    assert.equal(accepted.status, 202)
+    assert.equal(accepted.json.queued, true)
+    const id = accepted.json.command.id
+    assert.match(id, /^[a-f0-9-]{36}$/)
+    const data = JSON.parse(await readFile(path.join(f.stateDir, 'ops-control', 'requests', id + '.json'), 'utf8'))
+    assert.deepEqual(Object.keys(data).sort(), ['id', 'ref', 'ts', 'type', 'version'])
+    assert.equal(data.type, 'cancel-task')
+    assert.equal((await stat(path.join(f.stateDir, 'ops-control', 'requests', id + '.json'))).mode & 0o777, 0o600)
+    const result = await f.request('/ops')
+    assert.equal(result.status, 200)
+    assert.equal(result.json.telemetryAvailable, false)
+    assert.deepEqual(result.json.commands, [])
   } finally { await f.close() }
 })

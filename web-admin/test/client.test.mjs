@@ -26,7 +26,7 @@ test('admin client registers the same DSH native id for sidebar and main panel',
 test('management dashboard uses the existing authenticated read endpoints and no LLM calls', () => {
   assert.match(workbench, /request\('\/state'\)/)
   assert.match(workbench, /request\('\/health'\)/)
-  assert.match(workbench, /request\('\/diagnostics'\)/)
+  assert.match(workbench, /request\('\/ops'\)/)
   assert.match(workbench, /15000/)
   assert.match(workbench, /document\.visibilityState !== 'visible'/)
   assert.doesNotMatch(workbench, /llm\.|chat\.completions|fetch\(['"]https?:|openai\.com/)
@@ -43,11 +43,20 @@ test('settings are credential-only and the workbench does not echo secrets', () 
   assert.match(source, /\}, CredentialSettings\)\)/)
 })
 
-test('management page exposes expandable operations areas without pretending to have audit history', () => {
-  for (const page of ['overview', 'bots', 'delivery', 'sessions', 'security', 'diagnostics', 'advanced']) {
+test('operations panels display real data and configuration actions', () => {
+  const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
+  for (const page of ['overview', 'bots', 'tasks', 'messages', 'sessions', 'approvals',
+      'usage', 'alerts', 'security', 'diagnostics', 'advanced']) {
     assert.ok(workbench.includes("'" + page + "'"), page)
   }
-  assert.match(workbench, /仅上报队列汇总/)
-  assert.match(workbench, /日志流与审计视图预留/)
   assert.match(workbench, /root 'main'/)
+  assert.match(workbench, /onConfig/)
+  assert.match(workbench, /h\(Panel, \{ key: configTab, initialTab: configTab, onChanged: load \}\)/)
+  assert.match(pages, /function OpsPage\(/)
+  assert.match(pages, /Token 用量趋势/)
+  assert.match(pages, /审批审计/)
+  assert.match(pages, /Session 绑定/)
+  assert.match(pages, /uncertain/)
+  assert.match(built, /function OpsPage\(/)
+  assert.match(source, /window\.confirm\(/)
 })

@@ -47,10 +47,10 @@ window.__ModuleLoader__.load({
         h('span', { className: 'fga-status ' + (online ? 'fga-online' : '') },
           online ? '网关正常' : '未确认在线', ' · systemd: ', service || '未知'))
     }
-    function Panel() {
+    function Panel({ initialTab = 'settings', onChanged } = {}) {
       const [state, setState] = useState(null)
       const [health, setHealth] = useState(null)
-      const [tab, setTab] = useState('settings')
+      const [tab, setTab] = useState(initialTab)
       const [loading, setLoading] = useState(true)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
@@ -130,16 +130,18 @@ window.__ModuleLoader__.load({
       }
       async function perform(task, success) {
         setBusy(true); setError(''); setNotice('')
-        try { await task(); setNotice(success); await reload() }
+        try { await task(); setNotice(success); await reload(); onChanged?.() }
         catch (e) { setError(e.message || String(e)) }
         finally { setBusy(false) }
       }
       const save = () => perform(
         () => request('/config', 'PUT', { expectedRevision: state.revision, config: asConfig() }),
         '配置已安全保存。重启飞书通道后才会生效。')
-      const restart = () => perform(
-        () => request('/restart', 'POST', {}),
-        'systemd 已接受重启命令。请刷新状态确认网关已重新连接。')
+      const restart = () => {
+        if (!window.confirm('重启飞书通道会中断正在运行的任务，是否确认继续？')) return
+        return perform(() => request('/restart', 'POST', {}),
+          'systemd 已接受重启命令。请刷新状态确认网关已重新连接。')
+      }
       const updateBot = (index, key, value) =>
         setBots(current => current.map((b, i) => i === index ? { ...b, [key]: value } : b))
 
@@ -191,7 +193,7 @@ window.__ModuleLoader__.load({
             '显示 CardKit 流式任务卡片（默认关闭）'),
           streamCards && field('任务卡片刷新间隔（毫秒）',
             textInput(streamInterval, setStreamIntervalValue, '800', { type: 'number', min: 500, max: 5000 }),
-            '增量文本仅作进度预览，最终答复仍使用可靠 Outbox 独立发送。'),
+            '增量文本用于预览；终态卡片成功时原卡片显示完整回复，仅卡片失败时 Outbox 兜底。'),
           h('div', { className: 'fga-fields-row' },
             field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
             field('发送尝试次数', textInput(retry, setRetry, '继承 Profile', { type: 'number', min: 1, max: 10 })),
