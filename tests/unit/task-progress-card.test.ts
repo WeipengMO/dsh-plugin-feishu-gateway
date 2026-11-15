@@ -31,11 +31,15 @@ describe('CardKit single-message progress lifecycle', () => {
       expect(body.elements[0]?.content).toBe('authoritative final answer')
       expect(JSON.stringify(t.streamReplacements[0]?.card)).not.toContain('取消当前任务')
       const footer = String(body.elements.at(-1)?.content)
-      expect(footer).toContain('模型：magpie/group-deepseek')
-      expect(footer).toContain('Token：175')
-      expect(footer).toContain('入 125 / 出 50')
-      expect(footer).toContain('≈25.0 tok/s')
-      expect(footer).toContain('用时：4.2s')
+      expect(footer.split('  \n')).toEqual([
+        '模型：magpie/group-deepseek',
+        'Token 用量：175',
+        '平均速度：25.0 tok/s',
+        '用时：4.2s',
+      ])
+      expect(footer).not.toContain('入 ')
+      expect(footer).not.toContain(' / 出 ')
+      expect(footer).not.toContain('≈')
       await vi.advanceTimersByTimeAsync(5000)
       expect(t.streamUpdates).toHaveLength(2)
     } finally { vi.useRealTimers() }
@@ -50,6 +54,25 @@ describe('CardKit single-message progress lifecycle', () => {
     expect(JSON.stringify(body)).not.toContain('Token')
     expect(JSON.stringify(body)).not.toContain('tok/s')
     expect(JSON.stringify(body)).toContain('1.2s')
+  })
+
+  it('omits throughput when DSH did not report a model stream duration', async () => {
+    const t = new MockFeishuTransport('default')
+    const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+    expect(await card!.close('done', 'answer', {
+      elapsedMs: 120_000,
+      model: 'deepseek-chat',
+      usage: { inputTokens: 1500, outputTokens: 300, cacheReadTokens: 200 },
+    })).toBe(true)
+    const footer = String(finishedBody(t).elements.at(-1)?.content)
+    expect(footer.split('  \n')).toEqual([
+      '模型：deepseek-chat',
+      'Token 用量：2,000',
+      '用时：120.0s',
+    ])
+    expect(footer).not.toContain('速度')
+    expect(footer).not.toContain('≈')
+    expect(footer).not.toContain('入 ')
   })
 
   it('removes the cancel button on cancelled or failed terminal states', async () => {
