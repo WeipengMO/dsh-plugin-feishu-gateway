@@ -259,7 +259,8 @@ export async function listAgentFiles({ stateDir, workspace }) {
   const overlay = await overlayState(dir, settings)
   return { workspace: dir, files, settings, syncNeeded: overlay.syncNeeded,
     loaded: overlay.desired.loaded, contextBytes: overlay.desired.bytes,
-    activation: 'new-session', sharedWorkspace: true, maxFileBytes: MAX_FILE }
+    activation: 'new-session', sharedWorkspace: false,
+    isolation: 'feishu-channel', maxFileBytes: MAX_FILE }
 }
 export async function readAgentFile({ workspace }, name) {
   const dir = await checkedWorkspace(workspace)
