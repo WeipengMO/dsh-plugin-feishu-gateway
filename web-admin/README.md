@@ -1,6 +1,6 @@
 # DSH Feishu Admin (management-only companion)
 
-This package adds a native **飞书管理** operations workbench to DSH Web's left sidebar, including an **Agent 档案** file manager, and keeps a separate **飞书 Gateway** credential-only page in Settings.
+This package adds a native **飞书管理** operations workbench to DSH Web's left sidebar, including an **Agent 档案** file manager, and keeps a separate **飞书 Gateway** credential-only page in Settings. The Agent files view is a responsive two-pane file explorer and full-width editor with edit/preview/history/loading tabs, quick save, and unsaved-draft safeguards.
 
 - The **web** Profile only loads this admin package; it never creates Feishu WebSockets or DSH Agent Sessions.
 - The existing **feishu-channel** Profile continues to host the real Feishu gateway.
