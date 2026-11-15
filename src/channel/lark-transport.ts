@@ -361,6 +361,8 @@ export class LarkTransport implements FeishuTransport {
   private async handleEvent(event: RawReceiveEvent): Promise<void> {
     const message = event.message
     if (!message?.message_id || !message.chat_id) return
+    // Unknown chat types must not inherit the group access policy.
+    if (message.chat_type !== 'p2p' && message.chat_type !== 'group') return
     // Never echo bot-originated messages back into a native Session.
     const senderType = event.sender?.sender_type ?? 'user'
     if (senderType !== 'user') return

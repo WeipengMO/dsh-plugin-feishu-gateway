@@ -54,7 +54,9 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     }
     async request(payload: { method: string; url: string; data: Record<string, unknown> }) {
       sdkState.requests.push(payload)
-      if (payload.method === 'POST' && payload.url === '/open-apis/cardkit/v1/cards')
+      if (payload.method === 'GET' && payload.url === '/open-apis/bot/v3/info')
+         return { code: 0, bot: { open_id: 'ou_this_bot' } }
+       if (payload.method === 'POST' && payload.url === '/open-apis/cardkit/v1/cards')
         return { code: 0, data: { card_id: 'card123' } }
       return { code: 0 }
     }
@@ -501,5 +503,30 @@ describe('network proxy selection (SDK mocked, no real connection)', () => {
     expect(recorder.warnings[0]).toMatch(/direct connection/)
     expect(recorder.warnings[0]).not.toContain('not-a-valid-proxy')
     expect(recorder.warnings[0]).not.toContain('pass')
+  })
+})
+
+describe('group mention identity', () => {
+  it('accepts only this bots structured @mention and strips its placeholder', async () => {
+    const t = transport()
+    const received: Array<{ mentionedBot?: boolean; text: string; threadId?: string }> = []
+    await t.connect({ onMessage: msg => { received.push(msg) }, onStateChange: () => {} })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({ message: {
+      ...rawEvent().message, chat_type: 'group',
+      content: JSON.stringify({ text: '@_user_1 test @_user_2' }),
+      mentions: [
+        { key: '@_user_1', mentioned_type: 'bot', id: { open_id: 'ou_this_bot' } },
+        { key: '@_user_2', mentioned_type: 'user', id: { open_id: 'ou_other' } },
+      ], thread_id: 'omt_topic_1',
+    } }))
+    expect(received[0]).toMatchObject({ mentionedBot: true,
+      text: 'test @_user_2', threadId: 'omt_topic_1' })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({ message: {
+      ...rawEvent().message, chat_type: 'group',
+      content: JSON.stringify({ text: '@_user_1 hi' }),
+      mentions: [{ key: '@_user_1', mentioned_type: 'bot', id: { open_id: 'ou_wrong_bot' } }],
+    } }))
+    expect(received[1]).toMatchObject({ mentionedBot: false, text: '@_user_1 hi' })
+    await t.close()
   })
 })
