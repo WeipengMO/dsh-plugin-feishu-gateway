@@ -34,7 +34,7 @@ case "${1:-}" in
   --status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       echo "running (pid $(cat "$PID_FILE"))"
-      curl -sS --max-time 5 "http://127.0.0.1:$HEALTH_PORT/health" || true
+      curl -sS --noproxy "*" --max-time 5 "http://127.0.0.1:$HEALTH_PORT/health" || true
       echo
     else
       echo "not running"
@@ -44,7 +44,7 @@ case "${1:-}" in
   --stop)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       PID="$(cat "$PID_FILE")"
-      curl -sS --max-time 5 -X POST "http://127.0.0.1:$HEALTH_PORT/shutdown" >/dev/null 2>&1 || kill "$PID" 2>/dev/null || true
+      curl -sS --noproxy "*" --max-time 5 -X POST "http://127.0.0.1:$HEALTH_PORT/shutdown" >/dev/null 2>&1 || kill "$PID" 2>/dev/null || true
       for _ in $(seq 1 30); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
       rm -f "$PID_FILE"
       echo "stopped"
