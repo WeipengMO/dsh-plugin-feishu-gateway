@@ -1,4 +1,4 @@
-# 飞书工具审批与 CardKit 流式任务卡片（0.2.0-rc.4 Gateway / 0.2.0-rc.1 Admin）
+# 飞书工具审批与 CardKit 流式任务卡片（0.2.0-rc.5 Gateway / 0.2.0-rc.3 Admin）
 
 这是发布候选版本。**2026-11-15 已在现有真实飞书单用户私聊环境完成流式卡片、卡片取消、原生审批 allowed-once / rejected 的实机验收（0.2.0-rc.1 基线；0.2.0-rc.2/rc.3/rc.4 的卡片终态全量替换和底栏排版仍待实机复验）**；未覆盖超时、重复点击、取消中的审批和跨账号/聊天操作。完整证据边界见 [最终验收快照](ACCEPTANCE-0.2.0-rc.1.md)。源码中的两个开关仍默认关闭；当前部署已显式开启，不要求修改 DSH Core。
 
@@ -37,7 +37,7 @@
     pnpm install --frozen-lockfile
     pnpm run verify
     pnpm run pack
-    dsh plugin --profile feishu-channel add "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.4.tgz"
+    dsh plugin --profile feishu-channel add "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz"
     # Web Admin 仍为 0.2.0-rc.1；已经安装则无需重复安装
 
 检查两个 Profile。实际 Gateway **只**在 feishu-channel，Web Admin **只**在 web。运行中服务的重启应选择维护窗口，不得中断正在执行的 Agent。原状态目录、Inbox/Outbox 和凭据不要清空。
