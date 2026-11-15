@@ -1,6 +1,6 @@
-# 飞书管理工作台运行及部署（Admin 0.2.0-rc.3）
+# 飞书管理工作台运行及部署（Admin 0.2.0-rc.4）
 
-最新完整操作后台和版本升级指南见 [OPERATIONS-CONTROL-CENTER-V2.md](OPERATIONS-CONTROL-CENTER-V2.md)。本文件保留旧 Web Admin 的部署、systemd 和安全配置说明。**当前 DSH 设置页面仅供飞书 Gateway 凭据写入；所有运行概览、模型、机器人列表、白名单与服务操作均在左侧「飞书管理」中。**
+身份与记忆文件管理（含加载与历史恢复）见 [AGENT-PROFILE-MANAGER.md](AGENT-PROFILE-MANAGER.md)，现有运维后台说明见 [OPERATIONS-CONTROL-CENTER-V2.md](OPERATIONS-CONTROL-CENTER-V2.md)。本文件保留旧 Web Admin 的部署、systemd 和安全配置说明。**当前 DSH 设置页面仅供飞书 Gateway 凭据写入；所有运行概览、模型、机器人列表、白名单与服务操作均在左侧「飞书管理」中。**
 
 # 旧版 Web Admin 部署说明（历史操作）
 
@@ -50,8 +50,8 @@ ls -lh dist/*.tgz
 
 构建产物为两个独立 tarball：
 
-- `dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz`（运行通道；取消重复回复）
-- `dsh-plugin-feishu-admin-0.2.0-rc.3.tgz`（Web 管理插件，含原生侧栏工作台）
+- `dsh-plugin-feishu-gateway-0.2.0-rc.6.tgz`（运行通道；取消重复回复）
+- `dsh-plugin-feishu-admin-0.2.0-rc.4.tgz`（Web 管理插件，含原生侧栏工作台）
 
 **绝不要将 Gateway 的 tarball 安装到 `web` Profile**：它的 Bundle patch 会插入真正的飞书 Gateway。Web Profile 只安装 `dsh-plugin-feishu-admin`。
 
