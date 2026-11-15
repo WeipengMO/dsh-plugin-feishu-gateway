@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = readFileSync(path.join(root, 'src/client.js'), 'utf8')
@@ -315,4 +316,64 @@ test('Markdown highlighting preserves source, fenced blocks and harmless literal
   assert.equal(api.profileMarkdownCursor('a\n中文b', 3).column, 2)
   const edge = ['## 你好 😀', 'a \x60snippet\x60 and ~~strike~~', '- one', '1. two', '', 'end'].join('\n')
   assert.equal(api.profileMarkdownAnalyze(edge).map(line => line.map(t => t.text).join('')).join('\n'), edge)
+})
+
+
+test('usage dashboard prioritizes a 365-day heatmap, a unified range picker and two charts', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(panel, /function UsageDateRange/)
+  assert.match(panel, /aria-label': '选择日期范围'/)
+  assert.match(panel, /span >= 1 && span <= 366/)
+  assert.match(panel, /const yearFrom = usageShiftDay\(today, -364\)/)
+  assert.match(panel, /const yearUrl =/)
+  assert.match(panel, /period: 'day'/)
+  assert.match(panel, /title: 'Token 日历热图'/)
+  assert.ok(panel.indexOf("title: 'Token 日历热图'") <
+    panel.indexOf("className: 'fgw-usage-filters'"))
+  assert.doesNotMatch(panel, /title: '时区（IANA）'/)
+  assert.doesNotMatch(panel, /title: '按周期聚合'/)
+  assert.match(panel, /title: 'API 请求活动'/)
+  assert.match(panel, /kind: 'calls'/)
+  assert.match(panel, /kind: 'tokens'/)
+  assert.match(panel, /usageTrendBuckets\(series\)/)
+  assert.match(css, /@media\(max-width:690px\)[\s\S]*?\.fgw-usage-facets\.is-open \{ display:grid; \}/)
+  assert.match(css, /\.fgw-usage-chart-grid \{ display:grid;/)
+  assert.match(built, /function UsageTrendChart\(/)
+})
+
+test('usage chart buckets maintain partial and unavailable coverage', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const src = panel.slice(panel.indexOf('function usageTrendBuckets('),
+    panel.indexOf('function usageCompact('))
+  const buckets = runInNewContext(src + '\nusageTrendBuckets', {
+    usageShiftDay: (date, offset) =>
+      new Date(Date.parse(date + 'T00:00:00Z') + offset * 86400000).toISOString().slice(0, 10)
+  })
+  const dayRows = [
+    { date: '2026-11-12', calls: 2, value: 100, coverage: 'recorded' },
+    { date: '2026-11-13', calls: 0, value: null, coverage: 'unavailable' },
+    { date: '2026-11-14', calls: 3, value: 40, coverage: 'partial' }
+  ]
+  const daily = buckets(dayRows)
+  assert.equal(daily.granularity, 'day')
+  assert.deepEqual(daily.rows.map(x => x.tokens), [100, null, 40])
+  assert.equal(daily.rows[1].calls, null)
+  assert.equal(daily.rows[2].partial, true)
+
+  const rows = Array.from({ length: 45 }, (_, i) => ({
+    date: new Date(Date.parse('2026-09-01T00:00:00Z') + i * 86400000)
+      .toISOString().slice(0, 10),
+    calls: 1, value: 20, coverage: 'recorded'
+  }))
+  const weekly = buckets(rows)
+  assert.equal(weekly.granularity, 'week')
+  assert.equal(weekly.rows.reduce((sum, row) => sum + row.calls, 0), 45)
+  assert.equal(weekly.rows.reduce((sum, row) => sum + row.tokens, 0), 900)
+  const months = buckets(Array.from({ length: 120 }, (_, i) => ({
+    ...rows[0], date: new Date(Date.parse('2026-01-01T00:00:00Z') +
+      i * 86400000).toISOString().slice(0, 10)
+  })))
+  assert.equal(months.granularity, 'month')
+  assert.equal(months.rows.reduce((sum, row) => sum + row.calls, 0), 120)
 })
