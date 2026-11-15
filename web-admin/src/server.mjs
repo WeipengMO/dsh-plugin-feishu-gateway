@@ -19,7 +19,7 @@ const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
 const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs',
-  'sendRetries', 'outboxRetryIntervalMs', 'autoConnect']
+  'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect']
 
 function httpError(status, message) { return Object.assign(new Error(message), { status }) }
 function object(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) }
@@ -77,6 +77,10 @@ export function validateConfig(input) {
     result.agent = agent
   }
   if (input.replyTimeoutMs !== undefined) result.replyTimeoutMs = integer(input.replyTimeoutMs, 'replyTimeoutMs', 5000, 1800000)
+  if (input.replyFormat !== undefined) {
+    if (input.replyFormat !== 'text' && input.replyFormat !== 'markdown') throw httpError(400, 'invalid replyFormat')
+    result.replyFormat = input.replyFormat
+  }
   if (input.sendRetries !== undefined) result.sendRetries = integer(input.sendRetries, 'sendRetries', 1, 10)
   if (input.outboxRetryIntervalMs !== undefined) result.outboxRetryIntervalMs = integer(input.outboxRetryIntervalMs, 'outboxRetryIntervalMs', 1000, 300000)
   if (input.autoConnect !== undefined) {

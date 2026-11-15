@@ -14,6 +14,7 @@ export interface ManagedChannelConfig {
   workspace?: string
   agent?: { provider?: string; model?: string }
   replyTimeoutMs?: number
+  replyFormat?: 'text' | 'markdown'
   sendRetries?: number
   outboxRetryIntervalMs?: number
   autoConnect?: boolean
@@ -43,7 +44,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect'])
   const result: ManagedChannelConfig = {}
 
@@ -97,6 +98,10 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   }
   if (value.replyTimeoutMs !== undefined) {
     result.replyTimeoutMs = positiveInteger(value.replyTimeoutMs, 'replyTimeoutMs', 5_000, 1_800_000)
+  }
+  if (value.replyFormat !== undefined) {
+    if (value.replyFormat !== 'text' && value.replyFormat !== 'markdown') throw new Error('invalid replyFormat')
+    result.replyFormat = value.replyFormat
   }
   if (value.sendRetries !== undefined) {
     result.sendRetries = positiveInteger(value.sendRetries, 'sendRetries', 1, 10)

@@ -66,6 +66,7 @@ window.__ModuleLoader__.load({
       const [retry, setRetry] = useState('')
       const [interval, setIntervalValue] = useState('')
       const [autoConnect, setAutoConnect] = useState('inherit')
+      const [replyFormat, setReplyFormat] = useState('inherit')
       const [botId, setBotId] = useState('default')
       const [appId, setAppId] = useState('')
       const [appSecret, setAppSecret] = useState('')
@@ -84,6 +85,7 @@ window.__ModuleLoader__.load({
         setRetry(c.sendRetries === undefined ? '' : String(c.sendRetries))
         setIntervalValue(c.outboxRetryIntervalMs === undefined ? '' : String(c.outboxRetryIntervalMs / 1000))
         setAutoConnect(c.autoConnect === undefined ? 'inherit' : c.autoConnect ? 'enabled' : 'disabled')
+        setReplyFormat(c.replyFormat || 'inherit')
         setBotId(current => (data.bots || []).some(b => b.id === current) ? current : (data.bots?.[0]?.id || 'default'))
       }, [])
       const reload = useCallback(async () => {
@@ -116,6 +118,7 @@ window.__ModuleLoader__.load({
         if (retry.trim()) result.sendRetries = Number(retry)
         if (interval.trim()) result.outboxRetryIntervalMs = Number(interval) * 1000
         if (autoConnect !== 'inherit') result.autoConnect = autoConnect === 'enabled'
+        if (replyFormat !== 'inherit') result.replyFormat = replyFormat
         return result
       }
       async function perform(task, success) {
@@ -168,6 +171,11 @@ window.__ModuleLoader__.load({
           h('p', { className: 'fga-hint' }, '留空代表继承原 Profile 配置。设置仅在飞书通道重启后生效。'),
           field('模型 Provider', textInput(provider, setProvider, '继承 Profile，例如 magpie')),
           field('模型 Model', textInput(model, setModel, '继承 Profile，例如 group/deepseek')),
+          field('AI 回复格式', h('select', { className: 'fga-input', value: replyFormat,
+            onChange: e => setReplyFormat(e.target.value) },
+            h('option', { value: 'inherit' }, '继承 Profile（默认普通文本）'),
+            h('option', { value: 'text' }, '普通文本（最兼容）'),
+            h('option', { value: 'markdown' }, 'Markdown 富文本（post/md）'))),
           field('DSH 工作目录', textInput(workspace, setWorkspace, '继承 Profile，例如 /home/ubuntu/dsh-workspace')),
           h('div', { className: 'fga-fields-row' },
             field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
