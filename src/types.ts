@@ -60,6 +60,23 @@ export interface CardActionEvent {
   readonly value: { readonly namespace?: string; readonly kind?: string; readonly nonce?: string; readonly decision?: string }
 }
 
+/** Model-reported usage for this turn (not a guessed character/token ratio). */
+export interface ModelTokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+}
+
+/** Card footer statistics; unknown fields remain omitted. */
+export interface CardCompletionStats {
+  readonly elapsedMs: number
+  readonly model?: string
+  readonly usage?: ModelTokenUsage
+  /** Measured time between DSH model stream start/end events. */
+  readonly generationMs?: number
+}
+
 export interface FeishuCardHandle {
   readonly messageId: string
   readonly cardId?: string
@@ -85,6 +102,8 @@ export interface FeishuTransport {
   startStreamCard?(target: { replyToMessageId: string }, actionNonce: string): Promise<FeishuCardHandle>
   updateStreamCard?(cardId: string, text: string, sequence: number): Promise<void>
   finishStreamCard?(cardId: string, sequence: number): Promise<void>
+  /** Replace the complete CardKit entity, removing the cancel action after settlement. */
+  replaceStreamCard?(cardId: string, card: Record<string, unknown>, sequence: number): Promise<void>
 }
 
 export interface BotCredentials {
@@ -156,6 +175,9 @@ export interface SessionReply {
   readonly reason: 'idle' | 'timeout' | 'cancelled' | 'empty'
   /** Number of assistant events observed (diagnostics only). */
   readonly assistantEvents?: number
+  readonly model?: string
+  readonly usage?: ModelTokenUsage
+  readonly generationMs?: number
 }
 
 export interface WaitOptions {
