@@ -280,6 +280,18 @@ export class LarkTransport implements FeishuTransport {
     unwrap(response, 'update CardKit stream')
   }
 
+  /** Replace the entire CardKit entity so terminal cards have no cancel button. */
+  async replaceStreamCard(cardId: string, card: Record<string, unknown>, sequence: number): Promise<void> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(cardId)) throw new Error('invalid CardKit card id')
+    const result = await this.client.request({
+      method: 'PUT',
+      url: `/open-apis/cardkit/v1/cards/${cardId}`,
+      data: { card: { type: 'card_json', data: JSON.stringify(card) }, sequence, uuid: newId('final') },
+    })
+    unwrap(result, 'replace CardKit entity')
+  }
+
   async finishStreamCard(cardId: string, sequence: number): Promise<void> {
     if (!this.client) throw new Error('Feishu transport is not connected')
     if (!/^[A-Za-z0-9_-]{1,20}$/.test(cardId)) throw new Error('invalid CardKit card id')
