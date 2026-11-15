@@ -42,7 +42,7 @@ function ProfilePreview({ value }) {
     }),
     lines.length > 1500 && h('p', { className: 'fgw-muted' }, '预览最多展示 1,500 行；保存仍保留完整文本。'))
 }
-function AgentProfilePanel() {
+function AgentProfilePanel({ onDirtyChange }) {
   const [profile, setProfile] = useState(null)
   const [selected, setSelected] = useState('IDENTITY.md')
   const [file, setFile] = useState(null)
@@ -72,11 +72,16 @@ function AgentProfilePanel() {
     Number(settings.maxBytes) <= 32768 && Number.isInteger(Number(settings.perFileBytes)) &&
     Number(settings.perFileBytes) >= 512 && Number(settings.perFileBytes) <= Number(settings.maxBytes)
 
-  const loadProfile = useCallback(async () => {
+  useEffect(() => {
+    onDirtyChange?.(dirty || settingsChanged)
+    return () => onDirtyChange?.(false)
+  }, [dirty, settingsChanged, onDirtyChange])
+
+  const loadProfile = useCallback(async (resetSettings = true) => {
     try {
       const data = (await request('/agent-profile')).profile
       setProfile(data)
-      setSettings({ enabled: { ...data.settings.enabled }, maxBytes: data.settings.maxBytes,
+      if (resetSettings) setSettings({ enabled: { ...data.settings.enabled }, maxBytes: data.settings.maxBytes,
         perFileBytes: data.settings.perFileBytes })
       setError('')
       return data
@@ -126,7 +131,7 @@ function AgentProfilePanel() {
       await request('/agent-profile/file', 'PUT', {
         name: selected, content: draft, expectedRevision: file.revision,
       })
-      await Promise.all([loadProfile(), loadFile(selected)])
+      await Promise.all([loadProfile(!settingsChanged), loadFile(selected)])
       setNotice('文件已保存并同步。新 Session 会读取更新后的内容；已有 Session 请使用 /new。')
     } catch (e) {
       setError('保存结果未确认：' + (e.message || String(e)) + '。请刷新核对文件及同步状态。')
@@ -148,7 +153,7 @@ function AgentProfilePanel() {
     setBusy(true); setError(''); setNotice('')
     try {
       await request('/agent-profile/sync', 'POST', {})
-      await loadProfile()
+      await loadProfile(!settingsChanged)
       setNotice('已同步至飞书专属 AGENTS.local.md。新 Session 生效，已有 Session 不会热更新。')
     } catch (e) { setError(e.message || String(e)) }
     finally { setBusy(false) }
@@ -159,7 +164,7 @@ function AgentProfilePanel() {
     setBusy(true); setError(''); setNotice('')
     try {
       await request('/agent-profile/detach-legacy', 'POST', { expectedRevision: profile.legacy.revision })
-      await loadProfile()
+      await loadProfile(!settingsChanged)
       setNotice('旧共享区块已备份并移除。请新建普通 DSH Session 以应用变化。')
     } catch (e) { setError('旧共享区块清理失败：' + (e.message || String(e))) }
     finally { setBusy(false) }
