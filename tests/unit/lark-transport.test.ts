@@ -11,6 +11,8 @@ const sdkState = vi.hoisted(() => ({
   closed: 0,
   created: [] as Array<{ params: unknown; data: unknown }>,
   replied: [] as Array<{ data: unknown; path: unknown }>,
+  patched: [] as Array<{ data: unknown; path: unknown }>,
+  requests: [] as Array<{ method: string; url: string; data: Record<string, unknown> }>,
   handlers: {} as Record<string, (event: unknown) => unknown>,
   failCreate: false,
   /** Simulate a misconfigured bot: `start()` resolves but onReady never fires. */
@@ -21,6 +23,10 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
   class Client {
     im = {
       message: {
+        patch: async (payload: { data: unknown; path: unknown }) => {
+          sdkState.patched.push(payload)
+          return { code: 0 }
+        },
         create: async (payload: { params: unknown; data: unknown }) => {
           sdkState.created.push(payload)
           if (sdkState.failCreate) return { code: 99999, msg: 'simulated failure' }
@@ -31,6 +37,12 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
           return { code: 0, data: { message_id: 'om_replied' } }
         },
       },
+    }
+    async request(payload: { method: string; url: string; data: Record<string, unknown> }) {
+      sdkState.requests.push(payload)
+      if (payload.method === 'POST' && payload.url === '/open-apis/cardkit/v1/cards')
+        return { code: 0, data: { card_id: 'card123' } }
+      return { code: 0 }
     }
     constructor(_params: unknown) {}
   }
@@ -84,6 +96,8 @@ beforeEach(() => {
   sdkState.closed = 0
   sdkState.created.length = 0
   sdkState.replied.length = 0
+  sdkState.patched.length = 0
+  sdkState.requests.length = 0
   sdkState.failCreate = false
   sdkState.suppressReady = false
   for (const key of Object.keys(sdkState.handlers)) delete sdkState.handlers[key]
@@ -249,4 +263,75 @@ describe('LarkTransport (SDK mocked)', () => {
     expect(states).not.toContain('connected')
   })
 
+})
+
+describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () => {
+  it('registers card.action.trigger and validates callback principal fields', async () => {
+    const t = transport()
+    const received: unknown[] = []
+    await t.connect({ onMessage: () => {}, onStateChange: () => {},
+      onCardAction: async event => { received.push(event); return { toast: { type: 'success', content: 'ok' } } },
+    })
+    const handler = sdkState.handlers['card.action.trigger']!
+    expect(typeof handler).toBe('function')
+    const payload = {
+      event: { operator: { open_id: 'ou_alice' },
+        context: { open_chat_id: 'oc_one', open_message_id: 'om_card' },
+        action: { value: { namespace: 'dsh-feishu-gateway', kind: 'approval', nonce: 'x', decision: 'allow' } },
+      },
+    }
+    expect(await handler(payload)).toEqual({ toast: { type: 'success', content: 'ok' } })
+    expect(received).toEqual([{ botId: 'default', actorOpenId: 'ou_alice',
+      chatId: 'oc_one', messageId: 'om_card', value: payload.event.action.value }])
+    const anonymous = await handler({ event: { ...payload.event, operator: { user_id: 'not-an-open-id' } } })
+    expect(anonymous).toEqual({ toast: { type: 'warning', content: '无法验证此卡片操作' } })
+    expect(received).toHaveLength(1)
+  })
+
+  it('sends and updates an interactive approval card via standard IM v1 APIs', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    const card = { schema: '2.0', body: { elements: [] } }
+    const handle = await t.sendInteractiveCard({ replyToMessageId: 'om_1' }, card)
+    expect(handle.messageId).toBe('om_replied')
+    const reply = sdkState.replied[0]!.data as { msg_type: string; content: string }
+    expect(reply.msg_type).toBe('interactive')
+    expect(JSON.parse(reply.content)).toEqual(card)
+    await t.updateInteractiveCard(handle.messageId, card)
+    expect(sdkState.patched[0]?.path).toEqual({ message_id: 'om_replied' })
+  })
+
+  it('uses CardKit v1: create -> send by card_id -> ordered content -> settings', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    const handle = await t.startStreamCard({ replyToMessageId: 'om_1' }, 'nonce')
+    expect(handle).toEqual({ cardId: 'card123', messageId: 'om_replied' })
+    const cardReq = sdkState.requests[0]!
+    expect(cardReq.url).toBe('/open-apis/cardkit/v1/cards')
+    const createdCard = JSON.parse(cardReq.data.data as string)
+    expect(createdCard.config.streaming_mode).toBe(true)
+    expect(createdCard.body.elements[0].element_id).toBe('task_progress')
+    expect(JSON.parse((sdkState.replied[0]!.data as { content: string }).content))
+      .toEqual({ type: 'card', data: { card_id: 'card123' } })
+    await t.updateStreamCard(handle.cardId!, 'hello', 1)
+    await t.finishStreamCard(handle.cardId!, 2)
+    expect(sdkState.requests.map(x => x.method)).toEqual(['POST', 'PUT', 'PATCH'])
+    expect(sdkState.requests[1]?.url).toBe('/open-apis/cardkit/v1/cards/card123/elements/task_progress/content')
+    expect(sdkState.requests[1]?.data).toMatchObject({ content: 'hello', sequence: 1 })
+    expect(sdkState.requests[2]?.url).toBe('/open-apis/cardkit/v1/cards/card123/settings')
+    expect(JSON.parse(sdkState.requests[2]?.data.settings as string).config.streaming_mode).toBe(false)
+    expect(sdkState.requests[2]?.data.sequence).toBe(2)
+  })
+
+  it('returns a safe toast instead of bubbling a callback handler error', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {},
+      onCardAction: async () => { throw new Error('secret_from_internal_handler') },
+    })
+    const payload = { operator: { open_id: 'ou_alice' },
+      context: { open_chat_id: 'oc_one', open_message_id: 'om_approval' },
+      action: { value: { kind: 'approval', nonce: 'nonce' } } }
+    const response = await sdkState.handlers['card.action.trigger']!(payload) as object
+    expect(JSON.stringify(response)).not.toContain('secret_from_internal_handler')
+  })
 })
