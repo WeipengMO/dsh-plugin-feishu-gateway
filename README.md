@@ -91,6 +91,10 @@ Feishu WebSocket → FeishuTransport
 
 ---
 
+## Web 可视化管理（新增）
+
+新增独立的 `web-admin/` 配套插件 **dsh-plugin-feishu-admin**：通过 DSH Web 的 `settings.section` 插槽提供「飞书通道」后台，可查看状态、修改模型/白名单/机器人和安全更新凭据，使用 systemd 重启独立 Gateway。**请不要把 Gateway 安装到 `web` Profile**；Web 只安装 Admin tarball。完整流程见 [docs/WEB-ADMIN.md](docs/WEB-ADMIN.md)。
+
 ## 配置
 
 插件配置由 `schemastery` 的 `Config` 校验。**密钥永远不写进配置**：`appIdEnv` / `appSecretEnv` 只声明环境变量名，值在激活时从 `process.env` 读取，且从不出现在日志里。

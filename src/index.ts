@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Config, redactedConfigSummary, resolveBotCredentials, resolveConfig, type ConfigValidator } from './config.js'
+import { loadManagedConfig } from './admin-config.js'
 import { LarkTransport } from './channel/lark-transport.js'
 import { MockFeishuTransport } from './channel/mock-transport.js'
 import { FeishuGateway } from './gateway.js'
@@ -37,7 +38,7 @@ export function createGateway(
   rawConfig: Partial<GatewayConfig> | undefined,
   overrides: GatewayOverrides = {},
 ): FeishuGateway {
-  const config = resolveConfig(rawConfig)
+  const config = loadManagedConfig(resolveConfig(rawConfig))
   const logger = overrides.logger ?? fromCordisLogger(overrides.ctx)
 
   const transports: FeishuTransport[] = overrides.transports
@@ -91,14 +92,14 @@ export function apply(ctx: Context, config: GatewayConfig): void {
   const gateway = createGateway(config, { ctx: ctx as unknown as CordisLike, logger })
 
   if (config.diagnoseOnStart) {
-    logger.info('configuration %s', JSON.stringify(redactedConfigSummary(resolveConfig(config))))
+    logger.info('configuration %s', JSON.stringify(redactedConfigSummary(loadManagedConfig(resolveConfig(config)))))
   }
 
   // Public, read-only service for diagnostics / health checks / future Web UI.
   ctx.provide('feishuGateway', {
     health: () => gateway.health(),
     diagnostics: () => gateway.diagnostics(),
-    config: () => redactedConfigSummary(resolveConfig(config)),
+    config: () => redactedConfigSummary(loadManagedConfig(resolveConfig(config))),
   })
 
   ctx.effect(() => {
