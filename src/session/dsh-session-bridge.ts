@@ -4,6 +4,7 @@ import type {
   CordisLike,
   GatewayLogger,
   ModelTokenUsage,
+  ObservedScheduleTurn,
   SessionBridge,
   SessionReply,
   SessionToolActivity,
@@ -57,6 +58,23 @@ interface TurnState {
 }
 
 /**
+ * A turn the native DSH schedule service injected into one of our Sessions
+ * without a Gateway `submit()` call. Kept separate from `TurnState` so an
+ * unsolicited reminder can never corrupt a normal inbound reply.
+ */
+interface ExternalTurn {
+  readonly sessionId: string
+  /** Native user message id of the delivered occurrence (dedupe key). */
+  readonly messageId: string
+  readonly startedAt: number
+  readonly durable: string[]
+  readonly live: string[]
+  events: number
+  tokens: number
+  model?: string
+}
+
+/**
  * Official path A adapter (see docs/ARCHITECTURE.md):
  *
  *   ctx.agents.create / resume   — native Agent + Session under one id
@@ -75,6 +93,9 @@ export class DshSessionBridge implements SessionBridge {
   private readonly agents: AgentRegistryLike | undefined
   private readonly handles = new Map<string, AgentHandleLike>()
   private readonly turns = new Map<string, TurnState>()
+  /** Schedule-sourced turns injected directly into our Sessions. */
+  private readonly externalTurns = new Map<string, ExternalTurn>()
+  private scheduleTurnHandler: ((turn: ObservedScheduleTurn) => void) | undefined
   /** Reuse the last confirmed native request route on subsequent turns. */
   private readonly sessionModels = new Map<string, string>()
   private readonly disposers: Array<() => void> = []
@@ -267,6 +288,17 @@ export class DshSessionBridge implements SessionBridge {
     return () => { if (turn.onToolActivity === callback) turn.onToolActivity = undefined }
   }
 
+  /**
+   * Observe turns delivered by the native DSH schedule service. The Gateway
+   * registers one handler; the returned disposer is called on plugin unload.
+   */
+  watchScheduleTurns(handler: (turn: ObservedScheduleTurn) => void): () => void {
+    this.scheduleTurnHandler = handler
+    return () => {
+      if (this.scheduleTurnHandler === handler) this.scheduleTurnHandler = undefined
+    }
+  }
+
   cancel(sessionId: string): void {
     const handle = this.handles.get(sessionId)
     if (!handle) return
@@ -307,6 +339,8 @@ export class DshSessionBridge implements SessionBridge {
     }
     for (const id of [...this.turns.keys()]) this.settle(id)
     this.turns.clear()
+    this.externalTurns.clear()
+    this.scheduleTurnHandler = undefined
     this.sessionModels.clear()
     const handles = [...this.handles.values()]
     this.handles.clear()
@@ -349,6 +383,63 @@ export class DshSessionBridge implements SessionBridge {
       const name = provider ? provider + '/' + context.model : context.model
       this.sessionModels.set(sessionId, name)
     }
+
+    // Native schedule delivery injects a `createUserMessage` with
+    // `source: { kind: 'schedule' }` directly through `agent.followup()`.
+    // There is no Gateway `submit()` call for it, so track it separately.
+    if (type === 'user/message') {
+      const direct = data as { id?: unknown; source?: { kind?: unknown }; message?: unknown } | undefined
+      const nested = direct?.message as { id?: unknown; source?: { kind?: unknown } } | undefined
+      const source = direct?.source?.kind === 'schedule' ? direct
+        : nested?.source?.kind === 'schedule' ? nested : undefined
+      if (source && typeof source.id === 'string' && source.id) {
+        this.externalTurns.set(sessionId, {
+          sessionId, messageId: source.id, startedAt: Date.now(),
+          durable: [], live: [], events: 0, tokens: 0,
+          ...(this.sessionModels.get(sessionId) ? { model: this.sessionModels.get(sessionId) } : {}),
+        })
+      }
+    }
+    const external = this.externalTurns.get(sessionId)
+    if (external) {
+      if (Date.now() - external.startedAt > 10 * 60_000) {
+        // A turn with no `turn/end` is abandoned. The Gateway's fallback
+        // notice (from the native delivery receipt) still reaches Feishu.
+        this.externalTurns.delete(sessionId)
+      } else if (type === 'assistant/message' || type === 'assistant/attempt') {
+        const text = extractText(data)
+        if (text) (type === 'assistant/message' ? external.durable : external.live).push(text)
+        external.events += 1
+        const usage = reportedUsage(data)
+        if (usage) {
+          external.tokens += usage.inputTokens + usage.outputTokens +
+            (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+        }
+        if (!external.model && this.sessionModels.has(sessionId)) {
+          external.model = this.sessionModels.get(sessionId)
+        }
+      } else if (type === 'turn/end') {
+        const reason = (event as {
+          data?: { reason?: { kind?: string } }
+        })?.data?.reason
+        const text = (external.durable.join('') || external.live.join('')).trim()
+        const status: ObservedScheduleTurn['status'] = reason?.kind === 'error' ? 'failed'
+          : text ? 'success' : 'empty'
+        this.externalTurns.delete(sessionId)
+        const handler = this.scheduleTurnHandler
+        if (handler) {
+          try {
+            handler({
+              sessionId, messageId: external.messageId, text, status,
+              elapsedMs: Date.now() - external.startedAt,
+              ...(external.model ? { model: external.model } : {}),
+              ...(external.tokens > 0 ? { tokens: external.tokens } : {}),
+            })
+          } catch { /* an observer failure must never break native event delivery */ }
+        }
+      }
+    }
+
     const turn = this.turns.get(sessionId)
     if (!turn) return
     if (this.sessionModels.has(sessionId)) turn.model = this.sessionModels.get(sessionId)
@@ -422,24 +513,26 @@ export class DshSessionBridge implements SessionBridge {
     const sessionId = String(agent?.id ?? '')
     if (!sessionId) return
     const turn = this.turns.get(sessionId)
-    if (!turn) return
+    const external = this.externalTurns.get(sessionId)
+    if (!turn && !external) return
     const frame = (payload as {
       frame?: { type?: unknown; attemptId?: unknown; chunk?: unknown }
     })?.frame
     const attemptId = typeof frame?.attemptId === 'string' ? frame.attemptId : 'default'
     if (frame?.type === 'start') {
-      turn.attemptStarts.set(attemptId, Date.now())
+      turn?.attemptStarts.set(attemptId, Date.now())
     } else if (frame?.type === 'end') {
-      const started = turn.attemptStarts.get(attemptId)
-      if (started !== undefined) {
+      const started = turn?.attemptStarts.get(attemptId)
+      if (turn && started !== undefined) {
         turn.generationMs += Math.max(0, Date.now() - started)
         turn.attemptStarts.delete(attemptId)
       }
     } else if (frame?.type === 'chunk') {
       const chunk = frame.chunk as { type?: unknown; text?: unknown } | undefined
       if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-        turn.live.push(chunk.text)
-        try { turn.onTextDelta?.(chunk.text) }
+        turn?.live.push(chunk.text)
+        external?.live.push(chunk.text)
+        try { turn?.onTextDelta?.(chunk.text) }
         catch { /* A failed progress UI must not abort the native Agent turn. */ }
       }
     }

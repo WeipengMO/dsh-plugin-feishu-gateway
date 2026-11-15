@@ -257,7 +257,8 @@ export class LarkTransport implements FeishuTransport {
       // Reuse the outbox-persisted UUID so REST retries/reconnect drains are
       // idempotent on the `create` path too (the `reply` path already does).
       data: { receive_id: target.chatId, msg_type: msgType, content, uuid: target.uuid ?? newId('fg') },
-      params: { receive_id_type: 'chat_id' },
+      // Scheduled reminders may target a user open_id (p2p) instead of a chat.
+      params: { receive_id_type: target.receiveIdType ?? 'chat_id' },
     })
     return unwrap(result, `send to ${target.chatId}`)
   }
