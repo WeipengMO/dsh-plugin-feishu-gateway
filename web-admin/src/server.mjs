@@ -396,7 +396,8 @@ export function createAdminHandler(options = {}) {
             !report.items.some(x => x.sessionRef === request.ref &&
               x.lastActiveAt === request.expectedLastActiveAt && x.status !== 'active'))
             throw httpError(409, 'Session changed; preview again')
-          const command = await queueOperatorCommand(stateDir, request)
+          const command = await queueOperatorCommand(stateDir, { type: request.type,
+            ref: request.ref, expectedLastActiveAt: request.expectedLastActiveAt })
           return json(res, 202, { ok: true, queued: true, command })
         })
       }
