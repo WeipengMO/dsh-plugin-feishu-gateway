@@ -47,6 +47,7 @@ export class FeishuApprovalManager {
     private readonly ownerOf: (sessionId: string) => ApprovalOwner | undefined,
     private readonly transportOf: (botId: string) => FeishuTransport | undefined,
     private readonly logger: GatewayLogger,
+    private readonly onAudit?: (sessionId: string, state: string, botId: string) => void,
   ) {}
 
   get size(): number { return this.pending.size }
@@ -88,6 +89,7 @@ export class FeishuApprovalManager {
       nowOwner.replyToMessageId !== owner.replyToMessageId) return 'cancelled'
     // A single request may only be granted ONCE. Every callback must match
     // nonce, chat id, app/bot, sender open_id and this message id.
+    this.onAudit?.(id, 'requested', owner.botId)
     const result = await new Promise<ApprovalOutcome>(resolve => {
       const timer = setTimeout(() => this.decide(nonce, 'unavailable'), this.timeoutMs)
       timer.unref?.()
@@ -99,6 +101,7 @@ export class FeishuApprovalManager {
       req.signal?.addEventListener('abort', abort, { once: true })
       if (req.signal?.aborted) this.decide(nonce, 'cancelled')
     })
+    this.onAudit?.(id, result, owner.botId)
     if (transport.updateInteractiveCard) {
       void transport.updateInteractiveCard(cardMessageId, approvalResultCard(result)).catch(() => {
         this.logger.warn('Feishu approval result card update failed')
