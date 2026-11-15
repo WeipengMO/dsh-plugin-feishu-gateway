@@ -41,6 +41,12 @@ describe('Feishu-only Agent workspace', () => {
       const linked = path.join(root, 'linked')
       await symlink(separate, linked)
       await expect(prepareFeishuWorkspace({ ...base, agentWorkspace: linked })).rejects.toThrow(/symlinked/)
+      // Old DSH cwd can itself be a symlink to the future Feishu cwd parent.
+      const legacyAlias = path.join(root, 'legacy-alias')
+      await symlink(shared, legacyAlias)
+      await expect(prepareFeishuWorkspace({
+        ...base, workspace: legacyAlias, agentWorkspace: path.join(shared, 'nested'),
+      })).rejects.toThrow(/aliases/)
     } finally { await rm(root, { recursive: true, force: true }) }
   })
 })
