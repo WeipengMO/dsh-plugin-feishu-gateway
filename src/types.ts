@@ -75,6 +75,17 @@ export interface CardCompletionStats {
   readonly usage?: ModelTokenUsage
   /** Measured time between DSH model stream start/end events. */
   readonly generationMs?: number
+  readonly toolCalls?: number
+  readonly toolFailures?: number
+}
+
+/** Sanitized tool progress: no arguments, URLs, command outputs or raw errors. */
+export interface SessionToolActivity {
+  readonly name: string
+  readonly phase: 'started' | 'succeeded' | 'failed'
+  readonly httpStatus?: number
+  readonly calls: number
+  readonly failures: number
 }
 
 export interface FeishuCardHandle {
@@ -180,6 +191,8 @@ export interface SessionReply {
   readonly model?: string
   readonly usage?: ModelTokenUsage
   readonly generationMs?: number
+  readonly toolCalls?: number
+  readonly toolFailures?: number
 }
 
 export interface WaitOptions {
@@ -208,6 +221,7 @@ export interface SessionBridge {
   waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply>
   /** Visible assistant text deltas, never internal reasoning. */
   onTextDelta?(sessionId: string, callback: (text: string) => void): () => void
+  onToolActivity?(sessionId: string, callback: (activity: SessionToolActivity) => void): () => void
   /** Cancel the active turn (long-task cancellation hook for v0.2.0). */
   cancel(sessionId: string): void
   /** Release an abandoned Session handle after timeout/error (not normal follow-ups). */
