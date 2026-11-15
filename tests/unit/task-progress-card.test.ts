@@ -96,7 +96,7 @@ describe('CardKit single-message progress lifecycle', () => {
 
   it('does not open an unfinishable card on a legacy transport', async () => {
     const t = new MockFeishuTransport('default')
-    t.replaceStreamCard = undefined
+    ;(t as unknown as { replaceStreamCard?: unknown }).replaceStreamCard = undefined
     expect(await TaskProgressCard.start(t, 'om_original', silentLogger, 500)).toBeUndefined()
     expect(t.streamCards).toHaveLength(0)
   })
