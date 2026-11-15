@@ -314,6 +314,50 @@ export class FeishuGateway {
     ))
   }
 
+  /** DSH native approval waterfall: only active Feishu-owned agents are answered. */
+  async answerApproval(
+    request: ApprovalRequestLike,
+    next: () => Promise<ApprovalOutcome>,
+  ): Promise<ApprovalOutcome> {
+    if (!this.config.approvalCards || this.stopped) return next()
+    return this.approvals.answer(request, next)
+  }
+
+  /** Feishu callback handler: verify who clicked, from which chat and card. */
+  async handleCardAction(event: CardActionEvent): Promise<{ toast: { type: string; content: string } }> {
+    const toast = (type: string, content: string) => ({ toast: { type, content } })
+    if (this.stopped || !this.config.allowlist.includes(event.actorOpenId)) {
+      return toast('warning', '无权执行该操作')
+    }
+    if (this.config.approvalCards) {
+      const result = this.approvals.consume(event)
+      if (result) return result
+    }
+    if (!this.config.streamCards ||
+      event.value.namespace !== CARD_NAMESPACE || event.value.kind !== 'cancel') {
+      return toast('warning', '未知或已过期的卡片操作')
+    }
+    const active = this.activeTurns.get(chatKey(event.botId, event.chatId))
+    if (!active || active.botId !== event.botId || active.chatId !== event.chatId ||
+      active.senderId !== event.actorOpenId || active.phase !== 'running' ||
+      active.cancelledByUser || event.value.nonce !== active.stream?.nonce ||
+      event.messageId !== active.stream?.handle.messageId) {
+      return toast('warning', '任务已结束或无法验证卡片')
+    }
+    this.requestCancel(active)
+    return toast('success', '已请求取消当前任务')
+  }
+
+  private requestCancel(active: ActiveTurn): void {
+    if (active.cancelledByUser || active.phase !== 'running') return
+    active.cancelledByUser = true
+    active.controller.abort()
+    if (active.sessionId) {
+      try { this.bridge.cancel(active.sessionId) }
+      catch { this.logger.warn('native Agent cancellation failed') }
+    }
+  }
+
   private async processRecord(record: InboxRecord): Promise<void> {
     const command = parseControlCommand(record.text)
     // A cancellation or status request MUST bypass the current chat's Agent
@@ -393,12 +437,7 @@ export class FeishuGateway {
           reply = '当前聊天没有可以取消的运行中任务。'
         } else {
           // One chat's AbortController cannot affect another chat.
-          active.cancelledByUser = true
-          active.controller.abort()
-          if (active.sessionId) {
-            try { this.bridge.cancel(active.sessionId) }
-            catch (error) { this.logger.warn('user cancellation failed: %s', String(error)) }
-          }
+          this.requestCancel(active)
           reply = '已请求取消当前任务。可能已经执行的工具操作不会自动回滚；请检查执行结果后再发起新请求。'
         }
       } else {
@@ -452,6 +491,8 @@ export class FeishuGateway {
     }
     const key = chatKey(record.botId, record.chatId)
     const turn: ActiveTurn = {
+      botId: record.botId, chatId: record.chatId,
+      senderId: record.senderId, replyToMessageId: record.messageId,
       messageId: record.messageId, startedAt: Date.now(),
       controller: new AbortController(), cancelledByUser: false, phase: 'running',
     }
