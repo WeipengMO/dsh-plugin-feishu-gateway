@@ -109,7 +109,7 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
             h('span', null, x.day),
             h('div', { className: 'fgw-bar-track' }, h('div', { className: 'fgw-bar-fill',
               style: { width: (x.tokens / max * 100) + '%' } })),
-            h('strong', null, wbCount(x.tokens)))) : h(WbEmpty, {
+            h('strong', null, wbCount(x.tokens))))) : h(WbEmpty, {
               headline: '暂未收到 Token 使用数据', description: '只有原生 DSH 返回 usage 的完成任务才计入。' })),
       h(WbBlock, { title: '按模型统计' },
         h(OpsTable, { rows: summary.usage ?? [], columns: [
@@ -169,3 +169,4 @@ function OpsTimeline({ events }) {
           item.session ? ' · Session ' + item.session.slice(0, 10) : '',
           item.tokens !== undefined ? ' · ' + wbCount(item.tokens) + ' Token' : '')),
       h('time', { className: 'fgw-muted' }, opsDate(item.ts)))))
+}
