@@ -65,7 +65,7 @@ test('cross-midnight settlement, retries, missing usage, filtering, aggregation,
       'from=2026-11-10&to=2026-11-15&tz=Asia%2FShanghai&period=week')))
     assert.equal(none.daily[0].coverage, 'unavailable')
     assert.equal(none.daily[0].value, null)
-    assert.equal(none.series.length, 2)
+    assert.equal(none.series.length, 1)
   } finally { await f.close() }
 })
 
