@@ -96,36 +96,8 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
       h(OpsTimeline, { events: summary.approvals ?? [] })),
     h(OpsNote, null, '不在后台伪造审批决策或绕过 DSH 原生 ask 策略。审批卡的有效性仍由 bot/chat/actor/nonce 校验。'),
     h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') }))
-  if (kind === 'usage') {
-    const daily = summary.daily ?? []
-    const max = Math.max(1, ...daily.map(x => x.tokens))
-    return h(React.Fragment, null,
-      h('div', { className: 'fgw-metrics fgw-metrics-three' },
-        h(WbMetric, { title: '审计窗口 Token', value: wbCount((summary.usage ?? []).reduce((a,b) => a + b.tokens,0)) }),
-        h(WbMetric, { title: '有用量记录的任务', value: wbCount((summary.usage ?? []).reduce((a,b) => a + b.turns,0)) }),
-        h(WbMetric, { title: '模型数', value: wbCount(summary.usage?.length) })),
-      h(WbBlock, { title: 'Token 用量趋势', aside: '仅上报 usage 的完成任务；不推算成本' },
-        daily.length ? h('div', { className: 'fgw-bars' }, daily.map(x =>
-          h('div', { className: 'fgw-bar-row', key: x.day },
-            h('span', null, x.day),
-            h('div', { className: 'fgw-bar-track' }, h('div', { className: 'fgw-bar-fill',
-              style: { width: (x.tokens / max * 100) + '%' } })),
-            h('strong', null, wbCount(x.tokens))))) : h(WbEmpty, {
-              headline: '暂未收到 Token 使用数据', description: '只有原生 DSH 返回 usage 的完成任务才计入。' })),
-      h(WbBlock, { title: '按模型统计' },
-        h(OpsTable, { rows: summary.usage ?? [], columns: [
-          { key: 'model', title: '模型' },
-          { key: 'turns', title: '任务数', render: x => wbCount(x.turns) },
-          { key: 'tokens', title: 'Token', render: x => wbCount(x.tokens) },
-        ] })),
-      h(WbBlock, { title: '按机器人统计' },
-        h(OpsTable, { rows: summary.byBot ?? [], columns: [
-          { key: 'botId', title: '机器人' },
-          { key: 'turns', title: '任务数', render: x => wbCount(x.turns) },
-          { key: 'tokens', title: 'Token', render: x => wbCount(x.tokens) },
-        ] })),
-      h(OpsNote, null, '统计依据有限期操作事件，轮转或升级前的历史不在本页；读取数据和渲染图表不产生额外模型 Token。'))
-  }
+  // Token 用量趋势和历史贡献热图从独立的历史数据源加载。
+  if (kind === 'usage') return h(UsagePanel, {})
   if (kind === 'alerts') return h(React.Fragment, null,
     h(WbBlock, { title: '当前健康告警', aside: '本地规则计算，非 AI 推断' },
       (summary.alerts ?? []).length ?
