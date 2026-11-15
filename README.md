@@ -2,7 +2,7 @@
 
 将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
 
-**当前 Gateway：`0.2.0-rc.5` · Admin：`0.2.0-rc.3`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
+**当前 Gateway：`0.2.0-rc.6` · Admin：`0.2.0-rc.4`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
 
 > **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
@@ -13,7 +13,7 @@
 | `feishu-channel` | `dsh-plugin-feishu-gateway` | 飞书 WebSocket、消息路由、持久化、原生 Session、卡片与审批 |
 | `web` | `dsh-plugin-feishu-admin` | DSH Web「飞书通道」设置和受保护管理 API；**不运行 Gateway** |
 
-本次运维工作台需要 **Gateway `0.2.0-rc.5` 和 Web Admin `0.2.0-rc.3` 同时升级**；只升级 Web Admin 会显示运维遥测不可用（旧版 Gateway 不产生匿名事件）。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
+Agent 档案管理需要 **Gateway `0.2.0-rc.6` 和 Web Admin `0.2.0-rc.4` 同时升级**；只升级 Web Admin 会显示运维遥测不可用（旧版 Gateway 不产生匿名事件）。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
 
 持久化的 **Inbox、Outbox、Session 绑定**和环境变量凭据在升级时保留，不要清空 `stateDir`。同一 `stateDir` 只允许一个 Gateway 进程持有。
 
@@ -24,7 +24,8 @@
 - `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
 - 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
 - DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
-- **飞书运维控制中心（Gateway rc.5 / Admin rc.3）**：DSH 左侧栏可查看实时任务、消息生命周期、Session 绑定、原生审批审计、Token 用量、连接诊断与本地告警；确认后取消正在执行的任务或触发安全 Outbox 补发，并可以在高级配置里修改机器人、模型、白名单、审批卡片、重试和连接参数。Settings → 飞书 Gateway 只管理写入凭据。通过同机私有运维事件/命令队列与现有 DSH 认证 API 协作，不新增 Agent / LLM 调用。详见 [完整操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)。
+- **飞书运维控制中心（Gateway rc.6 / Admin rc.4）**：DSH 左侧栏可查看实时任务、消息生命周期、Session 绑定、原生审批审计、Token 用量、连接诊断与本地告警；确认后取消正在执行的任务或触发安全 Outbox 补发，并可以在高级配置里修改机器人、模型、白名单、审批卡片、重试和连接参数。Settings → 飞书 Gateway 只管理写入凭据。通过同机私有运维事件/命令队列与现有 DSH 认证 API 协作，不新增 Agent / LLM 调用。详见 [完整操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)。
+- **Agent 身份与记忆管理（rc.6 / rc.4）**：飞书管理 → Agent 档案，支持 SOUL/IDENTITY/USER/TOOLS/MEMORY/AGENTS.md 及按日记忆的编辑、历史版本、恢复、加载开关与上下文字节预算。复用 DSH 原生 AGENTS.local.md 指令加载，保存后新 Session 生效，保留用户原有本地规则，不增加额外 LLM 调用。详见 [Agent 档案手册](docs/AGENT-PROFILE-MANAGER.md)。
 - 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片。**0.2.0-rc.2 起，Card 模式成功时直接在原卡片显示最终完整答案与模型/Token/速度/用时底栏，不再额外发送相同的文本；完成后取消按钮自动消失。`0.2.0-rc.3` 起，底栏按行展示模型、**Token 总用量**、速度和用时；速度根据 DSH 已有的输出 Token 与流式生成时长计算，不额外请求模型，缺少有效时长则隐藏速度。`0.2.0-rc.4` 起，底栏使用 **12px 灰色辅助信息**，与原样的回答正文形成视觉区分。** 如卡片创建/更新失败或超出卡片大小限制，回退到 DurableOutbox 文本回复。
 
 ## 当前已验收的运行配置
@@ -54,8 +55,8 @@ pnpm run pack
 
 生成的两个安装包（本轮 **两个 Profile 都需要升级**）：
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.3.tgz`
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.6.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.4.tgz`
 
 分别安装到各自 Profile；不要把 Gateway 安装到 Web：
 
@@ -66,9 +67,9 @@ dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-**0.2.0-rc.5 的新运维接口及 rc.4 灰色状态栏尚未经过真实飞书租户复验**；先使用隔离测试环境验证全量 CardKit PUT 与终态按钮移除，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
+**0.2.0-rc.6 的 Agent 档案指令加载与新后台界面尚未在真实 DSH/飞书租户复验**；先使用隔离测试环境验证全量 CardKit PUT 与终态按钮移除，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
 
-GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，卡片行为见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)，新版底栏参见 [0.2.0-rc.3 说明](docs/CARD-FOOTER-0.2.0-rc.3.md)；灰色小字见 [0.2.0-rc.4 说明](docs/CARD-FOOTER-0.2.0-rc.4.md)；运维工作台见 [rc.5 操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)。
+GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，卡片行为见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)，新版底栏参见 [0.2.0-rc.3 说明](docs/CARD-FOOTER-0.2.0-rc.3.md)；灰色小字见 [0.2.0-rc.4 说明](docs/CARD-FOOTER-0.2.0-rc.4.md)；运维工作台见 [rc.5 操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)；身份与记忆管理见 [rc.6 操作手册](docs/AGENT-PROFILE-MANAGER.md)。
 
 ## 安全边界与剩余工作
 
