@@ -368,10 +368,14 @@ export class DshSessionBridge implements SessionBridge {
         : typeof msg?.source?.callId === 'string' ? msg.source.callId : ''
       const name = turn.toolNames.get(id) ?? 'tool'
       turn.toolNames.delete(id)
+      // Native web_fetch records the HTTP status in data.meta.statusCode.
+      // Prefer this structured field over parsing the returned, untrusted webpage.
+      const metadata = data?.meta as { statusCode?: unknown } | undefined
       const first = msg?.content?.find(block => block.type === 'text' && typeof block.text === 'string')?.text
-      // Some fetch tools return a successful tool result containing HTTP 403/5xx.
-      const status = typeof first === 'string' && name === 'web_fetch'
+      const parsed = typeof first === 'string' && name === 'web_fetch'
         ? Number(/^Fetched .*? \(HTTP (\d{3})\)/s.exec(first)?.[1]) : NaN
+      const status = name === 'web_fetch' && typeof metadata?.statusCode === 'number'
+        ? metadata.statusCode : parsed
       const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
       const failed = msg?.isError === true || (httpStatus !== undefined && httpStatus >= 400)
       if (failed) turn.toolFailures += 1
