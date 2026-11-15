@@ -21,6 +21,7 @@ import type {
 } from './types.js'
 import { chatKey, newId, sessionIdFor } from './util/id.js'
 import { withTimeout } from './util/retry.js'
+import { OpsTelemetry, opsRef, type OpsEvent, type OpsSnapshot } from './ops/telemetry.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -97,6 +98,9 @@ export class FeishuGateway {
   private readonly outbox: DurableOutbox
   private readonly abortController = new AbortController()
   private outboxRetryTimer: ReturnType<typeof setInterval> | undefined
+  private opsTimer: ReturnType<typeof setInterval> | undefined
+  private readonly ops: OpsTelemetry
+  private readonly transportStats = new Map<string, { reconnects: number; failures: number; lastConnectedAt?: number; lastDisconnectedAt?: number }>()
   private readonly chatQueues = new Map<string, Promise<void>>()
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
@@ -114,6 +118,7 @@ export class FeishuGateway {
     this.config = deps.config
     this.logger = deps.logger
     this.bridge = deps.bridge
+    this.ops = new OpsTelemetry(deps.config.stateDir)
     this.router = new MessageRouter(deps.config)
     this.approvals = new FeishuApprovalManager(
       deps.config.approvalTimeoutMs,
@@ -128,6 +133,7 @@ export class FeishuGateway {
       },
       (botId) => this.transports.get(botId),
       deps.logger,
+      (sessionId, state, botId) => this.audit({ kind: 'approval', state, session: sessionId, botId }),
     )
     for (const transport of deps.transports) this.transports.set(transport.botId, transport)
 
@@ -202,6 +208,10 @@ export class FeishuGateway {
       // have changed files or executed shell commands before the crash.
       for (const record of pending) this.scheduleRecord(record)
       this.dedupSnapshot = await this.dedup.size()
+      this.audit({ kind: 'system', state: 'started' })
+      this.refreshOps()
+      this.opsTimer = setInterval(() => this.refreshOps(), 4000)
+      this.opsTimer.unref?.()
       if (this.config.autoConnect) {
         this.outboxRetryTimer = setInterval(() => {
           if (this.stopped || this.outbox.stats().pending === 0) return
@@ -242,6 +252,8 @@ export class FeishuGateway {
     if (this.stopped) return
     this.stopped = true
     if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
+    if (this.opsTimer) clearInterval(this.opsTimer)
+    this.opsTimer = undefined
     this.outboxRetryTimer = undefined
     this.abortController.abort()
     this.approvals.stop()
@@ -257,6 +269,9 @@ export class FeishuGateway {
     await Promise.allSettled([...this.inFlight])
     await this.outbox.whenIdle()
     await this.bridge.dispose()
+    this.audit({ kind: 'system', state: 'stopped' })
+    this.refreshOps()
+    await this.ops.whenIdle()
     this.chatQueues.clear()
     this.scheduledMessageIds.clear()
     this.logger.info(
@@ -298,6 +313,7 @@ export class FeishuGateway {
       // The dedup index is non-authoritative: Inbox already owns the ID.
       this.logger.warn('dedup index update failed for %s: %s', record.messageId, String(error))
     }
+    this.audit({ kind: 'message', state: 'received', botId: record.botId, ref: record.messageId })
     this.scheduleRecord(record)
   }
 
@@ -352,6 +368,8 @@ export class FeishuGateway {
   private requestCancel(active: ActiveTurn): void {
     if (active.cancelledByUser || active.phase !== 'running') return
     active.cancelledByUser = true
+    this.audit({ kind: 'task', state: 'cancel-requested', botId: active.botId,
+      ref: active.messageId, session: active.sessionId })
     active.controller.abort()
     if (active.sessionId) {
       this.approvals.cancelSession(active.sessionId)
@@ -499,6 +517,7 @@ export class FeishuGateway {
       controller: new AbortController(), cancelledByUser: false, phase: 'running',
     }
     this.activeTurns.set(key, turn)
+    this.audit({ kind: 'task', state: 'running', botId: record.botId, ref: record.messageId })
     const signal = AbortSignal.any([this.abortController.signal, turn.controller.signal])
     let activeSessionId: string | undefined
     let unsubscribeProgress: (() => void) | undefined
@@ -522,6 +541,8 @@ export class FeishuGateway {
       const sessionId = await this.ensureSession(key, record.botId, record.chatId)
       activeSessionId = sessionId
       turn.sessionId = sessionId
+      this.audit({ kind: 'task', state: 'session-ready', botId: record.botId,
+        ref: record.messageId, session: sessionId })
       if (signal.aborted) throw new Error('turn aborted before submit')
       await this.bridge.submit(sessionId, record.text, signal)
       if (this.config.streamCards && !signal.aborted) {
@@ -557,6 +578,8 @@ export class FeishuGateway {
         return
       }
       turn.phase = 'finalizing'
+      this.audit({ kind: 'task', state: 'finalizing', botId: record.botId,
+        ref: record.messageId, session: sessionId })
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
         this.bridge.cancel(sessionId)
         // A late reply from the prior Agent must never enter the next turn.
@@ -596,6 +619,11 @@ export class FeishuGateway {
       await this.registry.touch(key)
       await this.inbox.markProcessed(record.messageId)
       this.processed += 1
+      this.audit({ kind: 'task', state: 'done', botId: record.botId, ref: record.messageId,
+        session: activeSessionId, elapsedMs: Date.now() - turn.startedAt,
+        model: reply.model,
+        tokens: reply.usage ? reply.usage.inputTokens + reply.usage.outputTokens +
+          (reply.usage.cacheReadTokens ?? 0) + (reply.usage.cacheWriteTokens ?? 0) : undefined })
     } catch (error) {
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
@@ -623,6 +651,8 @@ export class FeishuGateway {
       }
       // Never blindly replay a turn that may have caused real side effects.
       await this.inbox.markFailed(record.messageId, reason)
+      this.audit({ kind: 'task', state: 'failed', botId: record.botId, ref: record.messageId,
+        session: activeSessionId, elapsedMs: Date.now() - turn.startedAt })
       if (error instanceof SessionResumeError) {
         await this.replyDiagnostic(record,
           'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
@@ -640,6 +670,7 @@ export class FeishuGateway {
         } catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
       }
       if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
+      this.refreshOps()
     }
   }
 
@@ -683,6 +714,17 @@ export class FeishuGateway {
   }
 
   private onStateChange(botId: string, state: TransportState, error?: Error): void {
+    const current = this.transportStats.get(botId) ?? { reconnects: 0, failures: 0 }
+    const now = Date.now()
+    this.transportStats.set(botId, {
+      ...current,
+      reconnects: current.reconnects + (state === 'reconnecting' ? 1 : 0),
+      failures: current.failures + (state === 'failed' ? 1 : 0),
+      ...(state === 'connected' ? { lastConnectedAt: now } : {}),
+      ...(state === 'closed' || state === 'failed' || state === 'reconnecting' ? { lastDisconnectedAt: now } : {}),
+    })
+    this.audit({ kind: 'transport', state, botId })
+    this.refreshOps()
     if (state === 'reconnecting' || state === 'failed' || state === 'closing' || state === 'closed') {
       this.approvals.cancelBot(botId)
     }
@@ -693,6 +735,40 @@ export class FeishuGateway {
         this.logger.warn('outbox drain on reconnect failed: %s', String(drainError))
       })
     }
+  }
+
+  private audit(event: {
+    kind: OpsEvent['kind']; state: string; botId?: string; ref?: string
+    session?: string; model?: string; tokens?: number; elapsedMs?: number
+  }): void {
+    void this.ops.record(event).catch(() => this.logger.warn('operations journal unavailable'))
+  }
+
+  private refreshOps(): void {
+    if (this.startedAt === 0) return
+    const health = this.health()
+    const snapshot: OpsSnapshot = {
+      version: 1, ts: Date.now(), status: health.status,
+      tasks: [...this.activeTurns.values()].map(turn => ({
+        ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
+        botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,
+      })),
+      sessions: this.registry.bindings().map(binding => ({
+        ref: opsRef(binding.sessionId), createdAt: binding.createdAt,
+        lastActiveAt: binding.lastActiveAt, persisted: binding.persisted,
+      })),
+      transport: Object.fromEntries([...this.transports].map(([botId, transport]) => [
+        botId, { state: transport.state, ...(this.transportStats.get(botId) ??
+          { reconnects: 0, failures: 0 }) },
+      ])),
+      stats: {
+        activeTurns: health.activeTurns, boundSessions: health.boundSessions,
+        pendingApprovals: health.pendingApprovals, processed: health.processed,
+        errors: health.errors, outboxPending: health.outbox.pending,
+        inboxPending: health.inbox.pending,
+      },
+    }
+    void this.ops.snapshot(snapshot).catch(() => this.logger.warn('operations snapshot unavailable'))
   }
 
   health(): GatewayHealth {
