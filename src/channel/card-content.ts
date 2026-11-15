@@ -82,7 +82,7 @@ function statsFooter(stats: CardCompletionStats | undefined): string {
     // never substitute whole-turn time (which includes tools/approval).
     if (usage.outputTokens > 0 && stats.generationMs && stats.generationMs > 0) {
       const speed = usage.outputTokens / (stats.generationMs / 1000)
-      if (Number.isFinite(speed)) parts.push('平均速度：' + speed.toFixed(1) + ' tok/s')
+      if (Number.isFinite(speed)) parts.push('速度：' + speed.toFixed(1) + ' tok/s')
     }
   }
   if (Number.isFinite(stats.elapsedMs) && stats.elapsedMs >= 0) {
