@@ -48,6 +48,9 @@ jobs:
           # Guardrail: CI must never reach a real Feishu tenant.
           FEISHU_GATEWAY_OFFLINE: '1'
 
+      - name: Web admin security tests
+        run: node --test web-admin/test/*.test.mjs && node --check web-admin/lib/client.js
+
       - name: Coverage
         run: pnpm run test:coverage
 
