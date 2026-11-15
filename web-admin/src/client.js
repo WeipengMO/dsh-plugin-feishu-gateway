@@ -1,4 +1,4 @@
-/* DSH official settings.section client extension; no changes to DSH Core. */
+/* DSH native sidebar management panel + credential-only settings extension. */
 window.__ModuleLoader__.load({
   id: 'dsh-plugin-feishu-admin',
   factory: require => {
@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
     function Panel() {
       const [state, setState] = useState(null)
       const [health, setHealth] = useState(null)
-      const [tab, setTab] = useState('overview')
+      const [tab, setTab] = useState('settings')
       const [loading, setLoading] = useState(true)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
@@ -162,7 +162,7 @@ window.__ModuleLoader__.load({
         error && h('div', { className: 'fga-error', role: 'alert' }, error),
         notice && h('div', { className: 'fga-notice', role: 'status' }, notice),
         h('div', { className: 'fga-tabs' },
-          ...[['overview','运行状态'],['settings','模型与配置'],['permissions','访问权限'],['bots','机器人与凭据']]
+          ...[['settings','模型与配置'],['permissions','访问权限'],['bots','机器人设置']]
             .map(([id,label]) => h('button', { type: 'button', key: id, className: tab === id ? 'fga-tab fga-selected' : 'fga-tab',
               onClick: () => setTab(id) }, label))),
         tab === 'overview' && h('div', { className: 'fga-section' },
@@ -243,7 +243,7 @@ window.__ModuleLoader__.load({
             bots.length < 8 && action('新增机器人', () => setBots(list => [...list, { id: '', domain: 'feishu', enabled: false }]), busy, true),
             action('保存机器人列表', save, busy || !state)),
           h('div', { className: 'fga-divider' }),
-          h('h3', null, '凭据设置（仅写入，不回显）'),
+          h('h3', null, '凭据设置（请前往「设置 → 飞书 Gateway」）'),
           field('选择机器人', h('select', { className: 'fga-input', value: botId,
             onChange: e => { setBotId(e.target.value); setAppId(''); setAppSecret('') } },
             ...(state?.bots || []).map(b => h('option', { key: b.id, value: b.id }, b.id)))),
@@ -255,6 +255,7 @@ window.__ModuleLoader__.load({
         h('p', { className: 'fga-footer' },
           '管理接口由 DSH Web 身份认证保护 · 通过本机读取健康状态 · 不修改 DSH Core'))
     }
+    /*__WORKBENCH_CODE__*/
     function apply(ctx) {
       ctx.effect(() => {
         const style = document.createElement('style')
@@ -263,13 +264,23 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style)
         return () => style.remove()
       }, 'feishu-admin:styles')
+      // Global sidebar panel and root main body share one identifier.
+      // Official DSH slots.inject handles late slot declarations and teardown.
+      ctx.slots.inject('main', () => ctx.slots.register({
+        name: 'main', key: WORKBENCH_PANEL_ID,
+      }, Workbench))
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+        name: 'sidebar.panellist', id: WORKBENCH_PANEL_ID, order: 35,
+        label: () => '飞书管理',
+      }, FeishuSidebarIcon))
+      // Settings remains a separate, credential-only entry.
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section', id: 'feishu-channel', order: 48,
-        label: () => '飞书通道',
-      }, Panel))
+        label: () => '飞书 Gateway',
+      }, CredentialSettings))
       ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
         name: 'settings.section.icon', id: 'feishu-channel',
-      }, ({ size = 16 }) => h('span', { style: { fontSize: size - 1 } }, '✉')))
+      }, FeishuSidebarIcon))
     }
     module.exports.apply = apply
     module.exports.inject = ['slots']
