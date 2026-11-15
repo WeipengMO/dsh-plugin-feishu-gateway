@@ -24,6 +24,10 @@ DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
 
 可额外安装独立的 **dsh-plugin-feishu-admin** 到 `web` Profile，在 DSH Web 设置页查看飞书通道健康、修改模型/白名单/机器人并写入受限凭据。网关仍在 `feishu-channel` Profile 独立运行。安装、systemd 管理及验收步骤详见 [WEB-ADMIN.md](WEB-ADMIN.md)。
 
+## 原生工具审批和流式任务卡片（0.2.0-rc.1）
+
+功能默认禁用。需要在飞书开发者后台订阅 card.action.trigger 回调并授予 CardKit 写权限，工具审批还必须由 DSH Profile 明确设置为 ask。详细文档：[APPROVAL-STREAMING.md](APPROVAL-STREAMING.md)。
+
 ## 富文本与 Markdown 回复（0.1.3）
 
 入站增加对 `post` **纯文本型富文本**的支持，可以提取标题、正文、Markdown 和 HTTP(S) 链接。携带图片/视频/@ 等不支持的富文本不会被部分读取后提交给 Agent，而是安全拒绝。真正的图片和文件双向传输仍待开发。
