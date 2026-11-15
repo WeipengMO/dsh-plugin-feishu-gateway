@@ -406,3 +406,12 @@
 .fgw-heat-legend { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:11px; color:var(--muted-foreground,#999); }
 .fgw-heat-legend .fgw-heat-unknown { margin-left:12px; }
 @media(max-width:690px) { .fgw-usage-controls { grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px; } }
+
+
+/* Issue #16: Session history inventory */
+.fgw-session-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}
+.fgw-session-filter{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px}
+.fgw-session-filter .fga-input{width:100%;min-width:0;box-sizing:border-box}
+.fgw-session-pages{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:flex-end;margin-top:14px}
+.fgw-session-storage{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 20px}
+.fgw-session-storage .fgw-data-row{min-width:0}
