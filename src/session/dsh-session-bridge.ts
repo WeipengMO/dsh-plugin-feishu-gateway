@@ -6,6 +6,7 @@ import type {
   ModelTokenUsage,
   SessionBridge,
   SessionReply,
+  SessionToolActivity,
   WaitOptions,
 } from '../types.js'
 import { withTimeout } from '../util/retry.js'
@@ -40,6 +41,10 @@ interface TurnState {
   readonly live: string[]
   readonly done: Promise<void>
   onTextDelta?: (text: string) => void
+  onToolActivity?: (activity: SessionToolActivity) => void
+  readonly toolNames: Map<string, string>
+  toolCalls: number
+  toolFailures: number
   readonly resolve: () => void
   settled: boolean
   events: number
@@ -241,6 +246,8 @@ export class DshSessionBridge implements SessionBridge {
       ...(turn.model ? { model: turn.model } : {}),
       ...(turn.usage ? { usage: turn.usage } : {}),
       ...(turn.generationMs > 0 ? { generationMs: turn.generationMs } : {}),
+      toolCalls: turn.toolCalls,
+      toolFailures: turn.toolFailures,
     }
   }
 
@@ -251,6 +258,13 @@ export class DshSessionBridge implements SessionBridge {
     return () => {
       if (turn.onTextDelta === callback) turn.onTextDelta = undefined
     }
+  }
+
+  onToolActivity(sessionId: string, callback: (activity: SessionToolActivity) => void): () => void {
+    const turn = this.turns.get(sessionId)
+    if (!turn || turn.settled) return () => undefined
+    turn.onToolActivity = callback
+    return () => { if (turn.onToolActivity === callback) turn.onToolActivity = undefined }
   }
 
   cancel(sessionId: string): void {
@@ -307,6 +321,7 @@ export class DshSessionBridge implements SessionBridge {
     const turn: TurnState = {
       durable: [], attempts: [], live: [], done, resolve, settled: false,
       events: 0, generationMs: 0, attemptStarts: new Map(),
+      toolNames: new Map(), toolCalls: 0, toolFailures: 0,
       ...(this.sessionModels.has(sessionId) ? { model: this.sessionModels.get(sessionId) } : {}),
     }
     this.turns.set(sessionId, turn)
@@ -337,6 +352,34 @@ export class DshSessionBridge implements SessionBridge {
     const turn = this.turns.get(sessionId)
     if (!turn) return
     if (this.sessionModels.has(sessionId)) turn.model = this.sessionModels.get(sessionId)
+    // DSH native tool events are observable without reading/storing arguments.
+    // Never send raw tool output, URLs, file paths or error messages to CardKit.
+    if (type === 'tool/call') {
+      const id = typeof data?.callId === 'string' ? data.callId : ''
+      const raw = typeof data?.name === 'string' ? data.name : ''
+      const name = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(raw) ? raw : 'tool'
+      if (id) turn.toolNames.set(id, name)
+      turn.toolCalls += 1
+      try { turn.onToolActivity?.({ name, phase: 'started', calls: turn.toolCalls, failures: turn.toolFailures }) }
+      catch { /* progress telemetry must not break native sessions */ }
+    } else if (type === 'tool/result') {
+      const msg = data?.message as { toolCallId?: unknown; source?: { callId?: unknown }; isError?: unknown; content?: Array<{ type?: unknown; text?: unknown }> } | undefined
+      const id = typeof msg?.toolCallId === 'string' ? msg.toolCallId
+        : typeof msg?.source?.callId === 'string' ? msg.source.callId : ''
+      const name = turn.toolNames.get(id) ?? 'tool'
+      turn.toolNames.delete(id)
+      const first = msg?.content?.find(block => block.type === 'text' && typeof block.text === 'string')?.text
+      // Some fetch tools return a successful tool result containing HTTP 403/5xx.
+      const status = typeof first === 'string' && name === 'web_fetch'
+        ? Number(/^Fetched .*? \(HTTP (\d{3})\)/s.exec(first)?.[1]) : NaN
+      const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
+      const failed = msg?.isError === true || (httpStatus !== undefined && httpStatus >= 400)
+      if (failed) turn.toolFailures += 1
+      try { turn.onToolActivity?.({ name, phase: failed ? 'failed' : 'succeeded',
+        ...(httpStatus !== undefined ? { httpStatus } : {}),
+        calls: turn.toolCalls, failures: turn.toolFailures }) }
+      catch { /* progress telemetry must not break native sessions */ }
+    }
     if (type === 'assistant/message' || type === 'assistant/attempt') {
       const usage = reportedUsage(data)
       if (usage) {
