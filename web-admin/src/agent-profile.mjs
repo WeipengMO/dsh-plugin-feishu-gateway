@@ -235,7 +235,48 @@ async function trimHistory(folder) {
     await fs.rm(path.join(folder, name))
   }
 }
-export async function listAgentFiles({ stateDir, workspace }) {
+function isWithin(parent, candidate) {
+  const rel = path.relative(parent, candidate)
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
+}
+async function legacyOverlay(ctx) {
+  const old = ctx.sharedProjectWorkspace
+  if (!old || typeof old !== 'string') return { detected: false }
+  const workspace = await checkedWorkspace(ctx.workspace)
+  const shared = await checkedWorkspace(old)
+  if (isWithin(shared, workspace) || isWithin(workspace, shared))
+    throw err(409, 'the Feishu workspace is not independent of the old DSH workspace')
+  const filename = path.join(shared, OVERLAY)
+  if (!await safeFile(filename, 128 * 1024)) return { detected: false }
+  const raw = await fs.readFile(filename, 'utf8')
+  const found = parseOverlay(raw)
+  return { detected: Boolean(found.section),
+    ...(found.section ? { revision: digest(raw) } : {}) }
+}
+
+/** Explicit, version-checked migration: remove ONLY the old Feishu-managed
+ * block from the former DSH workspace; backup original first. */
+export async function detachLegacyOverlay(ctx, { expectedRevision }) {
+  if (typeof expectedRevision !== 'string' || !REV.test(expectedRevision))
+    throw err(400, 'invalid legacy revision')
+  const current = await legacyOverlay(ctx)
+  if (!current.detected) throw err(404, 'no legacy managed block to detach')
+  if (current.revision !== expectedRevision) throw err(409, 'legacy instruction file changed; reload')
+  const workspace = await checkedWorkspace(ctx.sharedProjectWorkspace)
+  const filename = path.join(workspace, OVERLAY)
+  const raw = await fs.readFile(filename, 'utf8')
+  if (digest(raw) !== expectedRevision) throw err(409, 'legacy instruction file changed; reload')
+  const sections = parseOverlay(raw)
+  if (!sections.section) throw err(409, 'legacy managed section was removed')
+  const backups = path.join(ctx.stateDir, 'agent-profile-legacy-backups')
+  await checkedDir(backups, true)
+  const basename = String(Date.now()) + '-' + randomUUID() + '.md'
+  await atomicWrite(path.join(backups, basename), raw)
+  await atomicWrite(filename, sections.prefix + sections.suffix)
+  return { detached: true, backupCreated: true }
+}
+
+export async function listAgentFiles({ stateDir, workspace, sharedProjectWorkspace }) {
   const dir = await checkedWorkspace(workspace)
   const settings = await readSettings(stateDir)
   const files = []
@@ -257,7 +298,8 @@ export async function listAgentFiles({ stateDir, workspace }) {
     }
   }
   const overlay = await overlayState(dir, settings)
-  return { workspace: dir, files, settings, syncNeeded: overlay.syncNeeded,
+  const legacy = await legacyOverlay({ stateDir, workspace: dir, sharedProjectWorkspace })
+  return { workspace: dir, files, settings, legacy, syncNeeded: overlay.syncNeeded,
     loaded: overlay.desired.loaded, contextBytes: overlay.desired.bytes,
     activation: 'new-session', sharedWorkspace: false,
     isolation: 'feishu-channel', maxFileBytes: MAX_FILE }
