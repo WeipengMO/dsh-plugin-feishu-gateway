@@ -71,10 +71,6 @@ window.__ModuleLoader__.load({
       const [streamCards, setStreamCards] = useState(false)
       const [approvalTimeout, setApprovalTimeout] = useState('90')
       const [streamInterval, setStreamIntervalValue] = useState('800')
-      const [botId, setBotId] = useState('default')
-      const [appId, setAppId] = useState('')
-      const [appSecret, setAppSecret] = useState('')
-
       const populate = useCallback(data => {
         setState(data); setHealth(data.health)
         const c = data.config || {}
@@ -94,7 +90,6 @@ window.__ModuleLoader__.load({
         setStreamCards(c.streamCards === true)
         setApprovalTimeout(String((c.approvalTimeoutMs || 90000) / 1000))
         setStreamIntervalValue(String(c.streamIntervalMs || 800))
-        setBotId(current => (data.bots || []).some(b => b.id === current) ? current : (data.bots?.[0]?.id || 'default'))
       }, [])
       const reload = useCallback(async () => {
         setLoading(true); setError('')
@@ -142,14 +137,6 @@ window.__ModuleLoader__.load({
       const save = () => perform(
         () => request('/config', 'PUT', { expectedRevision: state.revision, config: asConfig() }),
         '配置已安全保存。重启飞书通道后才会生效。')
-      const saveSecret = () => perform(async () => {
-        const payload = { botId }
-        if (appId.trim()) payload.appId = appId.trim()
-        if (appSecret.trim()) payload.appSecret = appSecret.trim()
-        if (!payload.appId && !payload.appSecret) throw Error('请填写 App ID 或 App Secret')
-        await request('/credentials', 'PUT', payload)
-        setAppId(''); setAppSecret('')
-      }, '飞书凭据已写入服务器受限文件，页面不会显示原文；重启后生效。')
       const restart = () => perform(
         () => request('/restart', 'POST', {}),
         'systemd 已接受重启命令。请刷新状态确认网关已重新连接。')
@@ -242,16 +229,8 @@ window.__ModuleLoader__.load({
               action('删除此机器人', () => setBots(list => list.filter((_, j) => i !== j)), busy, true))),
             bots.length < 8 && action('新增机器人', () => setBots(list => [...list, { id: '', domain: 'feishu', enabled: false }]), busy, true),
             action('保存机器人列表', save, busy || !state)),
-          h('div', { className: 'fga-divider' }),
-          h('h3', null, '凭据设置（请前往「设置 → 飞书 Gateway」）'),
-          field('选择机器人', h('select', { className: 'fga-input', value: botId,
-            onChange: e => { setBotId(e.target.value); setAppId(''); setAppSecret('') } },
-            ...(state?.bots || []).map(b => h('option', { key: b.id, value: b.id }, b.id)))),
-          h('p', { className: 'fga-hint' }, '当前凭据：', state?.credentials?.find(c => c.id === botId)?.configured ? '已配置' : '未检测到完整凭据'),
-          field('新的 App ID', textInput(appId, setAppId, 'cli_…（留空则不改变）')),
-          field('新的 App Secret', textInput(appSecret, setAppSecret, '留空则不改变', { type: 'password', autoComplete: 'new-password' })),
-          h('p', { className: 'fga-hint' }, '凭据写入 ~/.dsh/feishu-channel.env（0600），不会经接口读取原值。'),
-          action('安全保存凭据', saveSecret, busy || !state)),
+          h('p', { className: 'fga-hint' },
+            '飞书 App ID / App Secret 已移至 DSH 设置 → 飞书 Gateway，以免混淆运行管理与凭据编辑。')),
         h('p', { className: 'fga-footer' },
           '管理接口由 DSH Web 身份认证保护 · 通过本机读取健康状态 · 不修改 DSH Core'))
     }
