@@ -11,6 +11,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { readOpsEvents, readOpsSnapshot, summarizeOps } from './ops-read.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -269,6 +270,21 @@ export function createAdminHandler(options = {}) {
       }
       if (req.method === 'GET' && route === PREFIX + '/diagnostics') {
         return json(res, 200, { ok: true, diagnostics: await loopback(healthPort, '/diagnostics') })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/ops') {
+        // Only the explicit, redacted telemetry DTO is readable here.
+        // Never return raw Inbox/Outbox/Sessions storage or journalctl output.
+        const [snapshot, events] = await Promise.all([
+          readOpsSnapshot(stateDir), readOpsEvents(stateDir, { limit: 200 }),
+        ])
+        return json(res, 200, { ok: true, snapshot, events,
+          summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/ops/events') {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const limit = params.has('limit') ? Number(params.get('limit')) : 100
+        const kind = params.get('kind') || undefined
+        return json(res, 200, { ok: true, events: await readOpsEvents(stateDir, { kind, limit }) })
       }
       if (req.method === 'PUT' && route === PREFIX + '/config') {
         return await serializeMutation(async () => {
