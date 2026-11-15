@@ -3,56 +3,101 @@ import { TaskProgressCard } from '../../src/channel/task-progress-card.js'
 import { MockFeishuTransport } from '../../src/channel/mock-transport.js'
 import { silentLogger } from '../../src/util/logger.js'
 
-describe('CardKit progress lifecycle', () => {
-  it('sends snapshots in order, closes with a higher sequence, and never swallows final answer', async () => {
+function finishedBody(t: MockFeishuTransport) {
+  return t.streamReplacements.at(-1)?.card.body as { elements: Array<Record<string, unknown>> }
+}
+
+describe('CardKit single-message progress lifecycle', () => {
+  it('replaces the progress card with authoritative final text and no cancel button', async () => {
     vi.useFakeTimers()
     try {
-      const transport = new MockFeishuTransport('default')
-      const card = await TaskProgressCard.start(transport, 'om_original', silentLogger, 500)
+      const t = new MockFeishuTransport('default')
+      const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
       expect(card).toBeDefined()
-      const nonce = card!.nonce
-      expect(transport.streamCards[0]?.nonce).toBe(nonce)
-      card!.onTextDelta('hello')
+      expect(t.streamCards[0]?.nonce).toBe(card!.nonce)
+      card!.onTextDelta('preview')
       await vi.advanceTimersByTimeAsync(500)
-      card!.onTextDelta(' world')
+      card!.onTextDelta(' still streaming')
       await vi.advanceTimersByTimeAsync(500)
-      await card!.close('done')
-      expect(transport.streamUpdates.map(x => x.sequence)).toEqual([1, 2, 3])
-      expect(transport.streamUpdates[1]?.text).toContain('hello world')
-      expect(transport.streamUpdates[2]?.text).toContain('最终答复')
-      expect(transport.streamFinishes).toEqual([{ cardId: card!.handle.cardId, sequence: 4 }])
+      expect(await card!.close('done', 'authoritative final answer', {
+        elapsedMs: 4200, model: 'magpie/group-deepseek',
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 25 },
+        generationMs: 2000,
+      })).toBe(true)
+      expect(t.streamUpdates.map(x => x.sequence)).toEqual([1, 2])
+      expect(t.streamReplacements.map(x => x.sequence)).toEqual([3])
+      expect(t.streamFinishes).toHaveLength(0)
+      const body = finishedBody(t)
+      expect(body.elements[0]?.content).toBe('authoritative final answer')
+      expect(JSON.stringify(t.streamReplacements[0]?.card)).not.toContain('取消当前任务')
+      const footer = String(body.elements.at(-1)?.content)
+      expect(footer).toContain('模型：magpie/group-deepseek')
+      expect(footer).toContain('Token：175')
+      expect(footer).toContain('入 125 / 出 50')
+      expect(footer).toContain('≈25.0 tok/s')
+      expect(footer).toContain('用时：4.2s')
       await vi.advanceTimersByTimeAsync(5000)
-      expect(transport.streamUpdates).toHaveLength(3)
+      expect(t.streamUpdates).toHaveLength(2)
     } finally { vi.useRealTimers() }
   })
 
-  it('keeps the final status safe after any CardKit write error', async () => {
+  it('can complete without intermediate stream deltas or available model usage', async () => {
     const t = new MockFeishuTransport('default')
-    t.updateStreamCard = async () => { throw new Error('no cardkit permission') }
-    const c = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
-    expect(c).toBeDefined()
-    await c!.close('failed')
+    const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+    expect(await card!.close('done', '**full final**', { elapsedMs: 1200 })).toBe(true)
+    const body = finishedBody(t)
+    expect(body.elements[0]?.content).toBe('**full final**')
+    expect(JSON.stringify(body)).not.toContain('Token')
+    expect(JSON.stringify(body)).not.toContain('tok/s')
+    expect(JSON.stringify(body)).toContain('1.2s')
+  })
+
+  it('removes the cancel button on cancelled or failed terminal states', async () => {
+    for (const status of ['cancelled', 'failed'] as const) {
+      const t = new MockFeishuTransport('default')
+      const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+      expect(await card!.close(status)).toBe(true)
+      expect(JSON.stringify(t.streamReplacements[0]?.card)).not.toContain('取消当前任务')
+      expect(String(finishedBody(t).elements[0]?.content)).toContain(status === 'cancelled' ? '已取消' : '异常结束')
+    }
+  })
+
+  it('falls back to durable text when final CardKit replacement fails', async () => {
+    const t = new MockFeishuTransport('default')
+    t.replaceStreamCard = async () => { throw new Error('no CardKit permission') }
+    const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+    expect(await card!.close('done', 'final')).toBe(false)
     expect(t.streamFinishes).toHaveLength(1)
   })
 
-  it('does not exceed preview size for huge chunks', async () => {
+  it('returns false for an oversized full answer instead of silently truncating it', async () => {
     const t = new MockFeishuTransport('default')
-    const c = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
-    c!.onTextDelta('a'.repeat(100000))
-    await c!.close('cancelled')
-    expect(Buffer.byteLength(t.streamUpdates[0]?.text ?? '', 'utf8')).toBeLessThan(22 * 1024)
-    expect(t.streamUpdates[0]?.text).toContain('已取消')
+    const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+    const answer = '中'.repeat(11000)
+    expect(await card!.close('done', answer)).toBe(false)
+    const terminal = JSON.stringify(t.streamReplacements.at(-1)?.card)
+    expect(terminal).toContain('切换为文本')
+    expect(terminal).not.toContain(answer)
+    expect(terminal).not.toContain('取消当前任务')
   })
-})
 
-describe('UTF-8 card payload safety', () => {
-  it('limits multibyte Chinese content to well below the CardKit request size ceiling', async () => {
+  it('keeps the preview bounded for large multibyte deltas', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = new MockFeishuTransport('default')
+      const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+      card!.onTextDelta('中'.repeat(10000))
+      await vi.advanceTimersByTimeAsync(500)
+      expect(Buffer.byteLength(t.streamUpdates[0]?.text ?? '', 'utf8')).toBeLessThan(18_010)
+      expect(await card!.close('done', '短回复')).toBe(true)
+      expect(finishedBody(t).elements[0]?.content).toBe('短回复')
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not open an unfinishable card on a legacy transport', async () => {
     const t = new MockFeishuTransport('default')
-    const c = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
-    c!.onTextDelta('中'.repeat(10000))
-    await c!.close('done')
-    const payload = t.streamUpdates[0]?.text ?? ''
-    expect(Buffer.byteLength(payload, 'utf8')).toBeLessThan(22 * 1024)
-    expect(payload).toContain('已完成')
+    t.replaceStreamCard = undefined
+    expect(await TaskProgressCard.start(t, 'om_original', silentLogger, 500)).toBeUndefined()
+    expect(t.streamCards).toHaveLength(0)
   })
 })
