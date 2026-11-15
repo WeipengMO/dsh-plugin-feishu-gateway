@@ -99,7 +99,7 @@ export function summarizeOps(events, snapshot) {
   const byBot = new Map()
   const days = new Map()
   for (const event of [...events].reverse()) {
-    if (event.kind === 'message' || event.kind === 'task') {
+    if (event.kind === 'message' || event.kind === 'task' || event.kind === 'delivery') {
       if (!event.ref) continue
       const previous = messages.get(event.ref) ?? { ref: event.ref, firstAt: event.ts }
       messages.set(event.ref, {
