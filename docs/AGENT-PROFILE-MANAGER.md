@@ -1,4 +1,6 @@
-# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.6 / Admin 0.2.0-rc.4）
+# Agent 档案与长期记忆管理（Gateway 0.2.0-rc.7 / Admin 0.2.0-rc.5）
+
+> **飞书专用目录隔离**：新版不会修改普通 DSH 工作区的身份/记忆文件。独立 cwd、旧共享托管区块安全清理与旧 Session /new 的具体说明参见 [飞书 Agent 身份隔离与迁移指南](AGENT-PROFILE-ISOLATION.md)。
 
 ## 定位与入口
 
@@ -18,7 +20,7 @@
 | 历史 | 编辑器右侧 | 最近 30 个版本、时间、修订摘要和一键恢复（恢复前二次确认） |
 | 加载控制 | 编辑器右侧 | 勾选纳入上下文的五种档案文件、总/单文件 UTF-8 字节预算及同步详情 |
 
-编辑器采用三栏自适应布局，深浅主题随 DSH 宿主切换，支持未保存提醒、冲突拒绝、文件未创建状态和同步反馈。管理面板顶部显示真实的 Workspace、是否待同步、已加载文件数量和上下文字节数。**多个飞书机器人共享一个 Gateway Workspace 时会共享档案内容**，本版不假装提供独立机器人隔离。
+编辑器采用三栏自适应布局，深浅主题随 DSH 宿主切换，支持未保存提醒、冲突拒绝、文件未创建状态和同步反馈。管理面板顶部显示真实的 Workspace、是否待同步、已加载文件数量和上下文字节数。**多个飞书机器人共享一个专用 Feishu Gateway Workspace 时会共享档案内容**，本版不假装提供独立机器人隔离。
 
 ## 真正让 SOUL / MEMORY 进入 DSH 上下文
 
@@ -115,15 +117,15 @@ pnpm run pack
 
 # 两个 Profile 都要升级；不要将 Gateway 安装到 web Profile
 dsh plugin --profile feishu-channel add \
-  "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.6.tgz"
+  "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
 
 dsh plugin --profile web add \
-  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.4.tgz"
+  "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.5.tgz"
 \`\`\`
 
 备份原有 \`AGENTS.md\`、\`AGENTS.local.md\`、\`SOUL.md\`、\`USER.md\`、\`MEMORY.md\` 和 Gateway \`stateDir\` 后，使用服务器实际的 systemd user 服务名称分别重启 Web Profile 和 Feishu Profile。不要清空原有 Inbox、Outbox、Session、工作目录和环境变量。
 
-注意：即使新版 Web Admin 已安装，也只有 **Gateway rc.6** 才会在运维快照中报告准确的 \`workspace\`；只升级 Web Admin 时「Agent 档案」应显示“Gateway 工作区不可用”，不会退回猜测路径。
+注意：即使新版 Web Admin 已安装，也只有 **Gateway rc.7** 才会在运维快照中报告准确的 \`workspace\`；只升级 Web Admin 时「Agent 档案」应显示“Gateway 工作区不可用”，不会退回猜测路径。
 
 **回滚**：在停止相关任务后回滚两只插件到上一个已验证版本；托管的 \`AGENTS.local.md\` 区块仍是普通 DSH 指令内容。若不再需要自动注入，可在新版后台关闭所有加载开关并同步，或在停机备份后人工移除两个标记之间的区块；不要直接删除其他手写内容。现有身份/记忆 Markdown 文件不会被安装或回滚自动清除。
 

@@ -39,6 +39,9 @@ export interface OpsSession {
 export interface OpsSnapshot {
   /** The native DSH working directory actually used to create Feishu Sessions. */
   readonly workspace: string
+  /** Former/shared project directory; not the Feishu Session cwd. */
+  readonly sharedProjectWorkspace?: string
+  readonly isolatedAgent?: boolean
   readonly version: 1
   readonly ts: number
   readonly status: string

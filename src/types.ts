@@ -135,8 +135,10 @@ export interface GatewayConfig {
   readonly allowlist: readonly string[]
   /** Group chats are disabled by default and stay disabled in v0.1.0. */
   readonly allowGroups: boolean
-  /** Absolute working directory handed to the native DSH Session. */
+  /** Legacy/shared project workspace. Not used as the Feishu Session cwd. */
   readonly workspace: string
+  /** Optional dedicated Feishu Agent cwd, separate from the normal DSH workspace. */
+  readonly agentWorkspace?: string
   readonly agentPreset?: string
   readonly agent?: AgentRoute
   /** Directory for the durable inbox / outbox / dedup / session map. */

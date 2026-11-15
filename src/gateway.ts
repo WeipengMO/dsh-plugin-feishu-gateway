@@ -22,6 +22,7 @@ import type {
 import { chatKey, newId, sessionIdFor } from './util/id.js'
 import { withTimeout } from './util/retry.js'
 import { OpsTelemetry, opsRef, type OpsEvent, type OpsSnapshot } from './ops/telemetry.js'
+import { resolveFeishuWorkspace, prepareFeishuWorkspace } from './agent-workspace.js'
 import { processOperatorCommands, type OperatorCommand, type OperatorResult } from './ops/commands.js'
 
 export interface GatewayDeps {
@@ -104,6 +105,7 @@ export class FeishuGateway {
   private commandRunning = false
   private commandPromise: Promise<void> | undefined
   private readonly ops: OpsTelemetry
+  private readonly isolatedWorkspace: string
   private readonly transportStats = new Map<string, { reconnects: number; failures: number; lastConnectedAt?: number; lastDisconnectedAt?: number }>()
   private readonly chatQueues = new Map<string, Promise<void>>()
   private readonly inFlight = new Set<Promise<void>>()
@@ -123,6 +125,7 @@ export class FeishuGateway {
     this.logger = deps.logger
     this.bridge = deps.bridge
     this.ops = new OpsTelemetry(deps.config.stateDir)
+    this.isolatedWorkspace = resolveFeishuWorkspace(deps.config)
     this.router = new MessageRouter(deps.config)
     this.approvals = new FeishuApprovalManager(
       deps.config.approvalTimeoutMs,
@@ -164,6 +167,7 @@ export class FeishuGateway {
       // authority is an in-memory Map, so two instances sharing a stateDir
       // would admit the same message_id and execute the Agent turn twice.
       this.ownerLock = await acquireStateDirOwnerLock(this.config.stateDir, this.logger)
+      await prepareFeishuWorkspace(this.config)
       await this.dedup.open()
       const pending = await this.inbox.open()
       await this.registry.open()
@@ -669,7 +673,9 @@ export class FeishuGateway {
         session: activeSessionId, elapsedMs: Date.now() - turn.startedAt })
       if (error instanceof SessionResumeError) {
         await this.replyDiagnostic(record,
-          'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
+          String(error).includes('legacy Session uses the shared workspace')
+            ? '本聊天仍绑定旧版共享 DSH 工作区的 Session。为避免继承普通 DSH 的身份与记忆，本次没有继续执行。请在飞书发送 /new 创建独立的飞书 Agent Session；原 Session 历史不会被删除。'
+            : 'DSH 原有会话恢复失败，已保留会话绑定，没有重新创建空白会话。本次消息未提交给 Agent；请检查 DSH Host、Agent Loop 和 Session 持久化。')
       } else {
         await this.replyDiagnostic(record,
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
@@ -693,12 +699,18 @@ export class FeishuGateway {
     if (!existing) {
       const sessionId = `${sessionIdFor(botId, chatId)}-${newId('session')}`
       try {
-        await this.bridge.create(sessionId, this.config.workspace, this.config.agent)
+        await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent)
       } catch (error) {
         throw new Error(`cannot create native DSH Session: ${String(error)}`)
       }
-      await this.registry.bind(key, sessionId)
+      await this.registry.bind(key, sessionId, Date.now(), this.isolatedWorkspace)
       return sessionId
+    }
+    // Legacy Sessions were created in the shared DSH workspace. Never resume
+    // one under a new private identity; keep its history and ask for /new.
+    if (existing.workspace !== this.isolatedWorkspace) {
+      throw new SessionResumeError(existing.sessionId,
+        new Error('legacy Session uses the shared workspace; send /new to start an isolated Feishu Session'))
     }
     try {
       await this.bridge.resume(existing.sessionId)
@@ -793,7 +805,9 @@ export class FeishuGateway {
     const health = this.health()
     const snapshot: OpsSnapshot = {
       version: 1, ts: Date.now(), status: health.status,
-      workspace: this.config.workspace,
+      workspace: this.isolatedWorkspace,
+      sharedProjectWorkspace: this.config.workspace,
+      isolatedAgent: true,
       tasks: [...this.activeTurns.values()].map(turn => ({
         ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
         botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,

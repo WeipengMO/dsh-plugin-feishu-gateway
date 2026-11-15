@@ -3,6 +3,8 @@ import { JsonStore } from '../storage/json-store.js'
 export interface SessionBinding {
   /** Stable native DSH Session id (also the Agent id). */
   readonly sessionId: string
+  /** Filesystem root used when this native Session was created. Missing on legacy sessions. */
+  readonly workspace?: string
   readonly createdAt: number
   readonly lastActiveAt: number
   /** True when the Session has been persisted by DSH and can be resumed. */
@@ -35,11 +37,12 @@ export class SessionRegistry {
     return this.state.bindings[chatKey]
   }
 
-  async bind(chatKey: string, sessionId: string, now = Date.now()): Promise<SessionBinding> {
+  async bind(chatKey: string, sessionId: string, now = Date.now(), workspace?: string): Promise<SessionBinding> {
     this.state = await this.store.update((current) => {
       const existing = current.bindings[chatKey]
       const binding: SessionBinding = {
         sessionId,
+        ...(workspace ? { workspace } : {}),
         createdAt: existing?.createdAt ?? now,
         lastActiveAt: now,
         persisted: existing?.persisted ?? false,

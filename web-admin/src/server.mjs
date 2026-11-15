@@ -13,7 +13,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
-  restoreAgentFile, saveAgentSettings, applyAgentProfile } from './agent-profile.mjs'
+  restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -21,7 +21,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs',
+const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 
@@ -67,6 +67,12 @@ export function validateConfig(input) {
     if (typeof input.workspace !== 'string' || input.workspace.length > 4096 ||
       !path.isAbsolute(input.workspace) || input.workspace.includes('\0')) throw httpError(400, 'workspace must be an absolute path')
     result.workspace = path.normalize(input.workspace)
+  }
+  if (input.agentWorkspace !== undefined) {
+    if (typeof input.agentWorkspace !== 'string' || input.agentWorkspace.length > 4096 ||
+        !path.isAbsolute(input.agentWorkspace) || input.agentWorkspace.includes('\0'))
+      throw httpError(400, 'agentWorkspace must be an absolute path')
+    result.agentWorkspace = path.normalize(input.agentWorkspace)
   }
   if (input.agent !== undefined) {
     if (!object(input.agent)) throw httpError(400, 'agent must be an object')
@@ -230,9 +236,9 @@ async function agentProfileContext(stateDir) {
   const snapshot = await readOpsSnapshot(stateDir)
   // The workspace comes only from the actual Gateway runtime. Never let a
   // browser-supplied path or unsaved Web Admin config select filesystem scope.
-  if (!snapshot || snapshot.stale || !snapshot.workspace)
+  if (!snapshot || snapshot.stale || !snapshot.workspace || snapshot.isolatedAgent !== true)
     throw httpError(503, 'running Gateway workspace unavailable; start Gateway and refresh')
-  return { stateDir, workspace: snapshot.workspace }
+  return { stateDir, workspace: snapshot.workspace, sharedProjectWorkspace: snapshot.sharedProjectWorkspace }
 }
 
 async function setCredential(filename, body, knownBots) {
@@ -350,6 +356,14 @@ export function createAdminHandler(options = {}) {
           const body = await readBody(req)
           exactKeys(body, ['settings', 'expectedRevision'])
           const result = await saveAgentSettings(await agentProfileContext(stateDir), body)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/agent-profile/detach-legacy') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['expectedRevision'])
+          const result = await detachLegacyOverlay(await agentProfileContext(stateDir), body)
           return json(res, 200, { ok: true, result })
         })
       }

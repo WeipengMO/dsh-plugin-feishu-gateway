@@ -305,7 +305,7 @@ test('Agent profile endpoints require DSH auth and use only the running Gateway 
     const workspace = path.join(f.dir,'workspace')
     await mkdir(f.stateDir,{recursive:true,mode:0o700})
     await mkdir(workspace,{mode:0o700})
-    const runtime = {version:1,ts:Date.now(),workspace,status:'ok',
+    const runtime = {version:1,ts:Date.now(),workspace,status:'ok',isolatedAgent:true,
       tasks:[],sessions:[],transport:{},stats:{}}
     await writeFile(path.join(f.stateDir,'ops-runtime.json'),JSON.stringify(runtime),{mode:0o600})
     const initial = await f.request('/agent-profile')
@@ -360,7 +360,7 @@ test('Agent profile API never follows symlinks or accepts stale Gateway workspac
     const workspace=path.join(f.dir,'workspace')
     await mkdir(f.stateDir,{recursive:true,mode:0o700})
     await mkdir(workspace,{mode:0o700})
-    const snapshot={version:1,ts:Date.now(),workspace,status:'ok',
+    const snapshot={version:1,ts:Date.now(),workspace,status:'ok',isolatedAgent:true,
       transport:{},tasks:[],sessions:[],stats:{}}
     const filename=path.join(f.stateDir,'ops-runtime.json')
     await writeFile(filename,JSON.stringify(snapshot),{mode:0o600})
@@ -374,5 +374,64 @@ test('Agent profile API never follows symlinks or accepts stale Gateway workspac
     await writeFile(filename,JSON.stringify(snapshot),{mode:0o600})
     const expired=await f.request('/agent-profile')
     assert.equal(expired.status,503)
+  } finally { await f.close() }
+})
+
+
+test('Agent profile explicitly rejects a legacy nonisolated Gateway snapshot', async () => {
+  const f=await fixture()
+  try {
+    const workspace=path.join(f.dir,'normal-dsh')
+    await mkdir(f.stateDir,{recursive:true,mode:0o700})
+    await mkdir(workspace)
+    const runtime={version:1,ts:Date.now(),workspace,status:'ok',
+      tasks:[],sessions:[],transport:{},stats:{}}
+    await writeFile(path.join(f.stateDir,'ops-runtime.json'),JSON.stringify(runtime),{mode:0o600})
+    assert.equal((await f.request('/agent-profile')).status,503)
+    assert.equal((await f.request('/agent-profile/file','PUT',{
+      name:'SOUL.md',content:'must not write',expectedRevision:'absent',
+    },mutating)).status,503)
+    await assert.rejects(readFile(path.join(workspace,'SOUL.md'),'utf8'),e=>e.code==='ENOENT')
+  } finally { await f.close() }
+})
+
+test('Agent profile removes only tagged legacy shared DSH instructions after explicit backup and confirmation', async () => {
+  const f=await fixture()
+  try {
+    const isolated=path.join(f.dir,'feishu-agent')
+    const regular=path.join(f.dir,'normal-dsh')
+    await mkdir(f.stateDir,{recursive:true,mode:0o700})
+    await mkdir(isolated)
+    await mkdir(regular)
+    const legacyFile=path.join(regular,'AGENTS.local.md')
+    const original='# DSH original instructions\n\n<!-- DSH-FEISHU-AGENT-PROFILE:BEGIN -->\n## Feishu only\nDO_NOT_LOAD_IN_DSH\n<!-- DSH-FEISHU-AGENT-PROFILE:END -->\n\n# Keep this tail\n'
+    await writeFile(legacyFile,original)
+    const runtime={version:1,ts:Date.now(),workspace:isolated,sharedProjectWorkspace:regular,
+      isolatedAgent:true,status:'ok',tasks:[],sessions:[],transport:{},stats:{}}
+    await writeFile(path.join(f.stateDir,'ops-runtime.json'),JSON.stringify(runtime),{mode:0o600})
+    const initial=await f.request('/agent-profile')
+    assert.equal(initial.status,200)
+    assert.equal(initial.json.profile.sharedWorkspace,false)
+    assert.equal(initial.json.profile.legacy.detected,true)
+    const revision=initial.json.profile.legacy.revision
+    const noAuth=await f.request('/agent-profile/detach-legacy','POST',{expectedRevision:revision},{
+      'content-type':'application/json','x-dsh-feishu-admin':'1',
+    })
+    assert.equal(noAuth.status,401)
+    const conflict=await f.request('/agent-profile/detach-legacy','POST',{expectedRevision:'f'.repeat(64)},mutating)
+    assert.equal(conflict.status,409)
+    assert.equal(await readFile(legacyFile,'utf8'),original)
+    const result=await f.request('/agent-profile/detach-legacy','POST',{expectedRevision:revision},mutating)
+    assert.equal(result.status,200)
+    assert.equal(result.json.result.detached,true)
+    assert.equal(result.json.result.backupCreated,true)
+    const modified=await readFile(legacyFile,'utf8')
+    assert.equal(modified,'# DSH original instructions\n\n\n\n# Keep this tail\n')
+    assert.doesNotMatch(modified,/DO_NOT_LOAD_IN_DSH/)
+    const backups=await (await import('node:fs/promises')).readdir(path.join(f.stateDir,'agent-profile-legacy-backups'))
+    assert.equal(backups.length,1)
+    assert.equal(await readFile(path.join(f.stateDir,'agent-profile-legacy-backups',backups[0]),'utf8'),original)
+    const now=await f.request('/agent-profile')
+    assert.equal(now.json.profile.legacy.detected,false)
   } finally { await f.close() }
 })

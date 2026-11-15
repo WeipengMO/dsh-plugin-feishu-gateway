@@ -30,7 +30,9 @@ export const Config: ConfigValidator = Schema.object({
   allowGroups: Schema.boolean().default(false)
     .description('Group chats stay OFF in v0.1.0. Enabling this flag is still rejected by the router.'),
   workspace: Schema.string().default('')
-    .description('Absolute cwd for native DSH Sessions. Empty resolves to the profile working directory.'),
+    .description('Legacy/shared project root. The native Feishu Session uses its own isolated agentWorkspace.'),
+  agentWorkspace: Schema.string().default('')
+    .description('Dedicated Feishu Agent cwd. Empty chooses an isolated channel-only directory.'),
   agentPreset: Schema.string().description('Optional DSH agent preset name.'),
   agent: Schema.object({
     provider: Schema.string(),
@@ -94,6 +96,8 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     allowlist: (raw.allowlist as string[] | undefined) ?? [],
     allowGroups: raw.allowGroups === true,
     workspace,
+    ...(typeof raw.agentWorkspace === 'string' && raw.agentWorkspace.trim() ?
+      { agentWorkspace: raw.agentWorkspace } : {}),
     ...(typeof raw.agentPreset === 'string' && raw.agentPreset ? { agentPreset: raw.agentPreset } : {}),
     agent: (raw.agent as GatewayConfig['agent']) ?? {},
     stateDir,
@@ -201,6 +205,7 @@ export function redactedConfigSummary(config: GatewayConfig): Record<string, unk
     allowlistSize: config.allowlist.length,
     allowGroups: config.allowGroups,
     workspace: config.workspace,
+    agentWorkspace: config.agentWorkspace ?? '(auto: isolated Feishu agent workspace)',
     stateDir: config.stateDir,
     offline: config.offline,
     autoConnect: config.autoConnect,

@@ -86,6 +86,10 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
     ...(typeof doc.workspace === 'string' && path.isAbsolute(doc.workspace) &&
       doc.workspace.length <= 4096 && !doc.workspace.includes('\0')
       ? { workspace: path.normalize(doc.workspace) } : {}),
+    isolatedAgent: doc.isolatedAgent === true,
+    ...(typeof doc.sharedProjectWorkspace === 'string' && path.isAbsolute(doc.sharedProjectWorkspace) &&
+      doc.sharedProjectWorkspace.length <= 4096 && !doc.sharedProjectWorkspace.includes('\0') ?
+      { sharedProjectWorkspace: path.normalize(doc.sharedProjectWorkspace) } : {}),
     status: safeLabel(doc.status) ?? 'unknown',
     tasks, sessions, transport: transports,
     stats: {

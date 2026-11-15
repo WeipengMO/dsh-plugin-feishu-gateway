@@ -99,6 +99,19 @@ function AgentProfilePanel(){
     }catch(e){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
+  const detachLegacy=async()=>{
+    if(!profile?.legacy?.detected||busy)return
+    if(!window.confirm('检测到旧版飞书档案曾写入普通 DSH 工作区 AGENTS.local.md。确认先备份该文件，再仅移除飞书自动生成的区块？其他手写指令和身份文件不会删除。'))return
+    setBusy(true);setError('');setNotice('')
+    try{
+      await request('/agent-profile/detach-legacy','POST',{
+        expectedRevision:profile.legacy.revision,
+      })
+      await loadProfile()
+      setNotice('旧 DSH 工作区的飞书托管区块已备份并移除。之后新建的普通 DSH Session 不会再加载该区块；旧 Session 已有上下文不会被修改。')
+    }catch(e){setError('清理旧共享区块失败：'+(e.message||String(e)))}
+    finally{setBusy(false)}
+  }
   const saveSettings=async()=>{
     if(!profile||!settings||busy)return
     setBusy(true);setError('');setNotice('')
@@ -205,8 +218,13 @@ function AgentProfilePanel(){
     !profile&& (loading?h('div',{className:'fgw-caution'},'正在读取工作区信息…'):
       h(OpsUnavailable,{title:'当前工作区不可访问'})),
     profile&&h(React.Fragment,null,
+      profile.legacy?.detected&&h('div',{className:'fgw-caution',role:'alert'},
+        h('strong',null,'发现旧版共享指令'),
+        h('p',null,'普通 DSH 工作区中的 AGENTS.local.md 仍含旧飞书托管内容。虽然新飞书 Session 已改用独立目录，但新建普通 DSH Session 仍可能读到旧内容。'),
+        h('button',{type:'button',className:'fgw-refresh fgw-ops-cta',disabled:busy,
+          onClick:()=>void detachLegacy()},'备份并移除旧共享区块')),
       h('div',{className:'fgw-profile-status'},
-        h('div',null,h('span',{className:'fgw-muted'},'实际工作区'),h('code',null,profile.workspace)),
+        h('div',null,h('span',{className:'fgw-muted'},'飞书专属工作区'),h('code',null,profile.workspace)),
         h('div',null,h('span',{className:'fgw-muted'},'同步状态'),
           h(WbState,{value:profile.syncNeeded?'pending':'ok'})),
         h('div',null,h('span',{className:'fgw-muted'},'加载文件'),
@@ -214,6 +232,6 @@ function AgentProfilePanel(){
         h('div',null,h('span',{className:'fgw-muted'},'上下文'),
           h('strong',null,profile.contextBytes+' / '+profile.settings.maxBytes+' B'))),
       h('p',{className:'fgw-profile-warning'},
-        '同一 Gateway 的机器人共享此工作区。修改 SOUL、USER、MEMORY 等文件后只保证新 Session 加载；已有 Session 不会强制热替换。每日记忆默认只在 Agent 主动读取时使用。'),
+        '此工作区只用于飞书 Channel 的新 DSH Session，与普通 DSH 项目工作区分开。多个飞书机器人仍共享本目录；旧飞书 Session 必须通过 /new 切换。每日记忆仅按需读取。'),
       h('div',{className:'fgw-profile-columns'},nav,editor,right)))
 }
