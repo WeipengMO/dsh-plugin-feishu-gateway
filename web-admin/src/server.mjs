@@ -13,6 +13,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
+import { readScheduleModel, readScheduleResults } from './schedule-read.mjs'
+import { validateSpec, previewOccurrences, specSummary, SCHEDULE_ACTIONS,
+  SCHEDULE_NOTIFY, SCHEDULE_ACTOR, SCHEDULE_TASK_ID_RE, SCHEDULE_UUID_RE,
+  TITLE_MAX, PROMPT_MAX, PREVIEW_MAX } from './schedule-spec.mjs'
 import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
@@ -463,7 +467,97 @@ async function credentialStatus(filename, bots) {
     return { id: bot.id, configured: present(keys.appId) && present(keys.appSecret) }
   })
 }
-async function queueOperatorCommand(stateDir, body) {
+// --- Issue #19: cross-profile schedule operator commands ------------------
+// The Gateway always revalidates the mailbox payload; Web Admin is not a trust
+// boundary. `actor` is a bounded, server-derived label: it is NEVER accepted
+// from the request body. Schedule commands may be up to 8192 bytes; the legacy
+// command types keep their original 1024-byte cap.
+const SCHEDULE_FIELDS = ['action', 'clientRef', 'taskId', 'title', 'prompt', 'spec', 'notify', 'delivery', 'expectedUpdatedAt']
+const SCHEDULE_COMMAND_MAX_BYTES = 8192
+const LEGACY_COMMAND_MAX_BYTES = 1024
+const SCHEDULE_BOT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/
+const SCHEDULE_OU_RE = /^ou_[A-Za-z0-9_-]{2,128}$/
+const SCHEDULE_OC_RE = /^oc_[A-Za-z0-9_-]{2,128}$/
+const SCHEDULE_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?$/
+
+function boundedScheduleText(value, key, max) {
+  if (typeof value !== 'string' || value.length > max || value.length === 0 ||
+    value.trim().length < 1 || value.includes('\0')) throw httpError(400, 'invalid ' + key)
+  return value
+}
+/** Pure validation of the `schedule` sub-object shared by the command mailbox. */
+export function validateScheduleCommand(input) {
+  if (!object(input)) throw httpError(400, 'schedule must be an object')
+  exactKeys(input, SCHEDULE_FIELDS)
+  if (!SCHEDULE_ACTIONS.includes(input.action)) throw httpError(400, 'invalid schedule action')
+  const result = { action: input.action }
+  if (input.clientRef !== undefined) {
+    if (typeof input.clientRef !== 'string' || !SCHEDULE_UUID_RE.test(input.clientRef))
+      throw httpError(400, 'invalid clientRef')
+    result.clientRef = input.clientRef
+  }
+  // create reserves one Gateway-owned native Session id before the task exists.
+  if (input.action === 'create' && input.clientRef === undefined)
+    throw httpError(400, 'clientRef is required for create')
+  if (['update', 'pause', 'resume', 'run', 'delete'].includes(input.action) && input.taskId === undefined)
+    throw httpError(400, 'taskId is required for this action')
+  if (input.taskId !== undefined) {
+    if (typeof input.taskId !== 'string' || !SCHEDULE_TASK_ID_RE.test(input.taskId))
+      throw httpError(400, 'invalid taskId')
+    result.taskId = input.taskId
+  }
+  if (input.title !== undefined) result.title = boundedScheduleText(input.title, 'title', TITLE_MAX)
+  if (input.prompt !== undefined) result.prompt = boundedScheduleText(input.prompt, 'prompt', PROMPT_MAX)
+  if (input.spec !== undefined) {
+    const check = validateSpec(input.spec)
+    if (!check.ok) throw httpError(400, 'invalid schedule spec: ' + check.error)
+    result.spec = check.spec
+  }
+  if (input.notify !== undefined) {
+    if (!SCHEDULE_NOTIFY.includes(input.notify)) throw httpError(400, 'invalid notify')
+    result.notify = input.notify
+  }
+  if (input.delivery !== undefined) {
+    if (input.delivery === null) result.delivery = null
+    else {
+      const d = input.delivery
+      if (!object(d)) throw httpError(400, 'invalid delivery')
+      exactKeys(d, ['botId', 'chatId', 'chatType', 'senderId'])
+      if (typeof d.botId !== 'string' || !SCHEDULE_BOT_ID_RE.test(d.botId))
+        throw httpError(400, 'invalid delivery botId')
+      if (typeof d.chatId !== 'string' || !(SCHEDULE_OC_RE.test(d.chatId) || SCHEDULE_OU_RE.test(d.chatId)))
+        throw httpError(400, 'invalid delivery chatId')
+      if (d.chatType !== 'p2p' && d.chatType !== 'group') throw httpError(400, 'invalid delivery chatType')
+      const delivery = { botId: d.botId, chatId: d.chatId, chatType: d.chatType }
+      if (d.senderId !== undefined) {
+        if (typeof d.senderId !== 'string' || !SCHEDULE_OU_RE.test(d.senderId))
+          throw httpError(400, 'invalid delivery senderId')
+        delivery.senderId = d.senderId
+      }
+      result.delivery = delivery
+    }
+  }
+  if (input.expectedUpdatedAt !== undefined) {
+    if (input.expectedUpdatedAt === null) result.expectedUpdatedAt = null
+    else if (typeof input.expectedUpdatedAt === 'string' && input.expectedUpdatedAt.length <= 40 &&
+      SCHEDULE_ISO_RE.test(input.expectedUpdatedAt) &&
+      Number.isFinite(Date.parse(input.expectedUpdatedAt)))
+      result.expectedUpdatedAt = input.expectedUpdatedAt
+    else throw httpError(400, 'invalid expectedUpdatedAt')
+  }
+  return result
+}
+
+export async function queueOperatorCommand(stateDir, body, maxBytes) {
+  const isSchedule = object(body) && body.type === 'schedule'
+  const cap = Number.isInteger(maxBytes) && maxBytes > 0
+    ? maxBytes : (isSchedule ? SCHEDULE_COMMAND_MAX_BYTES : LEGACY_COMMAND_MAX_BYTES)
+  let command
+  if (isSchedule) {
+    exactKeys(body, ['type', 'schedule'])
+    command = { version: 1, id: randomUUID(), ts: Date.now(), type: 'schedule',
+      actor: SCHEDULE_ACTOR, schedule: validateScheduleCommand(body.schedule) }
+  } else {
   exactKeys(body, ['type', 'ref', 'expectedLastActiveAt'])
   const sessionAction = body.type === 'archive-session' || body.type === 'unbind-session'
   if (body.type !== 'cancel-task' && body.type !== 'retry-outbox' && !sessionAction)
@@ -478,16 +572,19 @@ async function queueOperatorCommand(stateDir, body) {
     throw httpError(400, 'invalid Session activity version')
   if (!sessionAction && body.expectedLastActiveAt !== undefined)
     throw httpError(400, 'activity version is only allowed for Session commands')
+    command = { version: 1, id: randomUUID(), ts: Date.now(), type: body.type,
+      ...(body.ref ? { ref: body.ref } : {}),
+      ...(sessionAction ? { expectedLastActiveAt: body.expectedLastActiveAt } : {}) }
+  }
   // Verified directory chain: refuse to write through a symlinked parent.
   await ensurePrivateDir(stateDir)
   const root = path.join(stateDir, 'ops-control')
   await ensurePrivateDir(root)
   const dir = path.join(root, 'requests')
   await ensurePrivateDir(dir)
-  const command = { version: 1, id: randomUUID(), ts: Date.now(), type: body.type,
-    ...(body.ref ? { ref: body.ref } : {}),
-    ...(sessionAction ? { expectedLastActiveAt: body.expectedLastActiveAt } : {}) }
-  await atomicPrivateWrite(path.join(dir, command.id + '.json'), JSON.stringify(command) + '\n')
+  const raw = JSON.stringify(command) + '\n'
+  if (Buffer.byteLength(raw, 'utf8') > cap) throw httpError(413, 'operator command too large')
+  await atomicPrivateWrite(path.join(dir, command.id + '.json'), raw)
   return { id: command.id, type: command.type }
 }
 
@@ -729,6 +826,37 @@ export function createAdminHandler(options = {}) {
           const command = await queueOperatorCommand(stateDir, body)
           return json(res, 202, { ok: true, command, queued: true })
         })
+      }
+      // --- Issue #19: scheduled tasks (all behind security(req, reject)) ---
+      if (req.method === 'GET' && route === PREFIX + '/schedule') {
+        // Only the sanitized, redacted read model is readable here.
+        return json(res, 200, { ok: true, model: await readScheduleModel(stateDir) })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/schedule/preview') {
+        // Pure computation: no filesystem writes and no command enqueue.
+        const body = await readBody(req)
+        exactKeys(body, ['spec', 'count'])
+        const count = integer(body.count, 'count', 1, PREVIEW_MAX)
+        const now = Date.now()
+        const check = validateSpec(body.spec, now)
+        if (!check.ok) throw httpError(400, 'invalid schedule spec: ' + check.error)
+        const occurrences = previewOccurrences(check.spec, count, now)
+        return json(res, 200, { ok: true, occurrences, summary: specSummary(check.spec) })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/schedule/commands') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['type', 'schedule'])
+          if (body.type !== 'schedule') throw httpError(400, 'unsupported schedule command')
+          // validateScheduleCommand is the pure helper shared with the mailbox
+          // writer; the writer validates once more under serializeMutation.
+          validateScheduleCommand(body.schedule)
+          const command = await queueOperatorCommand(stateDir, body, SCHEDULE_COMMAND_MAX_BYTES)
+          return json(res, 202, { ok: true, command, queued: true })
+        })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/schedule/results') {
+        return json(res, 200, { ok: true, commands: await readScheduleResults(stateDir) })
       }
       if (req.method === 'PUT' && route === PREFIX + '/config') {
         return await serializeMutation(async () => {

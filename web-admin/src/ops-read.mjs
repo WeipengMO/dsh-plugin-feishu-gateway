@@ -166,11 +166,15 @@ export async function readOpsResults(dir) {
     try { data = JSON.parse(await fs.readFile(path.join(resultsDir, name), 'utf8')) }
     catch { continue }
     if (data?.version !== 1 || data.id !== name.slice(0, -5) ||
-      !['cancel-task', 'retry-outbox', 'archive-session', 'unbind-session'].includes(data.type) ||
-      !['completed', 'not-found', 'rejected', 'error'].includes(data.state)) continue
+      !['cancel-task', 'retry-outbox', 'archive-session', 'unbind-session', 'schedule'].includes(data.type) ||
+      !['completed', 'not-found', 'rejected', 'conflict', 'error'].includes(data.state)) continue
     results.push({
       id: data.id, type: data.type, state: data.state, ts: safeNum(data.ts),
       ...(safeRef(data.ref) ? { ref: data.ref } : {}),
+      // OperatorResult gains an optional bounded detail for schedule commands:
+      // never a secret and never a raw exception body.
+      ...(typeof data.detail === 'string' && data.detail.length <= 200 && !data.detail.includes('\0')
+        ? { detail: data.detail } : {}),
     })
   }
   return results.sort((a,b) => (b.ts ?? 0) - (a.ts ?? 0))
