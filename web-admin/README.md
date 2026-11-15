@@ -14,7 +14,7 @@ This package adds a native **飞书管理** operations workbench to DSH Web's le
 
 ## Installation
 
-See [../docs/AGENT-PROFILE-MANAGER.md](../docs/AGENT-PROFILE-MANAGER.md) for live Workspace resolution, identity/memory files, DSH native context sync, safe restores and upgrade checks. See [../docs/OPERATIONS-CONTROL-CENTER-V2.md](../docs/OPERATIONS-CONTROL-CENTER-V2.md) for prior operations APIs; the older [management v1 architecture](../docs/MANAGEMENT-WORKBENCH.md) is retained for history.
+See [../docs/AGENT-PROFILE-ISOLATION.md](../docs/AGENT-PROFILE-ISOLATION.md) for the separate Feishu-only native Agent cwd and explicit old DSH instruction cleanup. See [../docs/AGENT-PROFILE-MANAGER.md](../docs/AGENT-PROFILE-MANAGER.md) for live Workspace resolution, identity/memory files, DSH native context sync, safe restores and upgrade checks. See [../docs/OPERATIONS-CONTROL-CENTER-V2.md](../docs/OPERATIONS-CONTROL-CENTER-V2.md) for prior operations APIs; the older [management v1 architecture](../docs/MANAGEMENT-WORKBENCH.md) is retained for history.
 
 ## Current constraints
 
