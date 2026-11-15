@@ -158,6 +158,47 @@ describe('DshSessionBridge', () => {
     expect(reply).toMatchObject({ text: 'native reply', reason: 'idle' })
   })
 
+  it('reads provider-model and real token usage from native Session settlements', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-metrics', '/workspace')
+    await bridge.submit('session-metrics', 'first', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-metrics',
+      { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-metrics' }, {
+      type: 'request/context', data: { provider: 'magpie', model: 'group/deepseek' },
+    })
+    ctx.emit('session/event', { id: 'session-metrics' }, {
+      type: 'assistant/attempt',
+      data: { stream: [{ chunk: { type: 'usage', usage: { inputTokens: 10, outputTokens: 1 } } }] },
+    })
+    ctx.emit('session/event', { id: 'session-metrics' }, {
+      type: 'assistant/message',
+      data: {
+        message: { content: [{ type: 'text', text: 'final' }] },
+        usage: { inputTokens: 100, outputTokens: 40, cacheReadTokens: 25, cacheWriteTokens: 5 },
+      },
+    })
+    ctx.emit('session/event', { id: 'session-metrics' }, { type: 'turn/end', data: {} })
+    const reply = await waiting
+    expect(reply.text).toBe('final')
+    expect(reply.model).toBe('magpie/group/deepseek')
+    expect(reply.usage).toEqual({
+      inputTokens: 110, outputTokens: 41, cacheReadTokens: 25, cacheWriteTokens: 5,
+    })
+
+    // Route is not necessarily re-emitted on every follow-up in the same
+    // native Session. Keep the last observed value across turns.
+    await bridge.submit('session-metrics', 'second', new AbortController().signal)
+    const next = bridge.waitForReply('session-metrics',
+      { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-metrics' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'again' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-metrics' }, { type: 'turn/end', data: {} })
+    expect((await next).model).toBe('magpie/group/deepseek')
+  })
+
   it('falls back to live text deltas when no durable message arrives', async () => {
     const { ctx, bridge } = setup()
     await bridge.create('session-1', '/workspace')
