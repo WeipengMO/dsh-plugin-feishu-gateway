@@ -72,8 +72,8 @@ describe('MessageRouter security policy', () => {
 })
 
 describe('group access modes', () => {
-  const group = { ...baseMessage, chatType: 'group' as const }
-  const rule = { chatId: 'oc_1', enabled: true, requireMention: true, sessionScope: 'group_sender' as const }
+  const group = { ...baseMessage, chatType: 'group' as const, chatId: 'oc_group_1' }
+  const rule = { chatId: 'oc_group_1', enabled: true, requireMention: true, sessionScope: 'group_sender' as const }
 
   it('requires explicit opt-in and ignores legacy allowGroups', () => {
     const router = new MessageRouter(resolveConfig({ allowGroups: true, allowlist: ['ou_alice'] }))
@@ -93,7 +93,7 @@ describe('group access modes', () => {
       .toEqual({ accepted: false, reason: 'group-not-allowlisted' })
     expect(router.decide({ ...group, senderId: 'ou_bob', mentionedBot: true }))
       .toEqual({ accepted: false, reason: 'group-sender-not-allowlisted' })
-    expect(router.allowedActor('group', 'oc_1', 'ou_bob')).toBe(false)
+    expect(router.allowedActor('group', 'oc_group_1', 'ou_bob')).toBe(false)
   })
 
   it('open mode still protects group senders and honors disabled/per-group restrictions', () => {

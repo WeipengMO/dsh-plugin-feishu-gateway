@@ -110,6 +110,9 @@ export class MockFeishuTransport implements FeishuTransport {
       text: partial.text ?? 'hello',
       createTime: partial.createTime ?? Date.now(),
       messageType: partial.messageType ?? 'text',
+      mentionedBot: partial.mentionedBot === true,
+      ...(partial.threadId ? { threadId: partial.threadId } : {}),
+      ...(partial.rootId ? { rootId: partial.rootId } : {}),
     }
     await this.handlers.onMessage(message)
   }
