@@ -75,10 +75,10 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
     h(OpsNote, null, '仅针对已经入队的 Outbox 消息触发发送检查，不会再次执行 Agent，不会覆盖永久性失败的跳过规则。'))
   if (kind === 'sessions') return h(React.Fragment, null,
     h('div', { className: 'fgw-metrics fgw-metrics-three' },
-      h(WbMetric, { title: '已绑定 Session', value: wbCount(sessions.length) }),
+      h(WbMetric, { title: '已绑定 Session', value: wbCount(snapshot?.stats?.boundSessions) }),
       h(WbMetric, { title: '活跃任务', value: wbCount(active.length) }),
       h(WbMetric, { title: '等待审批', value: wbCount(snapshot?.stats?.pendingApprovals) })),
-    h(WbBlock, { title: '原生 DSH Session 绑定', aside: '仅展示去标识化引用，不复制会话' },
+    h(WbBlock, { title: '原生 DSH Session 绑定', aside: '最近 500 条去标识化绑定，不复制会话' },
       h(OpsTable, { rows: sessions, empty: '没有已绑定的 Session',
         columns: [
           { key: 'ref', title: 'Session', render: x => h('code', null, x.ref.slice(0, 10)) },
