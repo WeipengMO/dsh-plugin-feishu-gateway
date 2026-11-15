@@ -2,7 +2,7 @@
 
 将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
 
-**当前版本：`0.2.0-rc.1`（Gateway 与 Admin）** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
+**当前 Gateway：`0.2.0-rc.2` · Admin：`0.2.0-rc.1`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
 
 > **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
@@ -13,7 +13,7 @@
 | `feishu-channel` | `dsh-plugin-feishu-gateway` | 飞书 WebSocket、消息路由、持久化、原生 Session、卡片与审批 |
 | `web` | `dsh-plugin-feishu-admin` | DSH Web「飞书通道」设置和受保护管理 API；**不运行 Gateway** |
 
-两套插件同为 `0.2.0-rc.1`。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
+Gateway 单独升级到 `0.2.0-rc.2`，现有 Admin `0.2.0-rc.1` 继续兼容，无须重复安装 Web Admin。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
 
 持久化的 **Inbox、Outbox、Session 绑定**和环境变量凭据在升级时保留，不要清空 `stateDir`。同一 `stateDir` 只允许一个 Gateway 进程持有。
 
@@ -24,7 +24,7 @@
 - `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
 - 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
 - DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
-- 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片；最终文字回复仍由 DurableOutbox 投递。
+- 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片。**0.2.0-rc.2 起，Card 模式成功时直接在原卡片显示最终完整答案与模型/Token/速度/用时底栏，不再额外发送相同的文本；完成后取消按钮自动消失。** 如卡片创建/更新失败或超出卡片大小限制，回退到 DurableOutbox 文本回复。
 
 ## 当前已验收的运行配置
 
@@ -51,23 +51,22 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-生成的文件：
+生成的文件（只需为已有部署升级 Gateway）：
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz`
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.2.tgz`
 - `dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz`
 
-分别安装到正确 Profile：
+只升级运行通道 Profile；Admin 保持现有安装即可：
 
 ```bash
 dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
+**0.2.0-rc.2 的最终卡片更新尚未经过真实飞书租户复验**；先使用隔离测试环境验证全量 CardKit PUT 与终态按钮移除，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功，并按 [逐级验收流程](docs/APPROVAL-STREAMING.md) 验证。不可在未安排维护窗口时随意重启有在途任务的服务。
 
-GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。真实部署验收记录及未覆盖的场景见 [验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
+GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，本次修复的实机待验收项见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)。
 
 ## 安全边界与剩余工作
 

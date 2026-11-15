@@ -565,9 +565,33 @@ export class FeishuGateway {
         await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
+        const answer = text || '模型未返回文本内容。'
         progressStatus = 'done'
-        await this.replyDiagnostic(record, text || '模型未返回文本内容.',
-          `reply:${record.messageId}`, text ? this.config.replyFormat : 'text')
+        // A fully updated CardKit entity IS the answer. Only fall back to
+        // DurableOutbox if the card never opened or its final PUT failed.
+        let deliveredAsCard = false
+        if (turn.stream) {
+          const card = turn.stream
+          turn.stream = undefined
+          unsubscribeProgress?.()
+          unsubscribeProgress = undefined
+          try {
+            const terminal = await withTimeout(card.close('done', answer, {
+              elapsedMs: Date.now() - turn.startedAt,
+              ...(reply.model ? { model: reply.model } : {}),
+              ...(reply.usage ? { usage: reply.usage } : {}),
+              ...(reply.generationMs ? { generationMs: reply.generationMs } : {}),
+            }), 5_000)
+            deliveredAsCard = !terminal.timedOut && terminal.value === true
+            if (terminal.timedOut) this.logger.warn('Feishu CardKit final delivery timed out; falling back to text')
+          } catch {
+            this.logger.warn('Feishu CardKit final delivery failed; falling back to text')
+          }
+        }
+        if (!deliveredAsCard) {
+          await this.replyDiagnostic(record, answer,
+            `reply:${record.messageId}`, text ? this.config.replyFormat : 'text')
+        }
       }
       await this.registry.touch(key)
       await this.inbox.markProcessed(record.messageId)

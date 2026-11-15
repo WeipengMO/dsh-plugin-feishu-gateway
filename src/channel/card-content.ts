@@ -1,3 +1,5 @@
+import type { CardCompletionStats } from '../types.js'
+
 /**
  * Feishu Card JSON 2.0 builders. Approval cards deliberately do not expose
  * command arguments, user content, paths, secrets, or arbitrary reasons.
@@ -57,8 +59,64 @@ export function progressCard(nonce: string): Record<string, unknown> {
     config: { update_multi: true, streaming_mode: true },
     body: { elements: [
       { tag: 'markdown', element_id: PROGRESS_ELEMENT_ID,
-        content: '正在处理请求…\n\n*这是实时进度预览，最终答复将另行发送。*' },
+        content: '正在处理请求…' },
       button('取消当前任务', { kind: 'cancel', nonce }, 'danger'),
+    ] },
+  }
+}
+
+function statsFooter(stats: CardCompletionStats | undefined): string {
+  if (!stats) return ''
+  const parts: string[] = []
+  // Only provider/model identifiers are shown, not request headers or keys.
+  const safeModel = stats.model && /^[A-Za-z0-9._:/-]{1,96}$/.test(stats.model)
+    ? stats.model : undefined
+  if (safeModel) parts.push('模型：' + safeModel)
+  const usage = stats.usage
+  if (usage) {
+    const total = usage.inputTokens + usage.outputTokens +
+      (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+    parts.push('Token：' + total.toLocaleString('en-US') +
+      '（入 ' + (total - usage.outputTokens).toLocaleString('en-US') +
+      ' / 出 ' + usage.outputTokens.toLocaleString('en-US') + '）')
+    const generatingMs = stats.generationMs && stats.generationMs > 0
+      ? stats.generationMs : stats.elapsedMs
+    if (usage.outputTokens > 0 && generatingMs > 0) {
+      const speed = usage.outputTokens / (generatingMs / 1000)
+      if (Number.isFinite(speed)) parts.push('速度：≈' + speed.toFixed(1) + ' tok/s')
+    }
+  }
+  if (Number.isFinite(stats.elapsedMs) && stats.elapsedMs >= 0) {
+    parts.push('用时：' + (stats.elapsedMs / 1000).toFixed(1) + 's')
+  }
+  return parts.join(' · ')
+}
+
+/**
+ * One full CardKit entity replacement is the terminal delivery.
+ * Replacing the body also removes the live cancel button atomically.
+ */
+export function completedProgressCard(
+  status: 'done' | 'cancelled' | 'failed',
+  text: string,
+  stats?: CardCompletionStats,
+): Record<string, unknown> {
+  const labels = {
+    done: ['DSH 已完成', 'green'],
+    cancelled: ['DSH 已取消', 'grey'],
+    failed: ['DSH 执行异常', 'grey'],
+  } as const
+  const [title, template] = labels[status]
+  const footer = statsFooter(stats)
+  return {
+    ...header(title, template),
+    config: { update_multi: true, streaming_mode: false },
+    body: { elements: [
+      { tag: 'markdown', element_id: PROGRESS_ELEMENT_ID, content: text },
+      ...(footer ? [
+        { tag: 'hr' },
+        { tag: 'markdown', content: footer },
+      ] : []),
     ] },
   }
 }

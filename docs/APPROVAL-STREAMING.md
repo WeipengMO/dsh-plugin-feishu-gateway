@@ -1,11 +1,11 @@
-# 飞书工具审批与 CardKit 流式任务卡片（0.2.0-rc.1）
+# 飞书工具审批与 CardKit 流式任务卡片（0.2.0-rc.2 Gateway / 0.2.0-rc.1 Admin）
 
-这是发布候选版本。**2026-11-15 已在现有真实飞书单用户私聊环境完成流式卡片、卡片取消、原生审批 allowed-once / rejected 的实机验收**；未覆盖超时、重复点击、取消中的审批和跨账号/聊天操作。完整证据边界见 [最终验收快照](ACCEPTANCE-0.2.0-rc.1.md)。源码中的两个开关仍默认关闭；当前部署已显式开启，不要求修改 DSH Core。
+这是发布候选版本。**2026-11-15 已在现有真实飞书单用户私聊环境完成流式卡片、卡片取消、原生审批 allowed-once / rejected 的实机验收（0.2.0-rc.1 基线；0.2.0-rc.2 的卡片终态全量替换仍待实机复验）**；未覆盖超时、重复点击、取消中的审批和跨账号/聊天操作。完整证据边界见 [最终验收快照](ACCEPTANCE-0.2.0-rc.1.md)。源码中的两个开关仍默认关闭；当前部署已显式开启，不要求修改 DSH Core。
 
 ## 架构与安全边界
 
 - approvalCards（默认 false）：监听原生 DSH approval/request waterfall，仅处理本插件创建、且目前正在执行的 Agent Session。审批结果完全采用原生 allowed-once / rejected / cancelled / unavailable。
-- streamCards（默认 false）：为长任务创建 CardKit v1 卡片实体，按节流周期更新可见文本。最终回答**仍由 DurableOutbox 单独可靠投递**；卡片失败不能丢答复。
+- streamCards（默认 false）：为长任务创建 CardKit v1 卡片实体，按节流周期更新可见文本。0.2.0-rc.2 起，**正常完成时在原卡片上展示完整答复**，并移除取消按钮、显示真实模型和用量统计（有数据才显示）；不会重复发普通文本。仅卡片创建/终态更新失败或超长时回退 DurableOutbox。
 - approvalTimeoutMs：默认 90000 毫秒，可选 5000–300000。
 - streamIntervalMs：默认 800 毫秒，可选 500–5000。
 - DSH 策略为 never 时，审批由 DSH 自己在 waterfall 之前拒绝，**不会触发任何卡片**；插件绝不把 never 改成 ask。
@@ -37,8 +37,8 @@
     pnpm install --frozen-lockfile
     pnpm run verify
     pnpm run pack
-    dsh plugin --profile feishu-channel add "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz"
-    dsh plugin --profile web add "$PWD/dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz"
+    dsh plugin --profile feishu-channel add "$PWD/dist/dsh-plugin-feishu-gateway-0.2.0-rc.2.tgz"
+    # Web Admin 仍为 0.2.0-rc.1；已经安装则无需重复安装
 
 检查两个 Profile。实际 Gateway **只**在 feishu-channel，Web Admin **只**在 web。运行中服务的重启应选择维护窗口，不得中断正在执行的 Agent。原状态目录、Inbox/Outbox 和凭据不要清空。
 
@@ -46,7 +46,7 @@
 
 1. 先备份原 Profile、飞书状态目录和凭据（禁止在日志或聊天中显示 Secret）。
 2. 新版本安装后，两个开关均保持 false：确认旧有三轮对话、/status、/cancel、重启恢复仍正常。
-3. 仅打开 streamCards：在安全的长回答上核验 CardKit 流式预览、取消按钮、最终 Outbox 回复、超长文本节流和无权限回退。**无需修改 DSH 审批策略**。
+3. 仅打开 streamCards：在安全的长回答上核验 CardKit 流式预览、取消按钮、完成后原卡片完整答复（无第二条文本）、取消按钮消失、模型/Token/用时底栏、超长文本与无权限回退。**无需修改 DSH 审批策略**。
 4. 再打开 approvalCards，**只在 feishu-channel Profile** 中把 DSH 工具审批策略明确改为 ask。选择一个低风险工具操作，测试一次允许、一次拒绝、超时、取消、陌生人点击、重复点击、跨聊天点击。
 5. 检查原生 DSH Session 的 approval/asked 与 approval/decided 审计，以及工具是否只执行一次。
 6. 检查 Web 和 Remote SSH 原有功能未被飞书通道重启影响。

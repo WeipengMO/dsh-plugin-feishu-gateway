@@ -344,6 +344,24 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
     expect(sdkState.requests[2]?.data.sequence).toBe(2)
   })
 
+  it('uses the official full CardKit entity update to remove terminal actions', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    const result = {
+      schema: '2.0',
+      config: { update_multi: true, streaming_mode: false },
+      header: { title: { tag: 'plain_text', content: '已完成' } },
+      body: { elements: [{ tag: 'markdown', content: 'answer' }] },
+    }
+    await t.replaceStreamCard('card123', result, 3)
+    const operation = sdkState.requests[0]!
+    expect(operation.method).toBe('PUT')
+    expect(operation.url).toBe('/open-apis/cardkit/v1/cards/card123')
+    expect(operation.data.sequence).toBe(3)
+    expect(operation.data.uuid).toEqual(expect.any(String))
+    expect(JSON.parse((operation.data.card as { data: string }).data)).toEqual(result)
+  })
+
   it('returns a safe toast instead of bubbling a callback handler error', async () => {
     const t = transport()
     await t.connect({ onMessage: () => {}, onStateChange: () => {},
