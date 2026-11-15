@@ -25,7 +25,8 @@ export class TaskProgressCard {
   private failed = false
   private textBytes = 0
   /** CardKit message/card JSON must stay below Feishu's payload limit. */
-  private readonly maxTextBytes = 18_000
+  // Reserve headroom for the tool-status header in the same CardKit element.
+  private readonly maxTextBytes = 17_000
   private readonly maxFinalBytes = 27_000
 
   private constructor(
