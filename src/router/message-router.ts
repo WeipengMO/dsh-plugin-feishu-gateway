@@ -17,7 +17,7 @@ export type RouterDecision =
  *   - group chats are OFF (v0.1.0 hard rule, config flag cannot enable them)
  *   - an empty allowlist denies everyone
  *   - only `open_id`s on the allowlist are admitted
- *   - only text messages are accepted
+ *   - only plain text or text-only Feishu rich post messages are accepted
  *
  * The router is pure (no I/O), so dedup, persistence and Session dispatch stay
  * in the gateway and are independently testable.
@@ -44,7 +44,7 @@ export class MessageRouter {
     if (message.senderType !== 'user') {
       return { accepted: false, reason: 'sender-not-user' }
     }
-    if (message.messageType !== 'text') {
+    if (message.messageType !== 'text' && message.messageType !== 'post') {
       return { accepted: false, reason: 'unsupported-message-type' }
     }
     const text = truncateCodePoints(message.text.trim(), this.config.maxTextLength)

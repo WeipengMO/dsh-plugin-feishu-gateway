@@ -471,7 +471,8 @@ export class FeishuGateway {
         await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
-        await this.replyDiagnostic(record, text || '模型未返回文本内容。')
+        await this.replyDiagnostic(record, text || '模型未返回文本内容.',
+          `reply:${record.messageId}`, text ? this.config.replyFormat : 'text')
       }
       await this.registry.touch(key)
       await this.inbox.markProcessed(record.messageId)
@@ -537,8 +538,13 @@ export class FeishuGateway {
     return existing.sessionId
   }
 
-  private async replyDiagnostic(record: InboxRecord, text: string, key = `reply:${record.messageId}`): Promise<void> {
-    await this.outbox.send(record.botId, { replyToMessageId: record.messageId, text }, key)
+  private async replyDiagnostic(
+    record: InboxRecord, text: string, key = `reply:${record.messageId}`,
+    format: 'text' | 'markdown' = 'text',
+  ): Promise<void> {
+    await this.outbox.send(record.botId, { replyToMessageId: record.messageId, text,
+      ...(format === 'markdown' ? { format: 'markdown' as const } : {}),
+    }, key)
   }
 
   /** Wait until every tracked message handler has settled (tests / shutdown). */
