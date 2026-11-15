@@ -9,6 +9,7 @@ const WORKBENCH_NAV = [
   ['messages', '消息投递', '⇄'],
   ['sessions', 'Session 管理', '◇'],
   ['approvals', '审批审计', '✓'],
+  ['agent-profile', 'Agent 档案', '▤'],
   ['bots', '机器人', '◉'],
   ['usage', '用量统计', '▥'],
   ['alerts', '告警中心', '!'],
@@ -201,6 +202,8 @@ function Workbench() {
         h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
         h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
+  } else if (selected === 'agent-profile') {
+    body = h(AgentProfilePanel)
   } else if (selected === 'security') {
     body = h(React.Fragment, null,
       h('div', { className: 'fgw-two-column' },
@@ -245,7 +248,7 @@ function Workbench() {
           h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理')),
         h('div', { className: 'fgw-top-actions' },
           h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
-          selected !== 'advanced' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
+          selected !== 'advanced' && selected !== 'agent-profile' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
             onClick: () => onConfig(selected === 'bots' ? 'bots' : selected === 'security' ? 'permissions' : 'settings') }, '配置管理'),
           h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
