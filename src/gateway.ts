@@ -149,6 +149,7 @@ export class FeishuGateway {
       deps.config,
       deps.logger,
       (botId) => this.transports.get(botId),
+      (state, botId, ref) => this.audit({ kind: 'delivery', state, botId, ref }),
     )
     this.rejected = Object.fromEntries(REJECT_REASONS.map((reason) => [reason, 0])) as Record<RejectReason, number>
   }
