@@ -120,7 +120,6 @@ function AgentProfilePanel({ onDirtyChange }) {
   const pick = name => {
     if (name === selected || busy) return
     if (dirty && !window.confirm('当前文件有未保存的修改，确定放弃并切换文件？')) return
-    if (settingsChanged && !window.confirm('加载规则有未保存的修改，切换后可能丢失。继续吗？')) return
     setFile(null); setDraft(''); setHistory([])
     setSelected(name); setTab('edit'); setNotice(''); setError(''); setMobileFiles(false)
   }
