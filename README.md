@@ -2,7 +2,7 @@
 
 将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
 
-**当前 Gateway：`0.2.0-rc.4` · Admin：`0.2.0-rc.1`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
+**当前 Gateway：`0.2.0-rc.4` · Admin：`0.2.0-rc.2`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
 
 > **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
@@ -13,7 +13,7 @@
 | `feishu-channel` | `dsh-plugin-feishu-gateway` | 飞书 WebSocket、消息路由、持久化、原生 Session、卡片与审批 |
 | `web` | `dsh-plugin-feishu-admin` | DSH Web「飞书通道」设置和受保护管理 API；**不运行 Gateway** |
 
-Gateway 单独升级到 `0.2.0-rc.4`，现有 Admin `0.2.0-rc.1` 继续兼容，无须重复安装 Web Admin。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
+Gateway 单独升级到 `0.2.0-rc.4`，现有 Admin `0.2.0-rc.1` 仍可兼容 Gateway，但要启用左侧栏飞书管理工作台，需升级 Web Admin 至 `0.2.0-rc.2`（Gateway 不需要重装）。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
 
 持久化的 **Inbox、Outbox、Session 绑定**和环境变量凭据在升级时保留，不要清空 `stateDir`。同一 `stateDir` 只允许一个 Gateway 进程持有。
 
@@ -24,6 +24,7 @@ Gateway 单独升级到 `0.2.0-rc.4`，现有 Admin `0.2.0-rc.1` 继续兼容，
 - `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
 - 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
 - DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
+- **原生 Web 飞书管理工作台（Admin 0.2.0-rc.2）**：DSH 左侧栏「飞书管理」打开总览、机器人、投递、Session/审批、安全与诊断；设置 → 飞书 Gateway 仅管理 App ID/Secret。使用原生 `sidebar.panellist`/`main` Slot，不新增第二个 Web 服务、LLM 调用或 Agent。当前使用真实聚合状态；详细消息历史/审计保留后续实现。见 [工作台说明](docs/MANAGEMENT-WORKBENCH.md)。
 - 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片。**0.2.0-rc.2 起，Card 模式成功时直接在原卡片显示最终完整答案与模型/Token/速度/用时底栏，不再额外发送相同的文本；完成后取消按钮自动消失。`0.2.0-rc.3` 起，底栏按行展示模型、**Token 总用量**、速度和用时；速度根据 DSH 已有的输出 Token 与流式生成时长计算，不额外请求模型，缺少有效时长则隐藏速度。`0.2.0-rc.4` 起，底栏使用 **12px 灰色辅助信息**，与原样的回答正文形成视觉区分。** 如卡片创建/更新失败或超出卡片大小限制，回退到 DurableOutbox 文本回复。
 
 ## 当前已验收的运行配置
