@@ -1,5 +1,4 @@
 import Schema from '@deepseek-ai/schemastery'
-import path from 'node:path'
 import type { BotCredentials, BotSpec, GatewayConfig } from './types.js'
 
 export type { GatewayConfig, BotSpec } from './types.js'
@@ -98,7 +97,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     allowGroups: raw.allowGroups === true,
     workspace,
     ...(typeof raw.agentWorkspace === 'string' && raw.agentWorkspace.trim() ?
-      { agentWorkspace: path.resolve(raw.agentWorkspace) } : {}),
+      { agentWorkspace: raw.agentWorkspace } : {}),
     ...(typeof raw.agentPreset === 'string' && raw.agentPreset ? { agentPreset: raw.agentPreset } : {}),
     agent: (raw.agent as GatewayConfig['agent']) ?? {},
     stateDir,
