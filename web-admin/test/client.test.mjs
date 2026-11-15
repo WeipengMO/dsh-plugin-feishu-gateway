@@ -108,3 +108,53 @@ test('Agent profile keeps draft safeguards and native backend contracts', () => 
   assert.match(css, /fgw-profile-setting-card/)
   assert.match(profile, /AGENTS\.local\.md/)
 })
+
+
+test('Markdown source editor provides line numbers, cursor highlight and safe colors without network dependencies', () => {
+  const editor = readFileSync(path.join(root, 'src/markdown-editor.js'), 'utf8')
+  const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(built, /function MarkdownCodeEditor\(/)
+  assert.match(built, /profileMarkdownAnalyze/)
+  assert.match(profile, /h\(MarkdownCodeEditor,\s*\{/)
+  for (const name of ['fgw-md-gutter', 'fgw-md-gutter-line', 'fgw-md-active-line',
+    'fgw-md-token-heading', 'fgw-md-token-inline-code', 'fgw-md-token-link',
+    'fgw-md-token-fence', 'fgw-md-token-quote', 'fgw-md-input', 'fgw-md-status']) {
+    assert.ok(css.includes(name) || editor.includes(name), name)
+  }
+  assert.match(editor, /onScroll: event => updateViewport/)
+  assert.match(editor, /'aria-hidden': true/)
+  assert.match(editor, /profileMarkdownCursor/)
+  assert.match(editor, /ResizeObserver/)
+  assert.doesNotMatch(editor, /dangerouslySetInnerHTML|innerHTML\s*=|https:\/\/.*cdn|document\.write/)
+})
+
+test('Markdown highlighting preserves source, fenced blocks and harmless literal HTML', async () => {
+  const { runInNewContext } = await import('node:vm')
+  const source = readFileSync(path.join(root, 'src/markdown-editor.js'), 'utf8')
+  const api = runInNewContext(source + '\n({ profileMarkdownAnalyze, profileMarkdownCursor })', {})
+  const sample = [
+    '# 大肥鱼 **可靠**',
+    '- [x] **已完成** [文档](https://example.org/a)',
+    '> 这是 *说明*',
+    '~~~js',
+    'const key = "<script>alert(1)</script>"',
+    '~~~',
+    '普通文本',
+    ''
+  ].join('\n')
+  const tokens = api.profileMarkdownAnalyze(sample)
+  assert.equal(tokens.length, sample.split('\n').length)
+  assert.equal(tokens.map(line => line.map(token => token.text).join('')).join('\n'), sample)
+  const all = tokens.flat().map(token => token.kind)
+  for (const kind of ['marker', 'heading', 'checkbox', 'strong', 'link', 'quote',
+    'em', 'fence', 'language', 'code']) {
+    assert.ok(all.includes(kind), kind)
+  }
+  assert.equal(tokens[4][0].kind, 'code')
+  assert.equal(tokens[4][0].text, 'const key = "<script>alert(1)</script>"')
+  assert.equal(api.profileMarkdownCursor('a\n中文b', 3).line, 2)
+  assert.equal(api.profileMarkdownCursor('a\n中文b', 3).column, 2)
+  const edge = ['## 你好 😀', 'a \x60snippet\x60 and ~~strike~~', '- one', '1. two', '', 'end'].join('\n')
+  assert.equal(api.profileMarkdownAnalyze(edge).map(line => line.map(t => t.text).join('')).join('\n'), edge)
+})

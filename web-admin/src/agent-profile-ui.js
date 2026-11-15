@@ -326,10 +326,8 @@ function AgentProfilePanel({ onDirtyChange }) {
             onClick: () => void saveSettings() }, busy ? '保存中…' : settingsChanged ? '保存加载配置' : '加载配置已保存'))))
   } else {
     body = h('div', { className: 'fgw-profile-editor-body' },
-      h('textarea', { className: 'fgw-profile-textarea', value: draft, disabled: fileLoading || busy,
-        onChange: event => setDraft(event.target.value), spellCheck: false,
-        'aria-label': selected + ' Markdown 编辑器',
-        placeholder: '# ' + selected + '\n\n在这里编写 Markdown。未创建的文件将在保存时创建。' }))
+      h(MarkdownCodeEditor, { key: selected, value: draft, disabled: fileLoading || busy,
+        onChange: setDraft, fileName: selected }))
   }
 
   const canSave = !!file && dirty && !busy && !fileLoading && !tooLarge
