@@ -84,6 +84,10 @@ export class MockFeishuTransport implements FeishuTransport {
     this.streamUpdates.push({ cardId, text, sequence })
   }
 
+  async replaceStreamCard(cardId: string, card: Record<string, unknown>, sequence: number): Promise<void> {
+    this.streamReplacements.push({ cardId, card, sequence })
+  }
+
   async finishStreamCard(cardId: string, sequence: number): Promise<void> {
     this.streamFinishes.push({ cardId, sequence })
   }
