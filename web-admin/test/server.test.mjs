@@ -266,3 +266,30 @@ test('operations API refuses symlinked telemetry files', async () => {
     assert.doesNotMatch(JSON.stringify(result.json), /DO-NOT-READ|private.txt/)
   } finally { await f.close() }
 })
+
+test('operator command writes are authenticated, narrow and do not execute a command in Web', async () => {
+  const f = await fixture()
+  try {
+    const unauth = await f.request('/ops/commands', 'POST', { type: 'retry-outbox' },
+      { 'content-type': 'application/json', 'x-dsh-feishu-admin': '1' })
+    assert.equal(unauth.status, 401)
+    const bad = await f.request('/ops/commands', 'POST', { type: 'shell', command: 'rm -rf /' }, mutating)
+    assert.equal(bad.status, 400)
+    const malformed = await f.request('/ops/commands', 'POST', { type: 'cancel-task', ref: 'bad' }, mutating)
+    assert.equal(malformed.status, 400)
+    const accepted = await f.request('/ops/commands', 'POST',
+      { type: 'cancel-task', ref: 'abcdef0123456789' }, mutating)
+    assert.equal(accepted.status, 202)
+    assert.equal(accepted.json.queued, true)
+    const id = accepted.json.command.id
+    assert.match(id, /^[a-f0-9-]{36}$/)
+    const data = JSON.parse(await readFile(path.join(f.stateDir, 'ops-control', 'requests', id + '.json'), 'utf8'))
+    assert.deepEqual(Object.keys(data).sort(), ['id', 'ref', 'ts', 'type', 'version'])
+    assert.equal(data.type, 'cancel-task')
+    assert.equal((await stat(path.join(f.stateDir, 'ops-control', 'requests', id + '.json'))).mode & 0o777, 0o600)
+    const result = await f.request('/ops')
+    assert.equal(result.status, 200)
+    assert.equal(result.json.telemetryAvailable, false)
+    assert.deepEqual(result.json.commands, [])
+  } finally { await f.close() }
+})
