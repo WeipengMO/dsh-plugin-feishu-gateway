@@ -170,7 +170,7 @@ export class LarkTransport implements FeishuTransport {
     const envName = this.networkProxy?.urlEnv ?? 'FEISHU_CHANNEL_PROXY_URL'
     const proxyUrl = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED === 'proxy'
       ? process.env[envName] : undefined
-    const wsAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
+    const wsAgent = proxyUrl ? HttpsProxyAgent(proxyUrl) : undefined
     this.ws = new mod.WSClient({
       ...common,
       ...(wsAgent ? { agent: wsAgent } : {}),
