@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { execFile as rawExecFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import http from 'node:http'
+import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -25,6 +26,15 @@ const SERVICE = 'dsh-feishu-channel.service'
 const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
+// The proxy URL is a write-only secret: stored in its own 0600 file, never in
+// admin-config.json, never echoed back by any management API.
+const DEFAULT_PROXY_ENV = 'FEISHU_CHANNEL_PROXY_URL'
+const PROXY_FILE = 'network-proxy.json'
+const PROXY_URL_MAX = 2048
+const PROXY_TEST_TIMEOUT_MS = 6000
+const PROXY_TEST_TARGETS = { feishu: 'open.feishu.cn:443', lark: 'open.larksuite.com:443' }
+const PROBE_ERROR_CODES = new Set(['ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN',
+  'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'EPIPE', 'ECONNABORTED', 'EPROTO'])
 
 function httpError(status, message) { return Object.assign(new Error(message), { status }) }
 function object(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) }
@@ -92,10 +102,13 @@ export function validateConfig(input) {
     const p = input.networkProxy
     if (!object(p)) throw httpError(400, 'networkProxy must be an object')
     exactKeys(p, ['enabled', 'urlEnv', 'fallbackDirect'])
+    // urlEnv only exists for compatibility with old deployments; a saved
+    // managed URL always wins at runtime. Default keeps rc.9 configs valid.
+    const urlEnv = p.urlEnv === undefined ? DEFAULT_PROXY_ENV : p.urlEnv
     if (typeof p.enabled !== 'boolean' || typeof p.fallbackDirect !== 'boolean' ||
-        typeof p.urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(p.urlEnv))
+        typeof urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(urlEnv))
       throw httpError(400, 'invalid networkProxy')
-    result.networkProxy = { enabled: p.enabled, urlEnv: p.urlEnv, fallbackDirect: p.fallbackDirect }
+    result.networkProxy = { enabled: p.enabled, urlEnv, fallbackDirect: p.fallbackDirect }
   }
   if (input.replyFormat !== undefined) {
     if (input.replyFormat !== 'text' && input.replyFormat !== 'markdown') throw httpError(400, 'invalid replyFormat')
@@ -153,6 +166,193 @@ async function atomicPrivateWrite(filename, content) {
     await fs.rename(temp, filename)
     await fs.chmod(filename, 0o600)
   } finally { await fs.rm(temp, { force: true }).catch(() => undefined) }
+}
+
+// Strict proxy URL validation, shared by every write path. Rejections always
+// use the same generic message so no URL, userinfo or raw parser text leaks.
+export function validateProxyUrl(raw) {
+  const invalid = () => httpError(400, 'invalid proxy url')
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > PROXY_URL_MAX) throw invalid()
+  if (/[\u0000-\u0020\u007f]/.test(raw)) throw invalid()
+  let parsed
+  try { parsed = new URL(raw) } catch { throw invalid() }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw invalid()
+  if (!parsed.hostname) throw invalid()
+  if (parsed.port !== '') {
+    const port = Number(parsed.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw invalid()
+  }
+  // Only the authority may carry data: no path (except the implicit '/'),
+  // no query, no fragment.
+  if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') throw invalid()
+  return parsed.href
+}
+
+// Display form: scheme + host + port, with userinfo/path/query/fragment removed.
+export function redactProxyUrl(raw) {
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    return parsed.protocol + '//' + parsed.host
+  } catch { return null }
+}
+
+function safeProxyUrl(raw) {
+  try { return validateProxyUrl(raw) } catch { return null }
+}
+
+function envFileValue(raw, name) {
+  let value = null
+  for (const line of raw.split(/\r?\n/)) {
+    if (line.trimStart().startsWith('#')) continue
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line)
+    if (!match || match[1] !== name) continue
+    let candidate = match[2].trim()
+    if (candidate.length > 1 &&
+      ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+       (candidate.startsWith("'") && candidate.endsWith("'")))) candidate = candidate.slice(1, -1)
+    value = candidate
+  }
+  return value ? value : null
+}
+
+async function readEnvProxyUrl(envFile, envName) {
+  if (!(await existingRegular(envFile))) return null
+  return envFileValue(await fs.readFile(envFile, 'utf8'), envName)
+}
+
+// The stored proxy URL is sensitive: regular file only (no symlinks), small,
+// versioned JSON with exactly one URL field, and the URL itself revalidated.
+//
+// Symlinks / non-regular files still fail closed with 409 (a security refusal).
+// A merely unreadable *content* (corrupt JSON, wrong version, invalid URL) is
+// reported as `{ url: null, error: true }` instead of failing the whole admin
+// panel: the proxy file is auxiliary, and a broken one must stay fixable from
+// the UI (save a new URL or clear it) rather than requiring a Linux shell.
+async function readStoredProxyUrl(filename) {
+  if (!(await existingRegular(filename))) return { url: null, error: false }
+  try {
+    const st = await fs.stat(filename)
+    if (st.size > 8192) return { url: null, error: true }
+    const raw = await fs.readFile(filename, 'utf8')
+    let doc
+    try { doc = JSON.parse(raw) } catch { return { url: null, error: true } }
+    if (!object(doc) || doc.version !== 1) return { url: null, error: true }
+    for (const key of Object.keys(doc)) {
+      if (key !== 'version' && key !== 'url') return { url: null, error: true }
+    }
+    const url = safeProxyUrl(doc.url)
+    if (!url) return { url: null, error: true }
+    return { url, error: false }
+  } catch {
+    // Unreadable/racing file: degrade to "no managed URL" instead of failing.
+    return { url: null, error: true }
+  }
+}
+
+async function writeStoredProxyUrl(filename, url) {
+  await atomicPrivateWrite(filename, JSON.stringify({ version: 1, url }, null, 2) + '\n')
+}
+
+async function deleteStoredProxyUrl(filename) {
+  if (!(await existingRegular(filename))) return false
+  await fs.rm(filename)
+  return true
+}
+
+async function networkProxyStatus(envFile, proxyFile, config) {
+  const cfg = config.networkProxy ?? {}
+  const envName = typeof cfg.urlEnv === 'string' ? cfg.urlEnv : DEFAULT_PROXY_ENV
+  const storedResult = await readStoredProxyUrl(proxyFile)
+  const stored = storedResult.url
+  const envValue = await readEnvProxyUrl(envFile, envName)
+  const envUrl = envValue === null ? null : safeProxyUrl(envValue)
+  // source reports which stored configuration is available (managed wins over
+  // env); `enabled` separately reports whether the start script activates it.
+  const selected = stored ?? envUrl
+  return { enabled: cfg.enabled === true, fallbackDirect: cfg.fallbackDirect !== false,
+    source: stored ? 'managed' : envUrl ? 'env' : 'none',
+    configured: Boolean(selected), display: selected ? redactProxyUrl(selected) : null,
+    envName, envConfigured: envValue !== null,
+    // True when network-proxy.json exists but is unreadable/invalid. The UI can
+    // still recover by saving a new URL or clearing it; never expose content.
+    ...(storedResult.error ? { storedError: true } : {}) }
+}
+
+function proxyTestTarget(config) {
+  const bots = config.bots ?? [{ id: 'default', domain: 'feishu', enabled: true }]
+  const active = bots.find(bot => bot.enabled !== false) ?? bots[0]
+  return PROXY_TEST_TARGETS[active?.domain === 'lark' ? 'lark' : 'feishu']
+}
+
+function probeErrorCode(error) {
+  const code = typeof error?.code === 'string' ? error.code : ''
+  if (code === 'ETIMEDOUT' || code === 'ERR_TLS_HANDSHAKE_TIMEOUT') return 'ETIMEDOUT'
+  if (PROBE_ERROR_CODES.has(code)) return code
+  if (/CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(code)) return 'TLS_ERROR'
+  return 'CONNECT_FAILED'
+}
+
+// CONNECT probe through the proxy. Only stable error codes are reported: the
+// proxy URL, its userinfo and the underlying error message never leave here.
+function probeProxy(proxyUrl, target, timeoutMs) {
+  return new Promise(resolve => {
+    const started = Date.now()
+    let settled = false
+    let request
+    let socket
+    const finish = outcome => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (socket) socket.destroy()
+      if (request) request.destroy()
+      resolve({ reachable: outcome.reachable, latencyMs: Math.max(0, Date.now() - started), target,
+        ...(outcome.error ? { error: outcome.error } : {}) })
+    }
+    const timer = setTimeout(() => finish({ reachable: false, error: 'ETIMEDOUT' }), timeoutMs)
+    try {
+      const parsed = new URL(proxyUrl)
+      const secure = parsed.protocol === 'https:'
+      const port = parsed.port ? Number(parsed.port) : secure ? 443 : 80
+      const headers = { host: target, connection: 'keep-alive', 'proxy-connection': 'keep-alive' }
+      if (parsed.username || parsed.password) {
+        const user = decodeURIComponent(parsed.username)
+        const pass = decodeURIComponent(parsed.password)
+        headers['proxy-authorization'] = 'Basic ' + Buffer.from(user + ':' + pass, 'utf8').toString('base64')
+      }
+      const transport = secure ? https : http
+      request = transport.request({ host: parsed.hostname.replace(/^\[|\]$/g, ''), port,
+        method: 'CONNECT', path: target, headers, agent: false, timeout: timeoutMs })
+      request.on('socket', value => { socket = value })
+      const httpFailure = status => ({ reachable: false,
+        error: Number.isInteger(status) ? 'HTTP_' + status : 'CONNECT_FAILED' })
+      request.on('connect', (response, socket) => {
+        socket?.destroy()
+        const status = Number(response?.statusCode)
+        if (status >= 200 && status < 300) return finish({ reachable: true })
+        finish(httpFailure(status))
+      })
+      request.on('response', response => {
+        response.resume()
+        finish(httpFailure(Number(response?.statusCode)))
+      })
+      request.on('timeout', () => finish({ reachable: false, error: 'ETIMEDOUT' }))
+      request.on('error', error => finish({ reachable: false, error: probeErrorCode(error) }))
+      request.end()
+    } catch { finish({ reachable: false, error: 'INVALID_PROXY' }) }
+  })
+}
+
+// networkProxy.url is a write-only side channel: it is split off before
+// validateConfig so admin-config.json can never contain it.
+function splitProxyUrl(config) {
+  if (!object(config) || !object(config.networkProxy) ||
+    !Object.prototype.hasOwnProperty.call(config.networkProxy, 'url')) {
+    return { config, provided: false, url: undefined }
+  }
+  const { url, ...rest } = config.networkProxy
+  return { config: { ...config, networkProxy: rest }, provided: true, url }
 }
 function json(res, status, data) {
   const payload = JSON.stringify(data)
@@ -285,9 +485,15 @@ export function createAdminHandler(options = {}) {
   const healthPort = options.healthPort ?? 18095
   const unit = options.serviceUnit ?? SERVICE
   if (!/^[A-Za-z0-9@_.-]+\.service$/.test(unit)) throw new Error('invalid service unit')
+  // Test-only override; production probes always use the documented 6s budget.
+  const proxyTestTimeoutMs = options.proxyTestTimeoutMs ?? PROXY_TEST_TIMEOUT_MS
+  if (!Number.isInteger(proxyTestTimeoutMs) || proxyTestTimeoutMs < 100 || proxyTestTimeoutMs > PROXY_TEST_TIMEOUT_MS) {
+    throw new Error('invalid proxy test timeout')
+  }
   const reject = options.requestRejection
   if (typeof reject !== 'function') throw new Error('DSH connection.requestRejection required')
   const managed = path.join(stateDir, 'admin-config.json')
+  const proxyFile = path.join(stateDir, PROXY_FILE)
   // Save/credential/restart commands are serialized within this Web Host.
   // A stale ETag check must not race another accepted config write.
   let mutationQueue = Promise.resolve()
@@ -303,14 +509,15 @@ export function createAdminHandler(options = {}) {
       if (req.method === 'GET' && route === PREFIX + '/state') {
         const current = await configFile(managed)
         const bots = current.config.bots ?? [{ id: 'default', domain: 'feishu', enabled: true }]
-        const [health, service, credentials] = await Promise.all([
+        const [health, service, credentials, networkProxy] = await Promise.all([
           loopback(healthPort, '/health'), unitState(unit), credentialStatus(envFile, bots),
+          networkProxyStatus(envFile, proxyFile, current.config),
         ])
         const startedAt = health?.health?.uptimeMs == null ? 0 : Date.now() - health.health.uptimeMs
         return json(res, 200, { ok: true, apiVersion: VERSION, config: current.config,
           revision: current.revision, source: current.mtimeMs ? 'managed' : 'profile',
           pendingRestart: Boolean(current.mtimeMs && startedAt && current.mtimeMs > startedAt),
-          health, service, credentials, bots })
+          health, service, credentials, bots, networkProxy })
       }
       if (req.method === 'GET' && route === PREFIX + '/health') {
         return json(res, 200, { ok: true, health: await loopback(healthPort, '/health') })
@@ -416,10 +623,52 @@ export function createAdminHandler(options = {}) {
           exactKeys(body, ['expectedRevision', 'config'])
           const before = await configFile(managed)
           if (body.expectedRevision !== before.revision) throw httpError(409, 'config changed; reload before saving')
-          const config = validateConfig(body.config)
+          // The proxy URL is never part of admin-config.json: validate it on
+          // its own, then strip it before the strict config validation.
+          const split = splitProxyUrl(body.config)
+          const config = validateConfig(split.config)
+          const storedUrl = split.provided
+            ? (split.url === null ? null : validateProxyUrl(split.url))
+            : undefined
+          if (storedUrl === null) await deleteStoredProxyUrl(proxyFile)
+          else if (storedUrl !== undefined) await writeStoredProxyUrl(proxyFile, storedUrl)
           await atomicPrivateWrite(managed, JSON.stringify({ version: VERSION, config }, null, 2) + '\n')
           const result = await configFile(managed)
-          return json(res, 200, { ok: true, revision: result.revision, restartRequired: true })
+          const networkProxy = await networkProxyStatus(envFile, proxyFile, result.config)
+          return json(res, 200, { ok: true, revision: result.revision, restartRequired: true, networkProxy })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/network-proxy/test') {
+        const body = await readBody(req)
+        exactKeys(body, ['url'])
+        const current = await configFile(managed)
+        let proxyUrl
+        if (body.url !== undefined && body.url !== null && body.url !== '') {
+          proxyUrl = validateProxyUrl(body.url)
+        } else {
+          // Fall back to the effective stored configuration: managed → env.
+          const envName = current.config.networkProxy?.urlEnv ?? DEFAULT_PROXY_ENV
+          const stored = (await readStoredProxyUrl(proxyFile)).url
+          const envUrl = safeProxyUrl(await readEnvProxyUrl(envFile, envName) ?? '')
+          proxyUrl = stored ?? envUrl
+          if (!proxyUrl) throw httpError(400, 'no proxy configured')
+        }
+        const result = await probeProxy(proxyUrl, proxyTestTarget(current.config), proxyTestTimeoutMs)
+        return json(res, 200, { ok: true, result })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/network-proxy/import-env') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, [])
+          const current = await configFile(managed)
+          const envName = current.config.networkProxy?.urlEnv ?? DEFAULT_PROXY_ENV
+          const value = await readEnvProxyUrl(envFile, envName)
+          if (value === null) throw httpError(404, 'proxy url not found in env file')
+          const url = validateProxyUrl(value)
+          await writeStoredProxyUrl(proxyFile, url)
+          const result = await configFile(managed)
+          const networkProxy = await networkProxyStatus(envFile, proxyFile, result.config)
+          return json(res, 200, { ok: true, networkProxy, restartRequired: true })
         })
       }
       if (req.method === 'PUT' && route === PREFIX + '/credentials') {

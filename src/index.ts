@@ -6,7 +6,15 @@ import { MockFeishuTransport } from './channel/mock-transport.js'
 import { FeishuGateway } from './gateway.js'
 import { DshSessionBridge } from './session/dsh-session-bridge.js'
 import { fromCordisLogger } from './util/logger.js'
-import type { CordisLike, FeishuTransport, GatewayConfig, GatewayLogger, SessionBridge } from './types.js'
+import { redactProxyUrl, resolveProxyUrl } from './util/proxy-url.js'
+import type {
+  CordisLike,
+  FeishuTransport,
+  GatewayConfig,
+  GatewayLogger,
+  NetworkProxyConfig,
+  SessionBridge,
+} from './types.js'
 import type { ApprovalRequestLike, ApprovalOutcome } from './channel/approval-manager.js'
 
 /** Stable Cordis plugin name (used for fiber diagnostics and loader rows). */
@@ -54,6 +62,13 @@ export function createGateway(
 
 function buildTransports(config: GatewayConfig, logger: GatewayLogger): FeishuTransport[] {
   const transports: FeishuTransport[] = []
+  // Managed URL (admin UI) wins over the legacy env var. The resolved URL stays
+  // in memory only: logs receive the redacted `scheme://host:port` form.
+  const proxyUrl = resolveProxyUrl(config.networkProxy, config.stateDir)
+  const networkProxy: NetworkProxyConfig = proxyUrl
+    ? { ...config.networkProxy, url: proxyUrl }
+    : config.networkProxy
+  if (proxyUrl) logger.info('network proxy in use: %s', redactProxyUrl(proxyUrl))
   for (const bot of config.bots) {
     if (!bot.enabled) {
       logger.info('bot %s is disabled', bot.id)
@@ -76,7 +91,7 @@ function buildTransports(config: GatewayConfig, logger: GatewayLogger): FeishuTr
       )
       continue
     }
-    transports.push(new LarkTransport(bot.id, resolved.credentials, logger, config.networkProxy))
+    transports.push(new LarkTransport(bot.id, resolved.credentials, logger, networkProxy))
     logger.info('bot %s credentials resolved from %s', bot.id, resolved.source)
   }
   return transports

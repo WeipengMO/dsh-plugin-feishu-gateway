@@ -1,7 +1,17 @@
 import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { implicitEnvNames, resolveConfig } from './config.js'
+import { DEFAULT_PROXY_URL_ENV } from './util/proxy-url.js'
 import type { BotSpec, GatewayConfig } from './types.js'
+
+/**
+ * Strict reader for the admin-managed proxy URL (`network-proxy.json`).
+ * Re-exported here so callers use one entry point for managed state; the
+ * implementation lives next to the shared URL rules in `util/proxy-url.ts`.
+ * Any problem (missing file, symlink, wrong mode, bad JSON, bad URL) returns
+ * `undefined` instead of failing plugin startup.
+ */
+export { readStoredProxyUrl as loadStoredProxyUrl } from './util/proxy-url.js'
 
 /**
  * Managed overrides are deliberately separate from the channel Profile.
@@ -108,11 +118,17 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (value.networkProxy !== undefined) {
     const v = value.networkProxy
     if (!dictionary(v)) throw new Error('networkProxy must be an object')
+    // `url` is deliberately NOT an accepted field: the proxy URL (which may
+    // carry credentials) lives only in network-proxy.json, never in this file.
     assertFields(v, ['enabled', 'urlEnv', 'fallbackDirect'])
-    if (typeof v.enabled !== 'boolean' || typeof v.fallbackDirect !== 'boolean' ||
-        typeof v.urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.urlEnv))
+    // Old (rc.9) overlays may omit urlEnv; it then falls back to the legacy name.
+    const enabled = v.enabled === undefined ? false : v.enabled
+    const fallbackDirect = v.fallbackDirect === undefined ? true : v.fallbackDirect
+    const urlEnv = v.urlEnv === undefined ? DEFAULT_PROXY_URL_ENV : v.urlEnv
+    if (typeof enabled !== 'boolean' || typeof fallbackDirect !== 'boolean' ||
+        typeof urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(urlEnv))
       throw new Error('invalid networkProxy configuration')
-    result.networkProxy = { enabled: v.enabled, urlEnv: v.urlEnv, fallbackDirect: v.fallbackDirect }
+    result.networkProxy = { enabled, urlEnv, fallbackDirect }
   }
   if (value.replyFormat !== undefined) {
     if (value.replyFormat !== 'text' && value.replyFormat !== 'markdown') throw new Error('invalid replyFormat')

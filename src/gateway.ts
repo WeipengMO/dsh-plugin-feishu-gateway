@@ -37,6 +37,8 @@ export interface GatewayHealth {
   readonly status: 'ok' | 'degraded' | 'stopped'
   readonly transports: Record<string, TransportState>
   readonly sessionBridge: { readonly available: boolean; readonly reason?: string }
+  /** Non-sensitive network route chosen by the launcher preflight. */
+  readonly network: { readonly proxySelected: string | null }
   readonly inbox: ReturnType<DurableInbox['stats']>
   readonly outbox: ReturnType<DurableOutbox['stats']>
   readonly dedupEntries: number
@@ -877,6 +879,8 @@ export class FeishuGateway {
         available: this.bridge.available,
         ...(this.bridge.unavailableReason ? { reason: this.bridge.unavailableReason } : {}),
       },
+      // Only the launcher's route marker: no URL, host or credential.
+      network: { proxySelected: process.env.FEISHU_GATEWAY_PROXY_SELECTED ?? null },
       inbox: this.inbox.stats(),
       outbox: this.outbox.stats(),
       dedupEntries: this.dedupSnapshot,

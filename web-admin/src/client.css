@@ -35,6 +35,11 @@
 .fga-bots { display:flex; flex-direction:column; gap:10px; }
 .fga-bot { display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end; border:1px solid var(--border,#8884); border-radius:12px; padding:13px; }
 .fga-bot .fga-button { grid-column:1 / -1; }
+/* Network proxy: source/effective-address line and inline actions. */
+.fga-proxy-status { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; border:1px solid var(--border,#8884); border-radius:10px; padding:10px 13px; background:var(--muted,#8881); }
+.fga-proxy-source { font-size:12px; font-weight:620; }
+.fga-inline-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.fga-proxy-result { margin:0; }
 .fga-footer { margin:25px 0 0; color:var(--muted-foreground,#9399a3); font-size:11px; }
 @media(max-width:660px) { .fga-root { padding:12px 0 30px; } .fga-header { flex-direction:column; } .fga-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .fga-fields-row,.fga-bot { grid-template-columns:1fr; } }
 

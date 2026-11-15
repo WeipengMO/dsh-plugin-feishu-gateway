@@ -1,7 +1,12 @@
-import { writeFile } from 'node:fs/promises'
+import { chmod, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadManagedConfig, managedConfigPath, validateManagedConfig } from '../../src/admin-config.js'
+import {
+  loadManagedConfig,
+  loadStoredProxyUrl,
+  managedConfigPath,
+  validateManagedConfig,
+} from '../../src/admin-config.js'
 import { resolveConfig } from '../../src/config.js'
 import { tempDir } from '../helpers.js'
 
@@ -52,5 +57,74 @@ describe('managed Feishu channel overlay', () => {
     const base = resolveConfig({ stateDir: d.dir })
     await writeFile(path.join(d.dir, 'admin-config.json'), '{bad', 'utf8')
     expect(() => loadManagedConfig(base)).toThrow(/invalid managed config JSON/)
+  })
+})
+
+describe('managed network proxy configuration', () => {
+  it('accepts a legacy rc.9 overlay and defaults urlEnv', () => {
+    expect(validateManagedConfig({ networkProxy: { enabled: true, fallbackDirect: false } }).networkProxy)
+      .toEqual({ enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false })
+    expect(validateManagedConfig({ networkProxy: {} }).networkProxy)
+      .toEqual({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true })
+    expect(validateManagedConfig({ networkProxy: { enabled: true, urlEnv: 'HTTPS_PROXY' } }).networkProxy)
+      .toEqual({ enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true })
+  })
+
+  it('never accepts a proxy URL inside admin-config.json', () => {
+    expect(() => validateManagedConfig({ networkProxy: {
+      enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true,
+      url: 'http://user:pass@proxy:2080',
+    } })).toThrow(/unsupported/)
+  })
+
+  it('rejects invalid proxy switches and env var names', () => {
+    expect(() => validateManagedConfig({ networkProxy: { enabled: 'yes' } })).toThrow(/networkProxy/)
+    expect(() => validateManagedConfig({ networkProxy: { fallbackDirect: 1 } })).toThrow(/networkProxy/)
+    expect(() => validateManagedConfig({ networkProxy: { urlEnv: 'not a name' } })).toThrow(/networkProxy/)
+    expect(() => validateManagedConfig({ networkProxy: { urlEnv: 42 } })).toThrow(/networkProxy/)
+  })
+
+  it('applies the managed networkProxy overlay on load', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    const base = resolveConfig({ stateDir: d.dir })
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
+      networkProxy: { enabled: true, fallbackDirect: false },
+    } }))
+    const result = loadManagedConfig(base)
+    expect(result.networkProxy).toEqual({
+      enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false,
+    })
+    expect(JSON.stringify(result.networkProxy)).not.toContain('http://')
+  })
+})
+
+describe('loadStoredProxyUrl (admin-managed proxy URL)', () => {
+  async function writeProxyFile(dir: string, body: string, mode = 0o600): Promise<void> {
+    const file = path.join(dir, 'network-proxy.json')
+    await writeFile(file, body, { encoding: 'utf8', mode })
+    await chmod(file, mode)
+  }
+
+  it('returns the validated URL from a 0600 network-proxy.json', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    await writeProxyFile(d.dir, JSON.stringify({ version: 1, url: 'http://100.75.51.18:2080' }))
+    expect(loadStoredProxyUrl(d.dir)).toBe('http://100.75.51.18:2080')
+  })
+
+  it('returns undefined instead of throwing for every unsafe file', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    expect(loadStoredProxyUrl(d.dir)).toBeUndefined()
+    await writeProxyFile(d.dir, JSON.stringify({ version: 1, url: 'http://proxy:2080' }), 0o644)
+    expect(loadStoredProxyUrl(d.dir)).toBeUndefined()
+    await writeProxyFile(d.dir, '{not json')
+    expect(loadStoredProxyUrl(d.dir)).toBeUndefined()
+    await writeProxyFile(d.dir, JSON.stringify({ version: 1, url: 'ftp://proxy:21' }))
+    expect(loadStoredProxyUrl(d.dir)).toBeUndefined()
+    await writeProxyFile(d.dir, JSON.stringify({ version: 1, url: 'http://proxy:2080/path' }))
+    expect(loadStoredProxyUrl(d.dir)).toBeUndefined()
+    expect(loadStoredProxyUrl(path.join(d.dir, 'missing'))).toBeUndefined()
   })
 })

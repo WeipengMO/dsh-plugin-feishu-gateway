@@ -1,6 +1,7 @@
 import { appIdLooksValid } from '../config.js'
 // https-proxy-agent@5 exports a CommonJS constructor, not a named ESM export.
 import HttpsProxyAgent from 'https-proxy-agent'
+import { DEFAULT_PROXY_URL_ENV, validateProxyUrl } from '../util/proxy-url.js'
 import type {
   BotCredentials,
   CardActionEvent,
@@ -164,13 +165,25 @@ export class LarkTransport implements FeishuTransport {
       },
     })
 
-    // The channel launcher chooses a proxy only after an outbound CONNECT
-    // preflight. Never embed proxy URLs in profile config, logs or source.
-    // REST uses Axios' HTTPS_PROXY support; WS needs the SDK's explicit agent.
-    const envName = this.networkProxy?.urlEnv ?? 'FEISHU_CHANNEL_PROXY_URL'
-    const proxyUrl = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED === 'proxy'
-      ? process.env[envName] : undefined
-    const wsAgent = proxyUrl ? HttpsProxyAgent(proxyUrl) : undefined
+    // The effective proxy is chosen by the launcher preflight and/or the admin
+    // UI. It is resolved here as: in-memory resolved URL (managed file) first,
+    // then the legacy env var. Never embed proxy URLs in profile config, logs
+    // or source. REST uses Axios' HTTPS_PROXY support; WS needs an explicit agent.
+    const envName = this.networkProxy?.urlEnv ?? DEFAULT_PROXY_URL_ENV
+    const candidate = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED !== 'direct'
+      ? this.networkProxy?.url ?? process.env[envName]
+      : undefined
+    let wsAgent: ReturnType<typeof HttpsProxyAgent> | undefined
+    if (candidate) {
+      try {
+        // https-proxy-agent@5 is a CommonJS factory: call it, never `new`.
+        wsAgent = HttpsProxyAgent(validateProxyUrl(candidate))
+      } catch {
+        // Neither the URL nor the parser message may be logged (userinfo!).
+        this.logger.warn('bot %s proxy is unusable; continuing with a direct connection', this.botId)
+        wsAgent = undefined
+      }
+    }
     this.ws = new mod.WSClient({
       ...common,
       ...(wsAgent ? { agent: wsAgent } : {}),

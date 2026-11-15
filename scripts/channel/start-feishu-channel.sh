@@ -28,40 +28,80 @@ die() { echo "error: $*" >&2; exit 1; }
 
 # Proxy configuration is resolved before the DSH process is started, so the
 # native agent's web_fetch/fetch requests can honor NODE_USE_ENV_PROXY too.
-# Only the *name* of an env var is stored in managed config. Never echo its URL.
+#
+# The URL is read from the Web Admin-managed private file
+# $STATE_DIR/network-proxy.json (mode 600) first, then from the named
+# environment variable (default FEISHU_CHANNEL_PROXY_URL) for older
+# deployments. Only the env var *name* is stored in admin-config.json.
+# Never echo the URL or its credentials.
 configure_proxy() {
   local cfg_file="$STATE_DIR/admin-config.json"
-  local settings enabled env_name fallback proxy_url
+  local secret_file="$STATE_DIR/network-proxy.json"
+  local settings enabled env_name fallback source proxy_url
   settings="$(node -e '
     const fs = require("node:fs");
-    const file = process.argv[1];
-    const doc = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-    const p = doc.config?.networkProxy || {};
+    const [cfgFile, secretFile, defaultEnv] = process.argv.slice(1);
+    const readJson = file => {
+      try {
+        const st = fs.lstatSync(file);
+        if (!st.isFile() || st.isSymbolicLink()) return undefined;
+        return JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch { return undefined }
+    };
+    const validate = raw => {
+      if (typeof raw !== "string" || raw.length === 0 || raw.length > 2048) return undefined;
+      try {
+        const u = new URL(raw);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return undefined;
+        if (!u.hostname) return undefined;
+        if (u.port && !(Number(u.port) >= 1 && Number(u.port) <= 65535)) return undefined;
+        if ((u.pathname && u.pathname !== "/") || u.search || u.hash) return undefined;
+        return u.toString();
+      } catch { return undefined }
+    };
+    const cfg = readJson(cfgFile) || {};
+    const p = (cfg.config && cfg.config.networkProxy) || {};
     if (p.enabled !== undefined && typeof p.enabled !== "boolean") process.exit(2);
-    const env = p.urlEnv || "FEISHU_CHANNEL_PROXY_URL";
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(env)) process.exit(2);
+    const envName = typeof p.urlEnv === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.urlEnv)
+      ? p.urlEnv : defaultEnv;
+    const doc = readJson(secretFile);
+    let url;
+    let source = "none";
+    if (doc && doc.version === 1) {
+      const stored = validate(doc.url);
+      if (stored) { url = stored; source = "managed"; }
+    }
+    if (!url) {
+      const fromEnv = validate(process.env[envName]);
+      if (fromEnv) { url = fromEnv; source = "env"; }
+    }
     console.log(p.enabled === true ? "1" : "0");
-    console.log(env);
+    console.log(envName);
     console.log(p.fallbackDirect === false ? "0" : "1");
-  ' "$cfg_file")" || die "invalid managed proxy configuration"
+    console.log(source);
+    console.log(url || "");
+  ' "$cfg_file" "$secret_file" "FEISHU_CHANNEL_PROXY_URL")" || die "invalid managed proxy configuration"
   local -a fields=()
   mapfile -t fields <<< "$settings"
   enabled="${fields[0]:-0}"
   env_name="${fields[1]:-FEISHU_CHANNEL_PROXY_URL}"
   fallback="${fields[2]:-1}"
+  source="${fields[3]:-none}"
+  proxy_url="${fields[4]:-}"
   [ "$enabled" = 1 ] || return 0
 
-  proxy_url="${!env_name:-}"
-  if [ -n "$proxy_url" ] &&
-    node -e '
-      try {
-        const u = new URL(process.argv[1]);
-        if (!["http:", "https:"].includes(u.protocol) || !u.hostname ||
-            u.username || u.password || u.search || u.hash || u.pathname !== "/")
-          process.exit(1);
-      } catch { process.exit(1) }
-    ' "$proxy_url" &&
-    command -v curl >/dev/null 2>&1 &&
+  if [ -z "$proxy_url" ]; then
+    if [ "$fallback" = 1 ]; then
+      unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+      export NODE_USE_ENV_PROXY=0
+      export FEISHU_GATEWAY_PROXY_SELECTED=direct
+      echo "network route: proxy enabled but no proxy URL configured; falling back to direct" >&2
+      return 0
+    fi
+    die "proxy enabled but no proxy URL configured; set it in DSH Web -> Feishu Admin -> Network Proxy"
+  fi
+
+  if command -v curl >/dev/null 2>&1 &&
     curl --silent --show-error --output /dev/null --noproxy "" \
       --proxy "$proxy_url" --connect-timeout 3 --max-time 8 \
       "https://open.feishu.cn/open-apis/" 2>/dev/null; then
@@ -71,7 +111,9 @@ configure_proxy() {
     export NO_PROXY="$no_proxy"
     export NODE_USE_ENV_PROXY=1
     export FEISHU_GATEWAY_PROXY_SELECTED=proxy
-    echo "network route: proxy preflight passed (URL redacted)"
+    # The Gateway plugin reads the effective URL from this named variable.
+    export "$env_name=$proxy_url"
+    echo "network route: proxy preflight passed (source: $source, URL redacted)"
     return 0
   fi
 
