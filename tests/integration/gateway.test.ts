@@ -10,6 +10,10 @@ import { DurableInbox } from '../../src/inbox/inbox.js'
 import type { SessionReply, WaitOptions } from '../../src/types.js'
 import type { GatewayConfig } from '../../src/types.js'
 import { tempDir } from '../helpers.js'
+import { resolveFeishuWorkspace } from '../../src/agent-workspace.js'
+import { SessionRegistry } from '../../src/session/session-registry.js'
+import { mkdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -480,4 +484,57 @@ describe('fail-closed corrupt startup', () => {
     })
     await expect(retry.start()).rejects.toThrow(/invalid durable state/)
   })
+
+  it('runs new Feishu Sessions from a private cwd, without editing normal DSH instructions', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const regular = path.join(dir, 'dsh-project')
+    const stateDir = path.join(dir, 'feishu-state')
+    await mkdir(regular)
+    await mkdir(stateDir)
+    const original = '# Normal DSH identity, must not change.\n'
+    await (await import('node:fs/promises')).writeFile(path.join(regular, 'AGENTS.local.md'), original)
+    const config = resolveConfig({ workspace: regular, stateDir, allowlist: ['ou_alice'], offline: true })
+    const transport = new MockFeishuTransport('default')
+    const bridge = new MockSessionBridge()
+    const gateway = createGateway(config, { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await transport.emitMessage(alice({ messageId: 'om_separate', chatId: 'oc_isolated' }))
+    await gateway.whenIdle()
+    expect(bridge.created).toHaveLength(1)
+    expect(bridge.created[0]?.cwd).toBe(resolveFeishuWorkspace(config))
+    expect(bridge.created[0]?.cwd).not.toBe(regular)
+    expect(await readFile(path.join(regular, 'AGENTS.local.md'), 'utf8')).toBe(original)
+    await gateway.stop()
+  })
+
+  it('does not resume a legacy shared DSH Session; /new switches to a private Feishu Session', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const workspace = path.join(dir, 'old-shared-dsh')
+    const stateDir = path.join(dir, 'feishu-state')
+    await mkdir(workspace)
+    await mkdir(stateDir)
+    const registry = new SessionRegistry(stateDir)
+    await registry.open()
+    await registry.bind('default:oc_legacy', 'legacy-shared-session')
+    const config = resolveConfig({ workspace, stateDir, allowlist: ['ou_alice'], offline: true })
+    const transport = new MockFeishuTransport('default')
+    const bridge = new MockSessionBridge()
+    const gateway = createGateway(config, { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await transport.emitMessage(alice({ messageId: 'om_legacy', chatId: 'oc_legacy', text: 'hello' }))
+    await gateway.whenIdle()
+    expect(bridge.created).toHaveLength(0)
+    expect(bridge.resumed).toHaveLength(0)
+    expect(transport.sent.some(x => x.text.includes('发送 /new'))).toBe(true)
+    await transport.emitMessage(alice({ messageId: 'om_new_cmd', chatId: 'oc_legacy', text: '/new' }))
+    await gateway.whenIdle()
+    await transport.emitMessage(alice({ messageId: 'om_new_private', chatId: 'oc_legacy', text: 'hello again' }))
+    await gateway.whenIdle()
+    expect(bridge.created).toHaveLength(1)
+    expect(bridge.created[0]?.cwd).toBe(resolveFeishuWorkspace(config))
+    await gateway.stop()
+  })
+
 })
