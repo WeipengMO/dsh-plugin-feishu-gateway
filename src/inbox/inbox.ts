@@ -196,6 +196,15 @@ export class DurableInbox {
     return [...this.records.values()].filter((r) => r.status === 'uncertain' && !r.recoveryNotified)
   }
 
+  /** Fail closed on any unconfirmed inbound work for this chat. */
+  hasUnresolvedFor(botId: string, chatId: string): boolean {
+    for (const record of this.records.values()) {
+      if (record.botId === botId && record.chatId === chatId &&
+        (record.status === 'pending' || record.status === 'running' || record.status === 'uncertain')) return true
+    }
+    return false
+  }
+
   get(messageId: string): InboxRecord | undefined {
     return this.records.get(messageId)
   }
