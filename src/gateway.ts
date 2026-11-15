@@ -1,5 +1,8 @@
 import { mkdir } from 'node:fs/promises'
 import { DedupIndex } from './inbox/dedup.js'
+import { FeishuApprovalManager, type ApprovalRequestLike, type ApprovalOutcome } from './channel/approval-manager.js'
+import { TaskProgressCard } from './channel/task-progress-card.js'
+import { CARD_NAMESPACE } from './channel/card-content.js'
 import { commandHelp, parseControlCommand, type ControlCommand } from './control/commands.js'
 import { DurableInbox, type InboxRecord } from './inbox/inbox.js'
 import { DurableOutbox } from './outbox/outbox.js'
@@ -9,6 +12,7 @@ import { truncateText } from './session/session-bridge.js'
 import { acquireStateDirOwnerLock, type StateDirOwnerLock } from './storage/owner-lock.js'
 import type {
   FeishuTransport,
+  CardActionEvent,
   GatewayConfig,
   GatewayLogger,
   InboundMessage,
@@ -33,6 +37,7 @@ export interface GatewayHealth {
   readonly dedupEntries: number
   readonly boundSessions: number
   readonly activeTurns: number
+  readonly pendingApprovals: number
   readonly processed: number
   readonly rejected: Record<RejectReason, number>
   readonly errors: number
@@ -40,6 +45,11 @@ export interface GatewayHealth {
 }
 
 interface ActiveTurn {
+  readonly botId: string
+  readonly chatId: string
+  readonly senderId: string
+  readonly replyToMessageId: string
+  stream?: TaskProgressCard
   readonly messageId: string
   readonly startedAt: number
   readonly controller: AbortController
@@ -90,6 +100,7 @@ export class FeishuGateway {
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
   private readonly activeTurns = new Map<string, ActiveTurn>()
+  private readonly approvals: FeishuApprovalManager
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
   private startedAt = 0
@@ -103,6 +114,20 @@ export class FeishuGateway {
     this.logger = deps.logger
     this.bridge = deps.bridge
     this.router = new MessageRouter(deps.config)
+    this.approvals = new FeishuApprovalManager(
+      deps.config.approvalTimeoutMs,
+      new Set(deps.config.allowlist),
+      (sessionId) => {
+        const active = [...this.activeTurns.values()].find(turn =>
+          turn.sessionId === sessionId && turn.phase === 'running' && !turn.cancelledByUser)
+        return active ? {
+          botId: active.botId, chatId: active.chatId,
+          senderId: active.senderId, replyToMessageId: active.replyToMessageId,
+        } : undefined
+      },
+      (botId) => this.transports.get(botId),
+      deps.logger,
+    )
     for (const transport of deps.transports) this.transports.set(transport.botId, transport)
 
     this.dedup = new DedupIndex(deps.config.stateDir, deps.config.dedupTtlMs, deps.config.maxDedupEntries)
@@ -147,6 +172,7 @@ export class FeishuGateway {
             await transport.connect({
               onMessage: (message) => this.handleInbound(message),
               onStateChange: (state, error) => this.onStateChange(transport.botId, state, error),
+              onCardAction: (event) => this.handleCardAction(event),
             })
           } catch (error) {
             this.errors += 1
@@ -217,6 +243,7 @@ export class FeishuGateway {
     if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
     this.outboxRetryTimer = undefined
     this.abortController.abort()
+    this.approvals.stop()
 
     for (const [botId, transport] of this.transports) {
       try {
@@ -582,6 +609,7 @@ export class FeishuGateway {
       dedupEntries: this.dedupSnapshot,
       boundSessions: this.registry.bindings().length,
       activeTurns: this.activeTurns.size,
+      pendingApprovals: this.approvals.size,
       processed: this.processed,
       rejected: { ...this.rejected },
       errors: this.errors,
