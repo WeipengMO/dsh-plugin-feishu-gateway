@@ -37,7 +37,7 @@ export function extractFeishuPostText(raw: string | undefined): string {
             ? `[${node.text}](${node.href})` : node.text)
         } catch { chunks.push(node.text) }
       } else if (node.tag === 'hr') {
-        chunks.push('\n---\n')
+        chunks.push('---')
       } else {
         // Image / @ / video / file / unknown nodes need separate handling and
         // must not be silently dropped as if the model received everything.
