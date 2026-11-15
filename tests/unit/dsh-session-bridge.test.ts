@@ -158,6 +158,40 @@ describe('DshSessionBridge', () => {
     expect(reply).toMatchObject({ text: 'native reply', reason: 'idle' })
   })
 
+  it('tracks native tool failures without exposing URL or tool output', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-tools', '/workspace')
+    await bridge.submit('session-tools', 'query', new AbortController().signal)
+    const observed: unknown[] = []
+    bridge.onToolActivity?.('session-tools', event => observed.push(event))
+    const waiting = bridge.waitForReply('session-tools', {
+      timeoutMs: 1000, signal: new AbortController().signal,
+    })
+    ctx.emit('session/event', { id: 'session-tools' }, {
+      type: 'tool/call',
+      data: { callId: 'call-1', name: 'web_fetch', arguments: '{"url":"https://private.invalid"}' },
+    })
+    ctx.emit('session/event', { id: 'session-tools' }, {
+      type: 'tool/result',
+      data: { message: { toolCallId: 'call-1',
+        content: [{ type: 'text',
+          text: 'Fetched https://private.invalid (HTTP 567)  External content' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-tools' }, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: 'I could not verify that source.' }] } },
+    })
+    ctx.emit('session/event', { id: 'session-tools' }, { type: 'turn/end', data: {} })
+    const result = await waiting
+    expect(result.toolCalls).toBe(1)
+    expect(result.toolFailures).toBe(1)
+    expect(observed).toMatchObject([
+      { name: 'web_fetch', phase: 'started', calls: 1, failures: 0 },
+      { name: 'web_fetch', phase: 'failed', httpStatus: 567, calls: 1, failures: 1 },
+    ])
+    expect(JSON.stringify(observed)).not.toContain('private.invalid')
+  })
+
   it('reads provider-model and real token usage from native Session settlements', async () => {
     const { ctx, bridge } = setup()
     await bridge.create('session-metrics', '/workspace')
