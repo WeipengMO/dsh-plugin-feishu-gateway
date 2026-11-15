@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'fga-status ' + (online ? 'fga-online' : '') },
           online ? '网关正常' : '未确认在线', ' · systemd: ', service || '未知'))
     }
-    function Panel({ initialTab = 'settings' } = {}) {
+    function Panel({ initialTab = 'settings', onChanged } = {}) {
       const [state, setState] = useState(null)
       const [health, setHealth] = useState(null)
       const [tab, setTab] = useState(initialTab)
@@ -130,7 +130,7 @@ window.__ModuleLoader__.load({
       }
       async function perform(task, success) {
         setBusy(true); setError(''); setNotice('')
-        try { await task(); setNotice(success); await reload() }
+        try { await task(); setNotice(success); await reload(); onChanged?.() }
         catch (e) { setError(e.message || String(e)) }
         finally { setBusy(false) }
       }
