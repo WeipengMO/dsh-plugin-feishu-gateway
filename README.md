@@ -52,15 +52,16 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-生成的文件（只需为已有部署升级 Gateway）：
+生成的两个安装包（本轮 **两个 Profile 都需要升级**）：
 
 - `dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.1.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.3.tgz`
 
-只升级运行通道 Profile；Admin 保持现有安装即可：
+分别安装到各自 Profile；不要把 Gateway 安装到 Web：
 
 ```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.1.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.3.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
@@ -73,7 +74,7 @@ GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/
 
 私聊只接收白名单 `open_id`；默认拒绝群聊；App Secret 通过环境变量注入且 Web Admin 不回显。部署时请保护 `~/.dsh/feishu-channel.env` 和 `stateDir`，并维持最小权限。
 
-**仍待实机验证**：审批超时、重复点击、审批中取消、陌生人或跨聊天卡片点击（已存在模拟/集成测试，不能替代真实租户）。**已知问题**：飞书 WebSocket 初次握手失败可能无法自行恢复，需要健康看门狗/重连兜底。状态监控和异常通知列入后续工作。
+**仍待实机验证**：审批超时、重复点击、审批中取消、陌生人或跨聊天卡片点击（已存在模拟/集成测试，不能替代真实租户）。**已知问题**：飞书 WebSocket 初次握手失败可能无法自行恢复，需要健康看门狗/重连兜底。本地规则监控已上线候选版；主动飞书告警通知与 WS 自动恢复仍需后续开发。
 
 更多文档：[架构](docs/ARCHITECTURE.md) · [兼容性](docs/COMPATIBILITY.md) · [飞书开发者后台](docs/FEISHU-APP.md) · [测试 Harness](docs/E2E.md) · [后续路线图（含历史计划）](docs/ROADMAP-v0.2.0.md)。
 
