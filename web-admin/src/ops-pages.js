@@ -26,7 +26,7 @@ function OpsTable({ columns, rows, empty }) {
         h('tr', { key: row.ref || row.ts + ':' + i }, columns.map(c =>
           h('td', { key: c.key }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
 }
-function OpsPage({ kind, ops, onConfig, onView }) {
+function OpsPage({ kind, ops, onConfig, onCommand }) {
   if (!ops?.telemetryAvailable) return h(OpsUnavailable, {})
   const snapshot = ops.snapshot
   const summary = ops.summary ?? {}
@@ -46,6 +46,9 @@ function OpsPage({ kind, ops, onConfig, onView }) {
           { key: 'session', title: 'Session', render: x => x.session ? h('code', null, x.session.slice(0, 10)) : '—' },
           { key: 'phase', title: '阶段', render: x => h(WbState, { value: x.phase }) },
           { key: 'elapsedMs', title: '已用时', render: x => wbAge(x.elapsedMs) },
+          { key: 'action', title: '操作',
+            render: x => x.phase === 'running' ? h(OpsAction, { label: '取消任务',
+              onClick: () => onCommand('cancel-task', x.ref) }) : '正在收尾' },
         ] })),
     h(WbBlock, { title: '最近任务事件', aside: '仅记录状态，不保存聊天内容' },
       h(OpsTimeline, { events: events.filter(x => x.kind === 'task').slice(0, 30) })),
@@ -64,7 +67,11 @@ function OpsPage({ kind, ops, onConfig, onView }) {
           { key: 'lastAt', title: '最后更新', render: x => opsDate(x.lastAt) },
           { key: 'elapsedMs', title: '任务耗时', render: x => x.elapsedMs === undefined ? '—' : wbAge(x.elapsedMs) },
         ] })),
-    h(OpsNote, null, 'uncertain 状态可能涉及已执行的工具副作用，禁止自动重放。Outbox 原有安全重试机制继续运行，后台暂不提供未验证的单条重放按钮。'))
+    h(OpsNote, null, 'uncertain 状态可能涉及已执行的工具副作用，禁止自动重放。Outbox 原有 UUID 去重机制仍然有效。'),
+    snapshot?.stats?.outboxPending > 0 && h(OpsAction, {
+      label: '触发 Outbox 安全补发', onClick: () => onCommand('retry-outbox'),
+    }),
+    h(OpsNote, null, '仅针对已经入队的 Outbox 消息触发发送检查，不会再次执行 Agent，不会覆盖永久性失败的跳过规则。'))
   if (kind === 'sessions') return h(React.Fragment, null,
     h('div', { className: 'fgw-metrics fgw-metrics-three' },
       h(WbMetric, { title: '已绑定 Session', value: wbCount(sessions.length) }),
@@ -125,7 +132,13 @@ function OpsPage({ kind, ops, onConfig, onView }) {
           h('div', { key: x.code + ':' + (x.botId || i), className: 'fgw-caution' },
             h('strong', null, x.message), x.botId && h('span', null, ' · ', x.botId)))) :
         h(WbEmpty, { headline: '暂无规则告警', description: '当前没有达到已配置阈值的运行状态。' })),
-    h(OpsNote, null, '这是浏览器管理页的规则告警，不是已经建立的飞书主动推送。跨进程通知与离线消息发送需要独立的通知目标和授权机制。'),
+    h(OpsNote, null, '这是管理页本地规则告警，不会主动向飞书发送通知。跨进程告警推送需要显式通知目标和授权设置。'),
+    (ops.commands ?? []).length > 0 && h(WbBlock, { title: '最近后台操作结果' },
+      h(OpsTable, { rows: ops.commands, columns: [
+        { key: 'type', title: '操作' },
+        { key: 'state', title: '执行结果', render: x => h(WbState, { value: x.state }) },
+        { key: 'ts', title: '结束时间', render: x => opsDate(x.ts) },
+      ] })),
     h(OpsAction, { label: '调整连接和重试配置', onClick: () => onConfig('settings') }))
   if (kind === 'diagnostics') return h(React.Fragment, null,
     h(WbBlock, { title: 'WebSocket 连接诊断', aside: '连接故障与重连计数' },
