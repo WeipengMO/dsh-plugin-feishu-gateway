@@ -76,20 +76,20 @@ function statsFooter(stats: CardCompletionStats | undefined): string {
   if (usage) {
     const total = usage.inputTokens + usage.outputTokens +
       (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
-    parts.push('Token：' + total.toLocaleString('en-US') +
-      '（入 ' + (total - usage.outputTokens).toLocaleString('en-US') +
-      ' / 出 ' + usage.outputTokens.toLocaleString('en-US') + '）')
-    const generatingMs = stats.generationMs && stats.generationMs > 0
-      ? stats.generationMs : stats.elapsedMs
-    if (usage.outputTokens > 0 && generatingMs > 0) {
-      const speed = usage.outputTokens / (generatingMs / 1000)
-      if (Number.isFinite(speed)) parts.push('速度：≈' + speed.toFixed(1) + ' tok/s')
+    parts.push('Token 用量：' + total.toLocaleString('en-US'))
+    // The model does not report "tokens per second" as a standalone metric.
+    // Derive the average only when DSH observed the model stream duration;
+    // never substitute whole-turn time (which includes tools/approval).
+    if (usage.outputTokens > 0 && stats.generationMs && stats.generationMs > 0) {
+      const speed = usage.outputTokens / (stats.generationMs / 1000)
+      if (Number.isFinite(speed)) parts.push('速度：' + speed.toFixed(1) + ' tok/s')
     }
   }
   if (Number.isFinite(stats.elapsedMs) && stats.elapsedMs >= 0) {
     parts.push('用时：' + (stats.elapsedMs / 1000).toFixed(1) + 's')
   }
-  return parts.join(' · ')
+  // Markdown hard line breaks keep each item on its own line in CardKit.
+  return parts.join('  \n')
 }
 
 /**
