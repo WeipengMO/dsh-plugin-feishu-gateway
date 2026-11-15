@@ -17,6 +17,9 @@ describe('resolveConfig', () => {
     expect(config.autoConnect).toBe(true)
     expect(config.sendRetries).toBe(3)
     expect(config.replyTimeoutMs).toBe(120_000)
+    expect(config.networkProxy).toEqual({
+      enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true,
+    })
     expect(config.replyFormat).toBe('text')
     expect(config.workspace).toBe(process.cwd())
   })
@@ -24,6 +27,17 @@ describe('resolveConfig', () => {
   it('supports opt-in Markdown without changing the default', () => {
     expect(resolveConfig({ replyFormat: 'markdown' }).replyFormat).toBe('markdown')
     expect(resolveConfig(undefined).replyFormat).toBe('text')
+  })
+
+  it('supports proxy configuration without leaking the actual URL', () => {
+    const config = resolveConfig({ networkProxy: {
+      enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true,
+    } })
+    expect(config.networkProxy.enabled).toBe(true)
+    expect(config.networkProxy.urlEnv).toBe('HTTPS_PROXY')
+    const summary = JSON.stringify(redactedConfigSummary(config))
+    expect(summary).toContain('HTTPS_PROXY')
+    expect(summary).not.toContain('http://example.invalid:3000')
   })
 
   it('honours FEISHU_GATEWAY_OFFLINE as a hard offline switch', () => {
