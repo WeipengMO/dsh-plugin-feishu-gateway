@@ -8,9 +8,10 @@ copyFileSync(path.join(dir, 'src/ops-read.mjs'), path.join(output, 'ops-read.mjs
 const css = readFileSync(path.join(dir, 'src/client.css'), 'utf8')
 const js = readFileSync(path.join(dir, 'src/client.js'), 'utf8')
 const workbench = readFileSync(path.join(dir, 'src/workbench.js'), 'utf8')
+const opsPages = readFileSync(path.join(dir, 'src/ops-pages.js'), 'utf8')
 if (!js.includes('__CSS_TEXT__') || !js.includes('/*__WORKBENCH_CODE__*/'))
   throw Error('missing client asset marker')
 writeFileSync(path.join(output, 'client.js'), js
   .replace('__CSS_TEXT__', () => JSON.stringify(css))
-  .replace('/*__WORKBENCH_CODE__*/', () => workbench))
+  .replace('/*__WORKBENCH_CODE__*/', () => opsPages + '\n' + workbench))
 console.log('Feishu web-admin built')
