@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
+import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
@@ -327,6 +328,11 @@ export function createAdminHandler(options = {}) {
         const commands = await readOpsResults(stateDir)
         return json(res, 200, { ok: true, snapshot, events, commands,
           summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/sessions') {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const report = await querySessions(stateDir, parseSessionQuery(params))
+        return json(res, 200, { ok: true, report })
       }
       if (req.method === 'GET' && route === PREFIX + '/ops/events') {
         const params = new URL(req.url ?? '', 'http://localhost').searchParams
