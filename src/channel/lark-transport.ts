@@ -140,9 +140,12 @@ export class LarkTransport implements FeishuTransport {
         const data = value.action?.value
         const action = data && typeof data === 'object' && !Array.isArray(data)
           ? data as CardActionEvent['value'] : undefined
-        const actorOpenId = value.operator?.open_id
-        const chatId = value.context?.open_chat_id
-        const messageId = value.context?.open_message_id
+        // Feishu Card JSON 2.0 callback: operator/action live in event,
+        // but context (chat/message identifiers) lives at the ROOT. Accept
+        // both forms because SDK dispatchers may unwrap event for plugins.
+        const actorOpenId = value.operator?.open_id ?? event.operator?.open_id
+        const chatId = event.context?.open_chat_id ?? value.context?.open_chat_id
+        const messageId = event.context?.open_message_id ?? value.context?.open_message_id
         if (!this.handlers?.onCardAction || !actorOpenId || !chatId || !messageId || !action) {
           return { toast: { type: 'warning', content: '无法验证此卡片操作' } }
         }

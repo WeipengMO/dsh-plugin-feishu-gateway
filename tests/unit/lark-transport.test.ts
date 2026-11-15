@@ -266,6 +266,27 @@ describe('LarkTransport (SDK mocked)', () => {
 })
 
 describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () => {
+  it('accepts the official v2 callback with root-level context and event-scoped operator', async () => {
+    const t = transport()
+    const received: unknown[] = []
+    await t.connect({ onMessage: () => {}, onStateChange: () => {},
+      onCardAction: async action => { received.push(action); return { toast: { type: 'success', content: 'ok' } } },
+    })
+    const value = { namespace: 'dsh-feishu-gateway', kind: 'approval',
+      nonce: 'nonce-1', decision: 'allow' }
+    const official = {
+      schema: '2.0',
+      header: { event_type: 'card.action.trigger' },
+      event: { operator: { open_id: 'ou_alice' }, action: { tag: 'button', value } },
+      host: 'im_message',
+      context: { open_chat_id: 'oc_one', open_message_id: 'om_approval_card' },
+    }
+    const response = await sdkState.handlers['card.action.trigger']!(official)
+    expect(response).toEqual({ toast: { type: 'success', content: 'ok' } })
+    expect(received).toEqual([{ botId: 'default', actorOpenId: 'ou_alice',
+      chatId: 'oc_one', messageId: 'om_approval_card', value }])
+  })
+
   it('registers card.action.trigger and validates callback principal fields', async () => {
     const t = transport()
     const received: unknown[] = []
