@@ -112,10 +112,13 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     maxTextLength: numberOr(raw.maxTextLength, 8000),
     replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
     networkProxy: {
-      enabled: raw.networkProxy?.enabled === true,
-      urlEnv: typeof raw.networkProxy?.urlEnv === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.networkProxy.urlEnv)
-        ? raw.networkProxy.urlEnv : 'FEISHU_CHANNEL_PROXY_URL',
-      fallbackDirect: raw.networkProxy?.fallbackDirect !== false,
+      enabled: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.enabled === true,
+      urlEnv: (() => {
+        const value = (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.urlEnv
+        return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+          ? value : 'FEISHU_CHANNEL_PROXY_URL'
+      })(),
+      fallbackDirect: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.fallbackDirect !== false,
     },
     replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
     approvalCards: raw.approvalCards === true,
