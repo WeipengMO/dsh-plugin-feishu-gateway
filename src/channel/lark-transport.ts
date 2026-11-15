@@ -1,5 +1,6 @@
 import { appIdLooksValid } from '../config.js'
-import { HttpsProxyAgent } from 'https-proxy-agent'
+// https-proxy-agent@5 exports a CommonJS constructor, not a named ESM export.
+import HttpsProxyAgent from 'https-proxy-agent'
 import type {
   BotCredentials,
   CardActionEvent,
