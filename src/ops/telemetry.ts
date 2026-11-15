@@ -37,6 +37,8 @@ export interface OpsSession {
   readonly persisted: boolean
 }
 export interface OpsSnapshot {
+  /** The native DSH working directory actually used to create Feishu Sessions. */
+  readonly workspace: string
   readonly version: 1
   readonly ts: number
   readonly status: string
