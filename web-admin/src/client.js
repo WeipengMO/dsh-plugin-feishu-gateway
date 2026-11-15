@@ -184,7 +184,7 @@ window.__ModuleLoader__.load({
             '新飞书 Agent 不再从此目录启动；不会复制这里的 SOUL / MEMORY。'),
           field('飞书 Agent 独立工作目录', textInput(agentWorkspace, setAgentWorkspace,
             '留空自动选择独立目录；或填写 /home/ubuntu/.dsh/feishu-agent'),
-            '新飞书 Session 的原生 cwd。不可与普通 DSH 项目目录相同或存在父子关系；修改后需重启通道，并在飞书发送 /new。')
+            '新飞书 Session 的原生 cwd。不可与普通 DSH 项目目录相同或存在父子关系；修改后需重启通道，并在飞书发送 /new。'),
           h('div', { className: 'fga-divider' }),
           h('h3', null, '交互卡片（需要飞书卡片权限与真实租户验收）'),
           h('label', { className: 'fga-check' },
