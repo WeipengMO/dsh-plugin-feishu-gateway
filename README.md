@@ -53,16 +53,16 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-生成的两个安装包（本轮 **两个 Profile 都需要升级**）：
+生成的两个安装包（**本轮仅修改 Web Admin UI**；已安装 Gateway `0.2.0-rc.7` 时只需升级 `web` Profile）：
 
 - `dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz`
 - `dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz`
 
-分别安装到各自 Profile；不要把 Gateway 安装到 Web：
+首次安装时分别安装到各自 Profile；已装当前 Gateway `rc.7` 的用户只需安装新的 Web Admin。不要把 Gateway 安装到 Web：
 
 ```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.5.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.3.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.6.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
