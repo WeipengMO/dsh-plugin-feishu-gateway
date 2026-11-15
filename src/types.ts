@@ -152,6 +152,8 @@ export interface SessionBridge {
   waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply>
   /** Cancel the active turn (long-task cancellation hook for v0.2.0). */
   cancel(sessionId: string): void
+  /** Release an abandoned Session handle after timeout/error (not normal follow-ups). */
+  retire?(sessionId: string): Promise<void>
   /** Release every owned AgentHandle and listener. */
   dispose(): Promise<void>
 }

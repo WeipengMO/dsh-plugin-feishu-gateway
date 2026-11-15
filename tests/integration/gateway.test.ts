@@ -336,6 +336,7 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await transport.emitMessage(alice({ messageId: 'om_followup' }))
     await gateway.whenIdle()
     expect(bridge.cancelled).toContain(bridge.prompts[0]?.sessionId)
+    expect(bridge.disposedSessions).toContain(bridge.prompts[0]?.sessionId)
     expect(bridge.created).toHaveLength(2)
     expect(bridge.prompts[0]?.sessionId).not.toBe(bridge.prompts[1]?.sessionId)
     expect(transport.sent[0]?.text).toContain('原会话已隔离')

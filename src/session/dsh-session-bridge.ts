@@ -244,6 +244,22 @@ export class DshSessionBridge implements SessionBridge {
     this.settle(sessionId)
   }
 
+  async retire(sessionId: string): Promise<void> {
+    // An aborted Session must not retain a Handle until the entire Host exits.
+    // Never invoke this on a healthy follow-up turn.
+    this.settle(sessionId)
+    this.turns.delete(sessionId)
+    const handle = this.handles.get(sessionId)
+    if (!handle) return
+    this.handles.delete(sessionId)
+    try {
+      const result = await withTimeout(handle.dispose(), 5_000)
+      if (result.timedOut) this.logger.warn('retired AgentHandle %s did not dispose within 5s', sessionId)
+    } catch (error) {
+      this.logger.warn('retired AgentHandle %s disposal failed: %s', sessionId, String(error))
+    }
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true

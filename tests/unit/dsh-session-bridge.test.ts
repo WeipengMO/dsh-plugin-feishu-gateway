@@ -390,3 +390,18 @@ describe('DshSessionBridge', () => {
   })
 
 })
+
+describe('abandoned native handles', () => {
+  it('retires a cancelled Session without affecting a later healthy Session', async () => {
+    const { bridge, fake } = setup()
+    await bridge.create('timed-out', '/workspace')
+    await bridge.create('healthy', '/workspace')
+    bridge.cancel('timed-out')
+    await bridge.retire('timed-out')
+    expect(fake.disposed).toHaveLength(1)
+    await bridge.submit('healthy', 'still alive', new AbortController().signal)
+    expect(fake.followups).toHaveLength(1)
+    await bridge.dispose()
+    expect(fake.disposed).toHaveLength(2)
+  })
+})

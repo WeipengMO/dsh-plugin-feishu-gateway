@@ -31,21 +31,23 @@ export class JsonStore<T> {
   }
 
   private async readFromDisk(): Promise<T> {
-    let parsed: unknown
+    let raw: string
     try {
-      parsed = JSON.parse(await readFile(this.file, 'utf8')) as unknown
+      raw = await readFile(this.file, 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        // Corrupt state must not crash the gateway; quarantine and start clean.
-        try {
-          await rename(this.file, `${this.file}.corrupt-${Date.now()}`)
-        } catch {
-          // the original file is left in place for manual inspection
-        }
-      }
-      return structuredClone(this.fallback)
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return structuredClone(this.fallback)
+      // Permissions and I/O errors are not evidence of corrupt JSON.
+      throw error
     }
-    return parsed as T
+    try {
+      return JSON.parse(raw) as T
+    } catch (error) {
+      // Never replace durable Outbox / Session state with an empty fallback.
+      // Quarantine the exact corrupt bytes for operator recovery, then fail startup.
+      const backup = `${this.file}.corrupt-${Date.now()}-${newId('backup')}`
+      await rename(this.file, backup)
+      throw new Error(`invalid durable state in ${this.file}; preserved at ${backup}; manual recovery required`, { cause: error })
+    }
   }
 
   private async writeToDisk(value: T): Promise<void> {

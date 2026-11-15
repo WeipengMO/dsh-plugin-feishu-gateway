@@ -72,6 +72,10 @@ export class MockSessionBridge implements SessionBridge {
     this.cancelled.push(sessionId)
   }
 
+  async retire(sessionId: string): Promise<void> {
+    if (this.live.delete(sessionId)) this.disposedSessions.push(sessionId)
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true

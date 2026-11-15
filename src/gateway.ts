@@ -323,6 +323,7 @@ export class FeishuGateway {
         this.bridge.cancel(sessionId)
         // A late reply from the prior Agent must never enter the next turn.
         await this.registry.unbind(key)
+        await this.bridge.retire?.(sessionId)
         await this.replyDiagnostic(record, '长任务超时或已取消。原会话已隔离，后续消息将使用新会话。')
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
@@ -344,6 +345,11 @@ export class FeishuGateway {
           await this.registry.unbind(key)
         } catch (unbindError) {
           this.logger.error('session isolation failed for %s: %s', activeSessionId, String(unbindError))
+        }
+        try {
+          await this.bridge.retire?.(activeSessionId)
+        } catch (retireError) {
+          this.logger.warn('failed to retire abandoned session %s: %s', activeSessionId, String(retireError))
         }
       }
       // Never blindly replay a turn that may have caused real side effects.

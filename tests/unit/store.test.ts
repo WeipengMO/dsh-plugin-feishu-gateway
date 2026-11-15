@@ -34,12 +34,15 @@ describe('JsonStore', () => {
     expect((await store.load()).values).toHaveLength(20)
   })
 
-  it('quarantines a corrupt file and starts clean', async () => {
+  it('quarantines corrupt durable state and refuses to silently lose it', async () => {
     const { dir, store } = await fixture()
     await writeFile(path.join(dir, 'doc.json'), '{not json', 'utf8')
-    expect(await store.load()).toEqual({ values: [] })
-    await store.save({ values: [9] })
-    expect(await store.load()).toEqual({ values: [9] })
+    await expect(store.load()).rejects.toThrow(/manual recovery required/)
+    const { readdir } = await import('node:fs/promises')
+    const backup = (await readdir(dir)).find((name) => name.startsWith('doc.json.corrupt-'))
+    expect(backup).toBeTruthy()
+    expect(await readFile(path.join(dir, backup!), 'utf8')).toBe('{not json')
+    expect(await store.load()).toEqual({ values: [] }) // only after operator recovery/restart
   })
 
   it('never leaves a temp file behind', async () => {
