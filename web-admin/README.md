@@ -1,6 +1,6 @@
 # DSH Feishu Admin (management-only companion)
 
-This package adds a native **飞书管理** operations workbench to DSH Web's left sidebar and keeps a separate **飞书 Gateway** credential-only page in Settings.
+This package adds a native **飞书管理** operations workbench to DSH Web's left sidebar, including an **Agent 档案** file manager, and keeps a separate **飞书 Gateway** credential-only page in Settings.
 
 - The **web** Profile only loads this admin package; it never creates Feishu WebSockets or DSH Agent Sessions.
 - The existing **feishu-channel** Profile continues to host the real Feishu gateway.
@@ -14,7 +14,7 @@ This package adds a native **飞书管理** operations workbench to DSH Web's le
 
 ## Installation
 
-See [../docs/OPERATIONS-CONTROL-CENTER-V2.md](../docs/OPERATIONS-CONTROL-CENTER-V2.md) for APIs, security, UI, upgrade commands, rollback and future extensions; the older [management v1 architecture](../docs/MANAGEMENT-WORKBENCH.md) is retained for history.
+See [../docs/AGENT-PROFILE-MANAGER.md](../docs/AGENT-PROFILE-MANAGER.md) for live Workspace resolution, identity/memory files, DSH native context sync, safe restores and upgrade checks. See [../docs/OPERATIONS-CONTROL-CENTER-V2.md](../docs/OPERATIONS-CONTROL-CENTER-V2.md) for prior operations APIs; the older [management v1 architecture](../docs/MANAGEMENT-WORKBENCH.md) is retained for history.
 
 ## Current constraints
 

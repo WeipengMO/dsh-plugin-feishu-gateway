@@ -46,6 +46,7 @@ test('settings are credential-only and the workbench does not echo secrets', () 
 test('operations panels display real data and configuration actions', () => {
   const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
   for (const page of ['overview', 'bots', 'tasks', 'messages', 'sessions', 'approvals',
+      'agent-profile',
       'usage', 'alerts', 'security', 'diagnostics', 'advanced']) {
     assert.ok(workbench.includes("'" + page + "'"), page)
   }
@@ -59,4 +60,12 @@ test('operations panels display real data and configuration actions', () => {
   assert.match(pages, /uncertain/)
   assert.match(built, /function OpsPage\(/)
   assert.match(source, /window\.confirm\(/)
+  const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
+  assert.match(profile, /function AgentProfilePanel\(/)
+  assert.match(profile, /AGENTS\.local\.md/)
+  assert.match(profile, /agent-profile\/restore/)
+  assert.match(profile, /agent-profile\/settings/)
+  assert.match(profile, /function ProfilePreview\(/)
+  assert.doesNotMatch(profile, /dangerouslySetInnerHTML|innerHTML/)
+  assert.match(built, /function AgentProfilePanel\(/)
 })

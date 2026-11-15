@@ -293,3 +293,86 @@ test('operator command writes are authenticated, narrow and do not execute a com
     assert.deepEqual(result.json.commands, [])
   } finally { await f.close() }
 })
+
+
+test('Agent profile endpoints require DSH auth and use only the running Gateway workspace', async () => {
+  const f = await fixture()
+  try {
+    const denied = await f.request('/agent-profile','GET',undefined,{})
+    assert.equal(denied.status,401)
+    const unavailable = await f.request('/agent-profile')
+    assert.equal(unavailable.status,503)
+    const workspace = path.join(f.dir,'workspace')
+    await mkdir(f.stateDir,{recursive:true,mode:0o700})
+    await mkdir(workspace,{mode:0o700})
+    const runtime = {version:1,ts:Date.now(),workspace,status:'ok',
+      tasks:[],sessions:[],transport:{},stats:{}}
+    await writeFile(path.join(f.stateDir,'ops-runtime.json'),JSON.stringify(runtime),{mode:0o600})
+    const initial = await f.request('/agent-profile')
+    assert.equal(initial.status,200)
+    assert.equal(initial.json.profile.workspace,workspace)
+    assert.equal(initial.json.profile.files.find(x=>x.name==='SOUL.md').revision,'absent')
+    const badOrigin = await f.request('/agent-profile/file','PUT',
+      {name:'SOUL.md',content:'a',expectedRevision:'absent'},
+      {...mutating,origin:'https://evil.example'})
+    assert.equal(badOrigin.status,403)
+    const invalid = await f.request('/agent-profile/file','PUT',
+      {name:'../../.ssh/id_rsa',content:'a',expectedRevision:'absent'},mutating)
+    assert.equal(invalid.status,400)
+    const saved = await f.request('/agent-profile/file','PUT',
+      {name:'SOUL.md',content:'# Persona\nBe concise.',expectedRevision:'absent'},mutating)
+    assert.equal(saved.status,200)
+    assert.equal(saved.json.result.saved,true)
+    const loaded = await f.request('/agent-profile/file?name=SOUL.md')
+    assert.equal(loaded.status,200)
+    assert.match(loaded.json.file.content,/Be concise/)
+    assert.match(await readFile(path.join(workspace,'AGENTS.local.md'),'utf8'),/Be concise/)
+    const conflict = await f.request('/agent-profile/file','PUT',
+      {name:'SOUL.md',content:'overwrite',expectedRevision:'absent'},mutating)
+    assert.equal(conflict.status,409)
+    const versions = await f.request('/agent-profile/history?name=SOUL.md')
+    assert.equal(versions.status,200)
+    assert.ok(versions.json.history.length>0)
+    const config = initial.json.profile.settings
+    const setting = await f.request('/agent-profile/settings','PUT',{
+      expectedRevision:config.revision,
+      settings:{enabled:{...config.enabled,'SOUL.md':false},maxBytes:8192,perFileBytes:2048},
+    },mutating)
+    assert.equal(setting.status,200)
+    const after = await f.request('/agent-profile')
+    assert.equal(after.json.profile.loaded.length,0)
+    const overlay = await readFile(path.join(workspace,'AGENTS.local.md'),'utf8')
+    assert.doesNotMatch(overlay,/Be concise/)
+    const stale = await f.request('/agent-profile/settings','PUT',{
+      expectedRevision:config.revision,
+      settings:{enabled:config.enabled,maxBytes:8192,perFileBytes:2048},
+    },mutating)
+    assert.equal(stale.status,409)
+    const synced=await f.request('/agent-profile/sync','POST',{},mutating)
+    assert.equal(synced.status,200)
+    assert.equal((await f.request('/agent-profile')).json.profile.syncNeeded,false)
+  } finally { await f.close() }
+})
+
+test('Agent profile API never follows symlinks or accepts stale Gateway workspaces', async () => {
+  const f=await fixture()
+  try{
+    const workspace=path.join(f.dir,'workspace')
+    await mkdir(f.stateDir,{recursive:true,mode:0o700})
+    await mkdir(workspace,{mode:0o700})
+    const snapshot={version:1,ts:Date.now(),workspace,status:'ok',
+      transport:{},tasks:[],sessions:[],stats:{}}
+    const filename=path.join(f.stateDir,'ops-runtime.json')
+    await writeFile(filename,JSON.stringify(snapshot),{mode:0o600})
+    const outside=path.join(f.dir,'secret.txt')
+    await writeFile(outside,'SECRET_SHOULD_NOT_LEAK')
+    await symlink(outside,path.join(workspace,'SOUL.md'))
+    const blocked=await f.request('/agent-profile/file?name=SOUL.md')
+    assert.equal(blocked.status,409)
+    assert.doesNotMatch(JSON.stringify(blocked.json),/SECRET_SHOULD_NOT_LEAK/)
+    snapshot.ts=Date.now()-90000
+    await writeFile(filename,JSON.stringify(snapshot),{mode:0o600})
+    const expired=await f.request('/agent-profile')
+    assert.equal(expired.status,503)
+  } finally { await f.close() }
+})

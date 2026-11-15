@@ -12,6 +12,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
+import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
+  restoreAgentFile, saveAgentSettings, applyAgentProfile } from './agent-profile.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -224,6 +226,15 @@ async function queueOperatorCommand(stateDir, body) {
   return { id: command.id, type: command.type }
 }
 
+async function agentProfileContext(stateDir) {
+  const snapshot = await readOpsSnapshot(stateDir)
+  // The workspace comes only from the actual Gateway runtime. Never let a
+  // browser-supplied path or unsaved Web Admin config select filesystem scope.
+  if (!snapshot || snapshot.stale || !snapshot.workspace)
+    throw httpError(503, 'running Gateway workspace unavailable; start Gateway and refresh')
+  return { stateDir, workspace: snapshot.workspace }
+}
+
 async function setCredential(filename, body, knownBots) {
   exactKeys(body, ['botId', 'appId', 'appSecret'])
   const id = body.botId
@@ -306,6 +317,49 @@ export function createAdminHandler(options = {}) {
         const limit = params.has('limit') ? Number(params.get('limit')) : 100
         const kind = params.get('kind') || undefined
         return json(res, 200, { ok: true, events: await readOpsEvents(stateDir, { kind, limit }) })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/agent-profile') {
+        return json(res, 200, { ok: true, profile: await listAgentFiles(await agentProfileContext(stateDir)) })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/agent-profile/file') {
+        const name = new URL(req.url ?? '', 'http://localhost').searchParams.get('name')
+        return json(res, 200, { ok: true, file: await readAgentFile(await agentProfileContext(stateDir), name) })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/agent-profile/history') {
+        const name = new URL(req.url ?? '', 'http://localhost').searchParams.get('name')
+        return json(res, 200, { ok: true, history: await listAgentHistory(await agentProfileContext(stateDir), name) })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/agent-profile/file') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['name', 'content', 'expectedRevision'])
+          const result = await saveAgentFile(await agentProfileContext(stateDir), body)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/agent-profile/restore') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['name', 'id', 'expectedRevision'])
+          const result = await restoreAgentFile(await agentProfileContext(stateDir), body)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/agent-profile/settings') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['settings', 'expectedRevision'])
+          const result = await saveAgentSettings(await agentProfileContext(stateDir), body)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/agent-profile/sync') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, [])
+          const result = await applyAgentProfile(await agentProfileContext(stateDir))
+          return json(res, 200, { ok: true, result })
+        })
       }
       if (req.method === 'POST' && route === PREFIX + '/ops/commands') {
         return await serializeMutation(async () => {
