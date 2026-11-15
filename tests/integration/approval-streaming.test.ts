@@ -102,6 +102,22 @@ describe('Feishu callback and native DSH approval integration', () => {
     await b.gateway.stop()
   })
 
+  it('revokes an outstanding approval when Feishu WS reconnects', async () => {
+    const b = await boot(new SlowBridge(), { approvalCards: true })
+    await b.emit('om_work', 'needs approval')
+    await until(() => b.bridge.prompts.length === 1)
+    const sessionId = b.bridge.prompts[0]!.sessionId
+    const decision = b.gateway.answerApproval({ agent: { id: sessionId }, toolName: 'bash' },
+      async () => 'unavailable')
+    await until(() => b.t.interactiveCards.length === 1)
+    await b.t.simulateReconnect()
+    expect(await decision).toBe('unavailable')
+    expect(b.gateway.health().pendingApprovals).toBe(0)
+    await b.emit('om_cancel', '/cancel')
+    await b.gateway.whenIdle()
+    await b.gateway.stop()
+  })
+
   it('keeps durable text reply when native CardKit start fails', async () => {
     const b = await boot(new MockSessionBridge({ reply: 'final model response' }), { streamCards: true })
     b.t.startStreamCard = async () => { throw new Error('cardkit unlicensed') }

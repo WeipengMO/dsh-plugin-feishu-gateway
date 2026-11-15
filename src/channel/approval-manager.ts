@@ -137,6 +137,13 @@ export class FeishuApprovalManager {
     }
   }
 
+  /** WebSocket disconnect revokes all pending approvals for that bot. */
+  cancelBot(botId: string): void {
+    for (const [nonce, pending] of this.pending) {
+      if (pending.botId === botId) this.decide(nonce, 'unavailable')
+    }
+  }
+
   stop(): void {
     this.disposed = true
     for (const nonce of [...this.pending.keys()]) this.decide(nonce, 'cancelled')

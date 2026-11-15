@@ -109,6 +109,19 @@ describe('fail-closed native approval card manager', () => {
     expect(await second).toBe('cancelled')
   })
 
+  it('revokes pending approvals on a transport disconnect without granting', async () => {
+    const t = setup()
+    const waiting = t.ask()
+    await Promise.resolve()
+    const click = t.action('allow')
+    t.manager.cancelBot('unrelated')
+    expect(t.manager.size).toBe(1)
+    t.manager.cancelBot('default')
+    expect(await waiting).toBe('unavailable')
+    expect(t.manager.consume(click)?.toast.type).toBe('warning')
+    t.manager.stop()
+  })
+
   it('does not grant if sending the approval card fails', async () => {
     const t = setup()
     t.transport.sendInteractiveCard = async () => { throw new Error('disconnected') }

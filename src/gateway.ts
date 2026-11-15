@@ -659,6 +659,9 @@ export class FeishuGateway {
   }
 
   private onStateChange(botId: string, state: TransportState, error?: Error): void {
+    if (state === 'reconnecting' || state === 'failed' || state === 'closing' || state === 'closed') {
+      this.approvals.cancelBot(botId)
+    }
     if (error) this.logger.error('transport %s -> %s: %s', botId, state, error.message)
     else this.logger.info('transport %s -> %s', botId, state)
     if (state === 'connected') {
