@@ -58,14 +58,14 @@ pnpm run pack
 
 当前发布版的两个安装包：
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.12.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.12.tgz`
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.13.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.13.tgz`
 
 首次安装时分别安装到各自 Profile；已装旧版 Gateway 的用户需要**同时升级 Gateway 与 Web Admin**（rc.10 的管理端 API 依赖新的管理服务端）。不要把 Gateway 安装到 Web：
 
 ```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.12.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.12.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.13.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.13.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```

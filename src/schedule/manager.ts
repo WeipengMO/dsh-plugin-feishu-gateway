@@ -171,7 +171,12 @@ interface RunState {
 
 const UNAVAILABLE_REASON = 'DSH native schedule service is not mounted in this profile'
 const FALLBACK_NOTICE_TEXT = 'scheduled task triggered; result lives in the DSH Session'
-const FALLBACK_GRACE_MS = 30_000
+/**
+ * A scheduled Agent turn can legitimately take minutes (data-collection scripts,
+ * slow models). Wait long enough that a real result is not racing a fallback
+ * notice, and never notify while the native task still reports an active run.
+ */
+const FALLBACK_GRACE_MS = 5 * 60_000
 const DEBOUNCE_MS = 250
 const MAX_TASKS = 200
 const MAX_HISTORY_TASKS = 50
@@ -776,8 +781,9 @@ export class ScheduleManager {
 
   /**
    * Fallback notification: if a native lastDelivery has no matching run/notice
-   * after a 30s grace, send one bounded notice. This covers Host-created
-   * Sessions that are scope-filtered away from the plugin ctx.
+   * after a long grace (and the native task is no longer executing), send one
+   * bounded notice. This covers Host-created Sessions that are scope-filtered
+   * away from the plugin ctx without racing a slow but successful Agent turn.
    */
   private async maybeFallbackNotices(
     items: readonly NativeTask[], state: DeliveryState, now: number,
@@ -789,6 +795,9 @@ export class ScheduleManager {
       const config = state.configs[item.id]
       const last = item.lastDelivery
       if (!config || !last) continue
+      // The native runtime holds an execution slot until the Agent is idle;
+      // a result is still coming, so a notice here would duplicate it.
+      if (item.executionActive === true) continue
       if (config.notify !== 'result' && config.notify !== 'both') continue
       const messageId = last.messageId
       if (!messageId) continue

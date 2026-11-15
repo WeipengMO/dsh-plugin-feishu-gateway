@@ -157,7 +157,7 @@ wall-clock 转 UTC（DST 安全、时区显式，不用固定数值偏移），�
   由既有退避/drain 机制处理。
 - **重复发送保护**：按 `messageId` 去重（内存 + 持久化 `schedule-runs.json` 台账），叠加
   Outbox 幂等键；原生回执本身可能因 flush/回执两次独立提交而重复，故不能只依赖它。
-- **兜底通知**：`refresh()` 若发现新的原生 `lastDelivery` 在 30 秒宽限期内没有匹配的
+- **兜底通知**：`refresh()` 若发现新的原生 `lastDelivery` 在 5 分钟宽限期内没有匹配的
   Gateway run（Host 创建的 Session 事件被 scope 过滤掉时会发生），发送一条有界提示
   「任务已触发，结果在 DSH Session 中」，保证飞书侧至少有通知。
 - **失败 / 空回复**：`notify` 含 `failure` 时发送有界失败通知。命令结果
@@ -320,7 +320,7 @@ dsh --profile <隔离 Web 测试 Profile> --dump-config
   profile`），**不做任何回退，也不自建调度器**；此时没有「降级可用」的定时任务能力。
 - **Host 创建 Session 的 `session/event` 可见性**：本功能用 Gateway 自有的 `session`
   目标 + `schedule/resolve-agent` waterfall 来接回实时 Agent，但插件级 ctx 对 Host
-  创建/恢复的 Session 事件仍可能受 scope 过滤影响。因此提供 30 秒宽限期的**兜底通知**
+  创建/恢复的 Session 事件仍可能受 scope 过滤影响。因此提供 5 分钟宽限期、且在原生任务仍标记 `executionActive` 时不触发的**兜底通知**
   （只保证「已触发」提示），并明确原生投递回执**不等于模型执行完成**。该可达性是否
   完备**尚未在真实租户复验**（[ARCHITECTURE.md](ARCHITECTURE.md) §4 记录的是 headless
   运行时插件自建 Session 的事件可达性结论，不等同于本场景）。

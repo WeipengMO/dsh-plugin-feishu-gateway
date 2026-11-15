@@ -221,7 +221,7 @@ Every call is wrapped so a native rejection becomes a bounded error string.
   bounded failure notice when `notify` includes failure. Deduplicate by
   `messageId` (in-memory + persisted run ledger).
 * **Fallback notification**: if `refresh()` sees a new native `lastDelivery`
-  with no matching run within a 30s grace period, send one bounded notice
+  with no matching run within a long grace (5 min, and never while the native task reports executionActive) period, send one bounded notice
   ("task triggered; result lives in the DSH Session") with key
   `schedule:<taskId>:<messageId>:notice`. This guarantees Feishu notification
   even when Host-created sessions are scope-filtered away from the plugin ctx.

@@ -546,7 +546,7 @@ describe('ScheduleManager — observed turns and fallback', () => {
     expect(denied).toMatchObject({ delivered: false, error: 'target_rejected' })
   })
 
-  it('sends one bounded fallback notice after the 30s grace, then never again', async () => {
+  it('sends one bounded fallback notice after the long grace, then never again', async () => {
     const { spy, fp, manager } = await boot()
     manager.attachNative(fp.port)
     await manager.start()
@@ -560,10 +560,10 @@ describe('ScheduleManager — observed turns and fallback', () => {
         messageId: 'm-fallback', targetSessionId: 'sess-client-1',
       },
     })
-    spy.setNow(Date.parse('2026-01-01T00:00:20.000Z')) // 20s: still inside grace
+    spy.setNow(Date.parse('2026-01-01T00:02:00.000Z')) // 2min: still inside grace
     await manager.refresh()
     expect(spy.sent).toHaveLength(0)
-    spy.setNow(Date.parse('2026-01-01T00:00:40.000Z')) // 40s: past grace
+    spy.setNow(Date.parse('2026-01-01T00:06:00.000Z')) // 6min: past grace
     await manager.refresh()
     expect(spy.sent).toHaveLength(1)
     expect(spy.sent[0]!.key).toBe('schedule:schedule-1:m-fallback:notice')
@@ -589,10 +589,29 @@ describe('ScheduleManager — observed turns and fallback', () => {
     await manager.onScheduleTurn({
       sessionId: 'sess-client-1', messageId: 'm-covered', text: 'ok', status: 'success', elapsedMs: 10,
     })
-    spy.setNow(Date.parse('2026-01-01T00:00:40.000Z'))
+    spy.setNow(Date.parse('2026-01-01T00:06:00.000Z')) // past the long grace
     await manager.refresh()
     // Only the turn's own send, no extra notice.
     expect(spy.sent.map((s) => s.key)).toEqual(['schedule:schedule-1:m-covered'])
+  })
+
+  it('never races a slow running native turn with a fallback notice', async () => {
+    const { spy, fp, manager } = await boot()
+    manager.attachNative(fp.port)
+    await manager.start()
+    await manager.execute(createCommand({ notify: 'both' }))
+    const task = fp.tasks.get('schedule-1')!
+    fp.tasks.set('schedule-1', {
+      ...task,
+      executionActive: true,
+      lastDelivery: {
+        scheduledAt: '2026-01-01T00:00:00.000Z', deliveredAt: '2026-01-01T00:00:00.000Z',
+        messageId: 'm-slow', targetSessionId: 'sess-client-1',
+      },
+    })
+    spy.setNow(Date.parse('2026-01-01T00:09:00.000Z')) // well past grace, but still running
+    await manager.refresh()
+    expect(spy.sent).toHaveLength(0)
   })
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-feishu-gateway",
-  "version": "0.2.0-rc.12",
+  "version": "0.2.0-rc.13",
   "description": "Independent DSH Cordis plugin that bridges Feishu/Lark direct messages to native DSH Sessions over a WebSocket long connection.",
   "keywords": [
     "dsh",
