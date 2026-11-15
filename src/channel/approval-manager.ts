@@ -18,6 +18,7 @@ export interface ApprovalOwner {
 }
 
 interface PendingApproval extends ApprovalOwner {
+  readonly sessionId: string
   readonly nonce: string
   readonly cardMessageId: string
   readonly expiresAt: number
@@ -77,7 +78,7 @@ export class FeishuApprovalManager {
       timer.unref?.()
       const abort = () => this.decide(nonce, 'cancelled')
       this.pending.set(nonce, {
-        ...owner, nonce, cardMessageId, expiresAt: Date.now() + this.timeoutMs,
+        ...owner, sessionId: id, nonce, cardMessageId, expiresAt: Date.now() + this.timeoutMs,
         resolve, timer, signal: req.signal, abort, transport,
       })
       req.signal?.addEventListener('abort', abort, { once: true })
@@ -121,6 +122,13 @@ export class FeishuApprovalManager {
     clearTimeout(pending.timer)
     if (pending.abort) pending.signal?.removeEventListener('abort', pending.abort)
     pending.resolve(outcome)
+  }
+
+  /** Cancelling an Agent invalidates every approval card for that exact turn. */
+  cancelSession(sessionId: string): void {
+    for (const [nonce, pending] of this.pending) {
+      if (pending.sessionId === sessionId) this.decide(nonce, 'cancelled')
+    }
   }
 
   stop(): void {

@@ -353,6 +353,7 @@ export class FeishuGateway {
     active.cancelledByUser = true
     active.controller.abort()
     if (active.sessionId) {
+      this.approvals.cancelSession(active.sessionId)
       try { this.bridge.cancel(active.sessionId) }
       catch { this.logger.warn('native Agent cancellation failed') }
     }
@@ -600,6 +601,7 @@ export class FeishuGateway {
           '处理失败，可能已经执行部分操作；请先检查 DSH 会话，再决定是否重试。')
       }
     } finally {
+      if (activeSessionId) this.approvals.cancelSession(activeSessionId)
       unsubscribeProgress?.()
       if (turn.stream) {
         try { await turn.stream.close(progressStatus) }
