@@ -42,11 +42,10 @@ export class JsonStore<T> {
     try {
       return JSON.parse(raw) as T
     } catch (error) {
-      // Never replace durable Outbox / Session state with an empty fallback.
-      // Quarantine the exact corrupt bytes for operator recovery, then fail startup.
-      const backup = `${this.file}.corrupt-${Date.now()}-${newId('backup')}`
-      await rename(this.file, backup)
-      throw new Error(`invalid durable state in ${this.file}; preserved at ${backup}; manual recovery required`, { cause: error })
+      // Leave the corrupt document in place. Moving it away would make the NEXT
+      // systemd restart see ENOENT and silently boot with an empty Outbox.
+      // The service must keep failing closed until an operator repairs it.
+      throw new Error(`invalid durable state in ${this.file}; original preserved in place; manual recovery required`, { cause: error })
     }
   }
 

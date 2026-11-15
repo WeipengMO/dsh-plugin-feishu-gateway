@@ -445,3 +445,24 @@ describe('periodic parked reply recovery', () => {
     await gateway.stop()
   })
 })
+
+describe('fail-closed corrupt startup', () => {
+  it('does not start with empty state or leave a connected transport behind', async () => {
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const { writeFile, readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    await writeFile(join(dir, 'outbox.json'), '{broken-json', 'utf8')
+    const transport = new MockFeishuTransport('default')
+    const gateway = createGateway(resolveConfig({ stateDir: dir, allowlist: ['ou_alice'] }), {
+      transports: [transport], bridge: new MockSessionBridge(), logger: silentLogger,
+    })
+    await expect(gateway.start()).rejects.toThrow(/invalid durable state/)
+    expect(await readFile(join(dir, 'outbox.json'), 'utf8')).toBe('{broken-json')
+    expect(transport.state).not.toBe('connected')
+    const retry = createGateway(resolveConfig({ stateDir: dir, allowlist: ['ou_alice'] }), {
+      transports: [new MockFeishuTransport('default')], bridge: new MockSessionBridge(), logger: silentLogger,
+    })
+    await expect(retry.start()).rejects.toThrow(/invalid durable state/)
+  })
+})

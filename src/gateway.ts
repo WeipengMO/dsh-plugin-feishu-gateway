@@ -110,7 +110,7 @@ export class FeishuGateway {
     this.started = true
     this.startedAt = Date.now()
     try {
-      await mkdir(this.config.stateDir, { recursive: true })
+      await mkdir(this.config.stateDir, { recursive: true, mode: 0o700 })
       // stateDir is exclusive to ONE gateway instance. The Inbox admission
       // authority is an in-memory Map, so two instances sharing a stateDir
       // would admit the same message_id and execute the Agent turn twice.
@@ -175,6 +175,13 @@ export class FeishuGateway {
       }
     } catch (error) {
       this.started = false
+      // A partially started Gateway may already have live WebSockets and
+      // listeners. Close them BEFORE releasing the exclusive stateDir lock.
+      try {
+        await this.stop()
+      } catch (cleanupError) {
+        this.logger.error('startup cleanup failed: %s', String(cleanupError))
+      }
       await this.releaseOwnerLock()
       throw error
     }

@@ -38,11 +38,10 @@ describe('JsonStore', () => {
     const { dir, store } = await fixture()
     await writeFile(path.join(dir, 'doc.json'), '{not json', 'utf8')
     await expect(store.load()).rejects.toThrow(/manual recovery required/)
-    const { readdir } = await import('node:fs/promises')
-    const backup = (await readdir(dir)).find((name) => name.startsWith('doc.json.corrupt-'))
-    expect(backup).toBeTruthy()
-    expect(await readFile(path.join(dir, backup!), 'utf8')).toBe('{not json')
-    expect(await store.load()).toEqual({ values: [] }) // only after operator recovery/restart
+    expect(await readFile(path.join(dir, 'doc.json'), 'utf8')).toBe('{not json')
+    // A daemon restart must NOT convert corruption into an empty Outbox.
+    const restarted = new JsonStore<Doc>(dir, 'doc', { values: [] })
+    await expect(restarted.load()).rejects.toThrow(/manual recovery required/)
   })
 
   it('never leaves a temp file behind', async () => {

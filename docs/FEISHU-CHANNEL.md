@@ -90,6 +90,8 @@ systemctl --user enable --now dsh-feishu-channel.service
 | 发消息无回复，`rejected.sender-not-allowlisted` 增长 | 你的 `open_id` 不在 `allowlist` 中 |
 | `rejected.groups-disabled` | 只支持私聊，群聊默认拒绝 |
 | `health.errors` 增长 | 看 `channel.log` 的 `message ... failed`，通常是模型路由或权限问题 |
+| `invalid durable state` | 不会自动清空 Outbox/Session；备份后人工修复对应 JSON，再启动服务 |
+| `.owner.lock.reaper` 持续存在 | 上次清理旧锁的进程可能意外退出；确认所有 Gateway 已停止后，人工检查再处理 |
 | 回复很慢/超时 | 长任务可调大 `replyTimeoutMs` |
 
 ## 与测试 harness 的区别
