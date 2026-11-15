@@ -72,7 +72,7 @@ function WbEmpty({ headline, description }) {
 
 function Workbench() {
   const [state, setState] = useState(null)
-  const [live, setLive] = useState(null)
+  const [live, setLive] = useState(undefined)
   const [diagnostics, setDiagnostics] = useState(null)
   const [selected, setSelected] = useState('overview')
   const [loading, setLoading] = useState(true)
@@ -88,6 +88,7 @@ function Workbench() {
       setUpdatedAt(new Date())
       setError('')
     } catch (e) {
+      setLive(null)
       setError(e.message || String(e))
     } finally { setLoading(false); setUpdating(false) }
   }, [])
@@ -110,7 +111,7 @@ function Workbench() {
       .catch(() => { if (active) setDiagnostics(null) })
     return () => { active = false }
   }, [selected])
-  const health = live ?? state?.health?.health ?? null
+  const health = live === undefined ? (state?.health?.health ?? null) : live
   const bots = state?.bots ?? []
   const flags = state?.config ?? {}
   const rejected = health?.rejected && typeof health.rejected === 'object'
