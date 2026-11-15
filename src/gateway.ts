@@ -16,6 +16,7 @@ import type {
   GatewayConfig,
   GatewayLogger,
   InboundMessage,
+  ModelTokenUsage,
   SessionBridge,
   TransportState,
 } from './types.js'
@@ -538,6 +539,10 @@ export class FeishuGateway {
     let activeSessionId: string | undefined
     let unsubscribeProgress: (() => void) | undefined
     let progressStatus: 'done' | 'cancelled' | 'failed' = 'failed'
+    let attempted = false
+    let reportedUsage: ModelTokenUsage | undefined
+    let reportedModel: string | undefined
+    let usageOutcome: 'done' | 'failed' | 'cancelled' | 'timeout' | 'uncertain' = 'failed'
     try {
       // Durable execution boundary, before any Agent-side effects.
       await this.inbox.markRunning(record.messageId)
@@ -560,6 +565,7 @@ export class FeishuGateway {
       this.audit({ kind: 'task', state: 'session-ready', botId: record.botId,
         ref: record.messageId, session: sessionId })
       if (signal.aborted) throw new Error('turn aborted before submit')
+      attempted = true
       await this.bridge.submit(sessionId, record.text, signal)
       if (this.config.streamCards && !signal.aborted) {
         try {
@@ -586,6 +592,9 @@ export class FeishuGateway {
         timeoutMs: this.config.replyTimeoutMs,
         signal,
       })
+      // A task can consume tokens even when delivery fails or the turn times out.
+      reportedUsage = reply.usage
+      reportedModel = reply.model
       // Shutdown leaves a running turn uncertain; it may have had side effects.
       if (this.abortController.signal.aborted) return
       if (turn.cancelledByUser) {
@@ -637,6 +646,7 @@ export class FeishuGateway {
       this.processed += 1
       const finalState = reply.reason === 'timeout' ? 'timed-out'
         : reply.reason === 'cancelled' ? 'cancelled' : 'done'
+      usageOutcome = finalState === 'timed-out' ? 'timeout' : finalState
       this.audit({ kind: 'task', state: finalState, botId: record.botId, ref: record.messageId,
         session: activeSessionId, elapsedMs: Date.now() - turn.startedAt,
         ...(finalState === 'done' ? { model: reply.model,
@@ -688,6 +698,17 @@ export class FeishuGateway {
           const closing = await withTimeout(turn.stream.close(progressStatus), 5_000)
           if (closing.timedOut) this.logger.warn('Feishu CardKit stream cleanup exceeded deadline')
         } catch { this.logger.warn('Feishu CardKit stream cleanup failed') }
+      }
+      if (attempted) {
+        // Persist an explicit unknown-usage record for failed/cancelled turns.
+        // The ledger is separate from bounded audit events and contains no text.
+        const status = this.abortController.signal.aborted ? 'uncertain'
+          : turn.cancelledByUser ? 'cancelled' : usageOutcome
+        await this.ops.recordUsage({
+          ref: record.messageId, botId: record.botId, chat: record.chatId,
+          user: record.senderId, session: activeSessionId,
+          model: reportedModel, status, usage: reportedUsage,
+        }).catch(() => this.logger.warn('token history unavailable'))
       }
       if (this.activeTurns.get(key) === turn) this.activeTurns.delete(key)
       this.refreshOps()
