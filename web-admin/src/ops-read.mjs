@@ -96,6 +96,7 @@ export function summarizeOps(events, snapshot) {
   const messages = new Map()
   const approvals = []
   const usage = new Map()
+  const byBot = new Map()
   const days = new Map()
   for (const event of [...events].reverse()) {
     if (event.kind === 'message' || event.kind === 'task') {
@@ -113,6 +114,9 @@ export function summarizeOps(events, snapshot) {
       const model = event.model || 'unknown'
       const before = usage.get(model) ?? { model, tokens: 0, turns: 0 }
       usage.set(model, { model, tokens: before.tokens + event.tokens, turns: before.turns + 1 })
+      const botId = event.botId || 'unknown'
+      const prior = byBot.get(botId) ?? { botId, tokens: 0, turns: 0 }
+      byBot.set(botId, { botId, tokens: prior.tokens + event.tokens, turns: prior.turns + 1 })
       const day = new Date(event.ts).toISOString().slice(0, 10)
       const prev = days.get(day) ?? { day, tokens: 0, turns: 0 }
       days.set(day, { day, tokens: prev.tokens + event.tokens, turns: prev.turns + 1 })
@@ -130,6 +134,7 @@ export function summarizeOps(events, snapshot) {
     messages: [...messages.values()].reverse().slice(0, 100),
     approvals: approvals.reverse().slice(0, 100),
     usage: [...usage.values()].sort((a,b) => b.tokens - a.tokens),
+    byBot: [...byBot.values()].sort((a,b) => b.tokens - a.tokens),
     daily: [...days.values()].sort((a,b) => a.day.localeCompare(b.day)),
     alerts: alerts.slice(0, 50),
   }
