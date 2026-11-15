@@ -67,6 +67,10 @@ window.__ModuleLoader__.load({
       const [interval, setIntervalValue] = useState('')
       const [autoConnect, setAutoConnect] = useState('inherit')
       const [replyFormat, setReplyFormat] = useState('inherit')
+      const [approvalCards, setApprovalCards] = useState(false)
+      const [streamCards, setStreamCards] = useState(false)
+      const [approvalTimeout, setApprovalTimeout] = useState('90')
+      const [streamInterval, setStreamIntervalValue] = useState('800')
       const [botId, setBotId] = useState('default')
       const [appId, setAppId] = useState('')
       const [appSecret, setAppSecret] = useState('')
@@ -86,6 +90,10 @@ window.__ModuleLoader__.load({
         setIntervalValue(c.outboxRetryIntervalMs === undefined ? '' : String(c.outboxRetryIntervalMs / 1000))
         setAutoConnect(c.autoConnect === undefined ? 'inherit' : c.autoConnect ? 'enabled' : 'disabled')
         setReplyFormat(c.replyFormat || 'inherit')
+        setApprovalCards(c.approvalCards === true)
+        setStreamCards(c.streamCards === true)
+        setApprovalTimeout(String((c.approvalTimeoutMs || 90000) / 1000))
+        setStreamIntervalValue(String(c.streamIntervalMs || 800))
         setBotId(current => (data.bots || []).some(b => b.id === current) ? current : (data.bots?.[0]?.id || 'default'))
       }, [])
       const reload = useCallback(async () => {
@@ -119,6 +127,10 @@ window.__ModuleLoader__.load({
         if (interval.trim()) result.outboxRetryIntervalMs = Number(interval) * 1000
         if (autoConnect !== 'inherit') result.autoConnect = autoConnect === 'enabled'
         if (replyFormat !== 'inherit') result.replyFormat = replyFormat
+        result.approvalCards = approvalCards
+        result.streamCards = streamCards
+        if (approvalCards) result.approvalTimeoutMs = Number(approvalTimeout) * 1000
+        if (streamCards) result.streamIntervalMs = Number(streamInterval)
         return result
       }
       async function perform(task, success) {
@@ -177,6 +189,22 @@ window.__ModuleLoader__.load({
             h('option', { value: 'text' }, '普通文本（最兼容）'),
             h('option', { value: 'markdown' }, 'Markdown 富文本（post/md）'))),
           field('DSH 工作目录', textInput(workspace, setWorkspace, '继承 Profile，例如 /home/ubuntu/dsh-workspace')),
+          h('div', { className: 'fga-divider' }),
+          h('h3', null, '交互卡片（需要飞书卡片权限与真实租户验收）'),
+          h('label', { className: 'fga-check' },
+            h('input', { type: 'checkbox', checked: approvalCards,
+              onChange: e => setApprovalCards(e.target.checked) }),
+            '启用飞书原生工具审批卡片（默认关闭）'),
+          approvalCards && field('审批最长等待（秒）',
+            textInput(approvalTimeout, setApprovalTimeout, '90', { type: 'number', min: 5, max: 300 }),
+            '必须将 DSH 工具审批策略改为 ask；超时或断线会拒绝，不会自动放行。'),
+          h('label', { className: 'fga-check' },
+            h('input', { type: 'checkbox', checked: streamCards,
+              onChange: e => setStreamCards(e.target.checked) }),
+            '显示 CardKit 流式任务卡片（默认关闭）'),
+          streamCards && field('任务卡片刷新间隔（毫秒）',
+            textInput(streamInterval, setStreamIntervalValue, '800', { type: 'number', min: 500, max: 5000 }),
+            '增量文本仅作进度预览，最终答复仍使用可靠 Outbox 独立发送。'),
           h('div', { className: 'fga-fields-row' },
             field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
             field('发送尝试次数', textInput(retry, setRetry, '继承 Profile', { type: 'number', min: 1, max: 10 })),

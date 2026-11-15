@@ -52,7 +52,22 @@ export interface SendReceipt {
   readonly messageId: string
 }
 
+export interface CardActionEvent {
+  readonly botId: string
+  readonly actorOpenId: string
+  readonly chatId: string
+  readonly messageId: string
+  readonly value: { readonly namespace?: string; readonly kind?: string; readonly nonce?: string; readonly decision?: string }
+}
+
+export interface FeishuCardHandle {
+  readonly messageId: string
+  readonly cardId?: string
+}
+
 export interface FeishuEventHandlers {
+  /** Answer native card.action.trigger in under 3 seconds (toast-only). */
+  onCardAction?(event: CardActionEvent): Promise<{ toast: { type: string; content: string } }>
   onMessage(message: InboundMessage): void | Promise<void>
   onStateChange(state: TransportState, error?: Error): void
 }
@@ -64,6 +79,12 @@ export interface FeishuTransport {
   connect(handlers: FeishuEventHandlers): Promise<void>
   close(): Promise<void>
   sendText(target: OutboundTarget): Promise<SendReceipt>
+  /** All card methods are optional; older transports keep working. */
+  sendInteractiveCard?(target: { replyToMessageId: string }, card: Record<string, unknown>): Promise<FeishuCardHandle>
+  updateInteractiveCard?(messageId: string, card: Record<string, unknown>): Promise<void>
+  startStreamCard?(target: { replyToMessageId: string }, actionNonce: string): Promise<FeishuCardHandle>
+  updateStreamCard?(cardId: string, text: string, sequence: number): Promise<void>
+  finishStreamCard?(cardId: string, sequence: number): Promise<void>
 }
 
 export interface BotCredentials {
@@ -107,6 +128,11 @@ export interface GatewayConfig {
   readonly replyTimeoutMs: number
   /** Default plain text; opt-in rich Markdown for AI answers. */
   readonly replyFormat: 'text' | 'markdown'
+  /** Advanced Feishu 2.0 cards (off until real-tenant verification). */
+  readonly approvalCards: boolean
+  readonly streamCards: boolean
+  readonly approvalTimeoutMs: number
+  readonly streamIntervalMs: number
   readonly sendRetries: number
   readonly sendRetryBaseDelayMs: number
   /** Recheck parked Outbox replies while the WebSocket stays online (ms). */
@@ -156,6 +182,8 @@ export interface SessionBridge {
   submit(sessionId: string, text: string, signal: AbortSignal): Promise<void>
   /** Wait for the turn to settle and collect the assistant's reply text. */
   waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply>
+  /** Visible assistant text deltas, never internal reasoning. */
+  onTextDelta?(sessionId: string, callback: (text: string) => void): () => void
   /** Cancel the active turn (long-task cancellation hook for v0.2.0). */
   cancel(sessionId: string): void
   /** Release an abandoned Session handle after timeout/error (not normal follow-ups). */
