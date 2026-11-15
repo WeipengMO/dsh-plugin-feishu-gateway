@@ -800,7 +800,7 @@ export class FeishuGateway {
       opsRef(x.messageId) === command.ref && x.phase === 'running' && !x.cancelledByUser)
     if (matches.length !== 1) return 'not-found'
     const active = matches[0]!
-    this.requestCancel(active) // Same safe path as the owner's CardKit /cancel
+    this.requestCancel(active, 'operator') // Same safe path as the owner's CardKit /cancel
     this.audit({ kind: 'task', state: 'operator-cancel', botId: active.botId,
       ref: active.messageId, session: active.sessionId })
     return 'completed'
