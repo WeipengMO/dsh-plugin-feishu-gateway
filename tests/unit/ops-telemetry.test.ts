@@ -37,3 +37,37 @@ describe('privacy-safe operations telemetry', () => {
     expect(opsRef('a')).not.toBe(opsRef('b'))
   })
 })
+
+
+describe('persistent native token usage ledger', () => {
+  it('stores per-task reported usage with hashed user/chat/session and preserves unknown values', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'feishu-usage-ledger-'))
+    try {
+      const ops = new OpsTelemetry(dir, 30)
+      await ops.recordUsage({ ref: 'private-task', user: 'ou_private', chat: 'oc_private',
+        session: 'session-private', botId: 'default', model: 'deepseek/chat',
+        status: 'done', usage: { inputTokens: 100, outputTokens: 25, cacheReadTokens: 10 } })
+      await ops.recordUsage({ ref: 'unknown-task', user: 'ou_private', chat: 'oc_private',
+        botId: 'default', status: 'failed' })
+      const day = new Date().toISOString().slice(0, 10)
+      const folder = path.join(dir, 'ops-usage')
+      const file = path.join(folder, day + '.jsonl')
+      const raw = await readFile(file, 'utf8')
+      const events = raw.trim().split('\n').map(line => JSON.parse(line))
+      expect(events).toHaveLength(2)
+      expect(events[0]).toMatchObject({ ref: opsRef('private-task'),
+        user: opsRef('ou_private'), chat: opsRef('oc_private'),
+        session: opsRef('session-private'), inputTokens: 100, outputTokens: 25 })
+      expect(events[1].inputTokens).toBeUndefined()
+      expect(events[1].outputTokens).toBeUndefined()
+      expect(raw).not.toContain('ou_private')
+      expect(raw).not.toContain('oc_private')
+      expect(raw).not.toContain('session-private')
+      expect((await stat(file)).mode & 0o777).toBe(0o600)
+      expect((await stat(folder)).mode & 0o777).toBe(0o700)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+  it('rejects unsafe retention durations', () => {
+    expect(() => new OpsTelemetry('/unused', 2)).toThrow(/between 7 and 730/)
+  })
+})

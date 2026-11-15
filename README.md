@@ -73,6 +73,10 @@ dsh --profile web --dump-config
 
 GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，卡片行为见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)，新版底栏参见 [0.2.0-rc.3 说明](docs/CARD-FOOTER-0.2.0-rc.3.md)；灰色小字见 [0.2.0-rc.4 说明](docs/CARD-FOOTER-0.2.0-rc.4.md)；运维工作台见 [rc.5 操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)；身份与记忆管理见 [rc.6 操作手册](docs/AGENT-PROFILE-MANAGER.md)。
 
+## Issue #17：历史 Token 用量分析（开发分支）
+
+新增独立的每日脱敏用量账本，支持历史日历热图、可切换时区的趋势、模型/机器人/用户/聊天/Session 筛选及聚合 CSV；原有滚动审计不承担历史统计。缺失 usage 的任务单独显示，不填造 0。Gateway 环境变量 DSH_FEISHU_USAGE_RETENTION_DAYS 可设置 7–730 天的留存期（默认 365）。部署和验收步骤见 [历史用量分析说明](docs/TOKEN-USAGE-ANALYTICS.md)。此项目前位于 Issue #17 开发分支，尚未经真实飞书租户验收或正式发布。
+
 ## 安全边界与剩余工作
 
 私聊只接收白名单 `open_id`；默认拒绝群聊；App Secret 通过环境变量注入且 Web Admin 不回显。部署时请保护 `~/.dsh/feishu-channel.env` 和 `stateDir`，并维持最小权限。

@@ -445,3 +445,28 @@ test('Agent profile removes only tagged legacy shared DSH instructions after exp
     assert.equal(now.json.profile.legacy.detected,false)
   } finally { await f.close() }
 })
+
+test('historical usage and CSV endpoints inherit DSH browser authorization', async () => {
+  const f = await fixture()
+  try {
+    const day = new Date().toISOString().slice(0, 10)
+    const dir = path.join(f.stateDir, 'ops-usage')
+    await mkdir(dir, { recursive: true })
+    const row = { version: 1, ts: Date.now(), ref: 'a'.repeat(16),
+      botId: 'default', status: 'done', model: 'deepseek/chat',
+      inputTokens: 27, outputTokens: 13 }
+    await writeFile(path.join(dir, day + '.jsonl'), JSON.stringify(row) + '\n')
+    const query = 'from=' + day + '&to=' + day + '&tz=UTC'
+    assert.equal((await f.request('/ops/usage?' + query, 'GET', undefined, {})).status, 401)
+    assert.equal((await fetch(f.base + '/ops/usage/export?' + query)).status, 401)
+    const report = await f.request('/ops/usage?' + query)
+    assert.equal(report.status, 200)
+    assert.equal(report.json.report.summary.totalTokens, 40)
+    assert.equal(report.json.report.summary.unknownTurns, 0)
+    const csv = await fetch(f.base + '/ops/usage/export?' + query, { headers: allowed })
+    assert.equal(csv.status, 200)
+    assert.match(csv.headers.get('content-type'), /text\/csv/)
+    assert.match(await csv.text(), /27,13,0,0,40/)
+    assert.equal((await f.request('/ops/usage?from=2020-01-01&to=2026-11-15')).status, 400)
+  } finally { await f.close() }
+})
