@@ -154,6 +154,8 @@ v0.1.0 已有 JSONL Inbox + 原子 JSON Outbox + DedupIndex。建议：
 
 ## P1-6 图片 / 文件双向传输
 
+**增量进展（Gateway 0.1.3）**：支持纯文本型 `post` 富文本入站与可选 `post/md` Markdown 回复（默认关闭以保护现有部署）。注意这**不等于图片/文件传输**；媒体节点仍会安全拒绝。下述附件下载、大小校验和原生 Session 注入仍需完成。
+
 **建议**：
 
 - 入站：`im.message.receive_v1` 的 `message_type` 为 `image` / `file` / `post` 时，

@@ -47,6 +47,8 @@ export const Config: ConfigValidator = Schema.object({
     .description('Inbound text is truncated to this many code points.'),
   replyTimeoutMs: Schema.number().default(120_000)
     .description('Maximum time to wait for the native Session reply.'),
+  replyFormat: Schema.union([Schema.const('text'), Schema.const('markdown')]).default('text')
+    .description('Feishu reply type: legacy text (default) or post/md rich Markdown.'),
   sendRetries: Schema.number().default(3)
     .description('Outbound send attempts before the message is parked in the durable outbox.'),
   sendRetryBaseDelayMs: Schema.number().default(500),
@@ -90,6 +92,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     maxDedupEntries: numberOr(raw.maxDedupEntries, 50_000),
     maxTextLength: numberOr(raw.maxTextLength, 8000),
     replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
+    replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
     sendRetries: numberOr(raw.sendRetries, 3),
     sendRetryBaseDelayMs: numberOr(raw.sendRetryBaseDelayMs, 500),
     outboxRetryIntervalMs: Math.max(20, numberOr(raw.outboxRetryIntervalMs, 30_000)),
@@ -188,5 +191,6 @@ export function redactedConfigSummary(config: GatewayConfig): Record<string, unk
     stateDir: config.stateDir,
     offline: config.offline,
     autoConnect: config.autoConnect,
+    replyFormat: config.replyFormat,
   }
 }

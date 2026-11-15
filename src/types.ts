@@ -42,6 +42,8 @@ export interface OutboundTarget {
   /** Feishu `message_id` to reply to (preferred, keeps the conversation). */
   readonly replyToMessageId?: string
   readonly text: string
+  /** Optional rich post/md reply; omitted for backward-compatible plain text. */
+  readonly format?: 'markdown'
   /** Stable per-message idempotency UUID reused on every REST retry. */
   readonly uuid?: string
 }
@@ -103,6 +105,8 @@ export interface GatewayConfig {
   readonly maxDedupEntries: number
   readonly maxTextLength: number
   readonly replyTimeoutMs: number
+  /** Default plain text; opt-in rich Markdown for AI answers. */
+  readonly replyFormat: 'text' | 'markdown'
   readonly sendRetries: number
   readonly sendRetryBaseDelayMs: number
   /** Recheck parked Outbox replies while the WebSocket stays online (ms). */

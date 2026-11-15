@@ -44,8 +44,8 @@ ls -lh dist/*.tgz
 
 构建产物为两个独立 tarball：
 
-- `dsh-plugin-feishu-gateway-0.1.2.tgz`（运行通道）
-- `dsh-plugin-feishu-admin-0.1.0.tgz`（Web 管理插件）
+- `dsh-plugin-feishu-gateway-0.1.3.tgz`（运行通道）
+- `dsh-plugin-feishu-admin-0.1.1.tgz`（Web 管理插件）
 
 **绝不要将 Gateway 的 tarball 安装到 `web` Profile**：它的 Bundle patch 会插入真正的飞书 Gateway。Web Profile 只安装 `dsh-plugin-feishu-admin`。
 
@@ -94,10 +94,10 @@ systemctl --user status dsh-feishu-channel.service --no-pager
 
 ```bash
 # 安装真正的网关，只进入飞书 Profile
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.1.2.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.1.3.tgz"
 
 # 管理插件，只进入 Web Profile
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.1.0.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.1.1.tgz"
 ```
 
 重新读取各 Profile 的配置，验证 `web` 中只增加 `feishu-channel-admin`、没有 `feishu-gateway`：
@@ -115,8 +115,9 @@ dsh --profile feishu-channel --dump-config
 2. 修改白名单或超时时间，点击保存；检查 `~/.dsh/feishu-channel-state/admin-config.json` 为 0600，页面提示“需重启”。
 3. 点击“重启飞书通道”，检查 `systemctl --user status dsh-feishu-channel.service` 与 `http://127.0.0.1:18095/health`。
 4. 飞书私聊发送 2–3 轮消息，验证仍使用同一个原生 Session，消息计数增加。
-5. 未登录 Web 的请求、跨站 Origin、缺少请求头、无效 open_id、非法文件路径、注入包含换行符的 Secret 均应拒绝。
-6. 确认 `dsh-web.service` 并未因飞书通道重启而被重启。
+5. 将「AI 回复格式」切到 Markdown 后重启飞书通道，发送包含代码块/表格的问题，确认飞书按富文本显示；切回普通文本后确认回归正常。
+6. 未登录 Web 的请求、跨站 Origin、缺少请求头、无效 open_id、非法文件路径、注入包含换行符的 Secret 均应拒绝。
+7. 确认 `dsh-web.service` 并未因飞书通道重启而被重启。
 
 ## 安全性
 

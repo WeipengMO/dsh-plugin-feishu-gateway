@@ -41,6 +41,11 @@ describe('managed Feishu channel overlay', () => {
     expect(() => validateManagedConfig({ allowlist: ['not-an-open-id'] })).toThrow(/allowlist/)
     expect(() => validateManagedConfig({ workspace: '../somewhere' })).toThrow(/absolute/)
   })
+  it('accepts explicitly managed Markdown reply format', () => {
+    expect(validateManagedConfig({ replyFormat: 'markdown' }).replyFormat).toBe('markdown')
+    expect(() => validateManagedConfig({ replyFormat: 'html' })).toThrow(/replyFormat/)
+  })
+
   it('fails closed on bad managed JSON rather than reverting to Profile', async () => {
     const d = await tempDir()
     cleanup.push(d.cleanup)

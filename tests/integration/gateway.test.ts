@@ -57,6 +57,16 @@ const alice = (overrides: Partial<InboundMessage> = {}): Partial<InboundMessage>
 })
 
 describe('Gateway end-to-end pipeline (all transports mocked)', () => {
+  it('uses Markdown only for nonempty AI replies when enabled, not control responses', async () => {
+    const { gateway, transport } = await harness({ replyFormat: 'markdown' }, '## heading')
+    await transport.emitMessage(alice({ text: '/help', messageId: 'om_help' }))
+    await transport.emitMessage(alice({ text: 'question', messageId: 'om_answer' }))
+    await gateway.whenIdle()
+    expect(transport.sent.find(s => s.replyToMessageId === 'om_help')?.format).toBeUndefined()
+    expect(transport.sent.find(s => s.replyToMessageId === 'om_answer')?.format).toBe('markdown')
+    await gateway.stop()
+  })
+
   it('receives an allowlisted DM, drives the native Session bridge and replies', async () => {
     const { gateway, transport, bridge } = await harness({}, 'model answer')
     await transport.emitMessage(alice())

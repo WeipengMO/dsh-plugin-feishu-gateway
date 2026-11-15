@@ -10,6 +10,7 @@ import type {
   TransportState,
 } from '../types.js'
 import { newId } from '../util/id.js'
+import { extractFeishuPostText, feishuMarkdownContent } from './post-content.js'
 
 /** Official SDK, imported lazily so the module stays loadable in offline tests. */
 const LARK_MODULE = '@larksuiteoapi/node-sdk'
@@ -154,10 +155,12 @@ export class LarkTransport implements FeishuTransport {
 
   async sendText(target: OutboundTarget): Promise<SendReceipt> {
     if (!this.client) throw new Error(`bot ${this.botId} is not connected`)
-    const content = JSON.stringify({ text: target.text })
+    const rich = target.format === 'markdown'
+    const content = rich ? feishuMarkdownContent(target.text) : JSON.stringify({ text: target.text })
+    const msgType = rich ? 'post' : 'text'
     if (target.replyToMessageId) {
       const result = await this.client.im.message.reply({
-        data: { content, msg_type: 'text', uuid: target.uuid ?? newId('fg') },
+        data: { content, msg_type: msgType, uuid: target.uuid ?? newId('fg') },
         path: { message_id: target.replyToMessageId },
       })
       return unwrap(result, `reply to ${target.replyToMessageId}`)
@@ -166,7 +169,7 @@ export class LarkTransport implements FeishuTransport {
     const result = await this.client.im.message.create({
       // Reuse the outbox-persisted UUID so REST retries/reconnect drains are
       // idempotent on the `create` path too (the `reply` path already does).
-      data: { receive_id: target.chatId, msg_type: 'text', content, uuid: target.uuid ?? newId('fg') },
+      data: { receive_id: target.chatId, msg_type: msgType, content, uuid: target.uuid ?? newId('fg') },
       params: { receive_id_type: 'chat_id' },
     })
     return unwrap(result, `send to ${target.chatId}`)
@@ -192,7 +195,8 @@ export class LarkTransport implements FeishuTransport {
     if (!senderId) return
 
     const messageType = message.message_type ?? 'unknown'
-    const text = messageType === 'text' ? extractTextContent(message.content) : ''
+    const text = messageType === 'text' ? extractTextContent(message.content)
+      : messageType === 'post' ? extractFeishuPostText(message.content) : ''
     const inbound: InboundMessage = {
       messageId: message.message_id,
       botId: this.botId,

@@ -24,6 +24,12 @@ DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
 
 可额外安装独立的 **dsh-plugin-feishu-admin** 到 `web` Profile，在 DSH Web 设置页查看飞书通道健康、修改模型/白名单/机器人并写入受限凭据。网关仍在 `feishu-channel` Profile 独立运行。安装、systemd 管理及验收步骤详见 [WEB-ADMIN.md](WEB-ADMIN.md)。
 
+## 富文本与 Markdown 回复（0.1.3）
+
+入站增加对 `post` **纯文本型富文本**的支持，可以提取标题、正文、Markdown 和 HTTP(S) 链接。携带图片/视频/@ 等不支持的富文本不会被部分读取后提交给 Agent，而是安全拒绝。真正的图片和文件双向传输仍待开发。
+
+AI 回复仍默认使用 `text`；可以在原 Profile 设置 `replyFormat: markdown`，或在 **Web Admin → 模型与配置 → AI 回复格式** 选择 `Markdown 富文本` 并重启通道启用官方 `post/md` 渲染。飞书 post 请求体有大小限制，超长回复会截断并注明。
+
 ## 飞书内管理命令
 
 在已授权的**私聊**里发送以下命令（不作为 Agent 提示词）：

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-feishu-admin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Authenticated DSH Web settings panel for an independently running Feishu channel",
   "type": "module",
   "main": "./lib/index.mjs",

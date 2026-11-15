@@ -150,6 +150,37 @@ describe('LarkTransport (SDK mocked)', () => {
     expect(sdkState.created).toHaveLength(0)
   })
 
+  it('uses the official post/md structure for Markdown replies and reuses UUID', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    await t.sendText({ replyToMessageId: 'om_md', text: '**bold**\n\n\`\`\`ts\nconst x = 1\n\`\`\`',
+      format: 'markdown', uuid: 'STABLE-MARKDOWN-UUID' })
+    const data = sdkState.replied[0]?.data as { content: string; msg_type: string; uuid: string }
+    expect(data.msg_type).toBe('post')
+    expect(data.uuid).toBe('STABLE-MARKDOWN-UUID')
+    const post = JSON.parse(data.content)
+    expect(post.zh_cn.content[0][0]).toMatchObject({ tag: 'md', text: expect.stringContaining('**bold**') })
+    await t.sendText({ chatId: 'oc_md', text: '# Header', format: 'markdown' })
+    const created = sdkState.created[0]?.data as { content: string; msg_type: string }
+    expect(created.msg_type).toBe('post')
+    expect(JSON.parse(created.content).zh_cn.content[0][0].tag).toBe('md')
+  })
+
+  it('extracts text-only Feishu rich post events without losing content', async () => {
+    const t = transport()
+    const received: unknown[] = []
+    await t.connect({ onMessage: m => { received.push(m) }, onStateChange: () => {} })
+    await sdkState.handlers['im.message.receive_v1']!(rawEvent({ message: {
+      ...(rawEvent().message as object), message_type: 'post',
+      content: JSON.stringify({ zh_cn: { content: [
+        [{ tag: 'text', text: '阅读' }, { tag: 'a', text: '论文', href: 'https://example.org' }],
+      ] } }),
+    } }))
+    expect(received).toEqual([expect.objectContaining({
+      messageType: 'post', text: '阅读[论文](https://example.org)',
+    })])
+  })
+
   it('sends via create with chat_id when there is no reply target', async () => {
     const t = transport()
     await t.connect({ onMessage: () => {}, onStateChange: () => {} })
