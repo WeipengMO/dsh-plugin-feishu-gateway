@@ -29,6 +29,7 @@ export class MockFeishuTransport implements FeishuTransport {
   readonly streamCards: Array<{ messageId: string; cardId: string; nonce: string }> = []
   readonly streamUpdates: Array<{ cardId: string; text: string; sequence: number }> = []
   readonly streamFinishes: Array<{ cardId: string; sequence: number }> = []
+  readonly streamReplacements: Array<{ cardId: string; card: Record<string, unknown>; sequence: number }> = []
   remainingFailures: number
 
   constructor(readonly botId: string, private readonly options: MockTransportOptions = {}) {
