@@ -437,7 +437,12 @@ describe('periodic parked reply recovery', () => {
     await gateway.whenIdle()
     expect(gateway.health().outbox.pending).toBe(1)
     expect(transport.state).toBe('connected')
-    for (let i = 0; i < 40 && transport.sent.length === 0; i += 1) {
+    // Wait for BOTH the delivery and the durable removal of the parked record.
+    // `DurableOutbox.persist()` writes to disk *before* it swaps the in-memory
+    // state, so observing `transport.sent` alone can be one write too early
+    // (this made the assertion flaky under full-suite load, not in isolation).
+    for (let i = 0; i < 100; i += 1) {
+      if (transport.sent.length > 0 && gateway.health().outbox.pending === 0) break
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
     expect(transport.sent).toHaveLength(1)
