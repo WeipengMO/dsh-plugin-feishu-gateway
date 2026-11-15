@@ -44,3 +44,15 @@ describe('CardKit progress lifecycle', () => {
     expect(t.streamUpdates[0]?.text).toContain('已取消')
   })
 })
+
+describe('UTF-8 card payload safety', () => {
+  it('limits multibyte Chinese content to well below the CardKit request size ceiling', async () => {
+    const t = new MockFeishuTransport('default')
+    const c = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+    c!.onTextDelta('中'.repeat(10000))
+    await c!.close('done')
+    const payload = t.streamUpdates[0]?.text ?? ''
+    expect(Buffer.byteLength(payload, 'utf8')).toBeLessThan(22 * 1024)
+    expect(payload).toContain('已完成')
+  })
+})

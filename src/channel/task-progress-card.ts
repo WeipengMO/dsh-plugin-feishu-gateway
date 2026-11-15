@@ -17,7 +17,9 @@ export class TaskProgressCard {
   private writing: Promise<void> = Promise.resolve()
   private closed = false
   private failed = false
-  private readonly maxLength = 12_000
+  private textBytes = 0
+  /** Stay below Feishu card content limits even for multibyte Unicode. */
+  private readonly maxTextBytes = 18_000
 
   private constructor(
     transport: FeishuTransport, logger: GatewayLogger, nonce: string,
@@ -44,8 +46,13 @@ export class TaskProgressCard {
 
   onTextDelta(delta: string): void {
     if (this.closed || this.failed || !delta) return
-    if (this.text.length >= this.maxLength) return
-    this.text += delta.slice(0, this.maxLength - this.text.length)
+    if (this.textBytes >= this.maxTextBytes) return
+    for (const point of delta) {
+      const size = Buffer.byteLength(point, 'utf8')
+      if (this.textBytes + size > this.maxTextBytes) break
+      this.text += point
+      this.textBytes += size
+    }
   }
 
   private scheduleFlush(): void {
