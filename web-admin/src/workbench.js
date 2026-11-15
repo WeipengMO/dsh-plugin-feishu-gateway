@@ -79,6 +79,7 @@ function Workbench() {
   const [live, setLive] = useState(undefined)
   const [ops, setOps] = useState(null)
   const [configTab, setConfigTab] = useState('settings')
+  const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -126,6 +127,19 @@ function Workbench() {
   const online = health?.status === 'ok'
   const refresh = () => { void load() }
   const onConfig = tab => { setConfigTab(tab || 'settings'); setSelected('advanced') }
+  const onCommand = async (type, ref) => {
+    const warning = type === 'cancel-task'
+      ? '确认取消这个正在运行的任务？已经执行的外部操作不会自动回滚。'
+      : '确认检查并补发 Outbox 中尚未投递且允许重试的消息？不会重复执行 Agent。'
+    if (!window.confirm(warning)) return
+    setOperatorNotice('')
+    try {
+      const payload = type === 'cancel-task' ? { type, ref } : { type }
+      await request('/ops/commands', 'POST', payload)
+      setOperatorNotice('操作已提交到 Gateway 队列，尚不代表已执行成功。请稍后刷新「告警中心」查看结果。')
+      void load()
+    } catch (e) { setOperatorNotice('操作提交失败：' + (e.message || String(e))) }
+  }
 
   let body
   if (selected === 'overview') {
@@ -209,7 +223,7 @@ function Workbench() {
         '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
       h(Panel, { key: configTab, initialTab: configTab }))
   } else {
-    body = h(OpsPage, { kind: selected, ops, onConfig })
+    body = h(OpsPage, { kind: selected, ops, onConfig, onCommand })
   }
 
   return h('div', { className: 'fgw-root' },
@@ -243,6 +257,7 @@ function Workbench() {
           h('span', null, state?.service ?? '服务状态未知'))),
       loading && !state && h('div', { className: 'fgw-caution' }, '正在读取管理服务…'),
       error && h('div', { className: 'fgw-alert', role: 'alert' }, '管理服务暂不可用：', error),
+      operatorNotice && h('div', { className: 'fgw-caution', role: 'status' }, operatorNotice),
       state && body,
       !state && !loading && h(WbEmpty, { headline: '无法获取管理数据', description: '请检查 DSH Web 的飞书管理插件是否已加载，以及 feishu-channel 服务是否运行。' }),
       h('footer', { className: 'fgw-footnote' }, 'DSH 原生插件扩展 · 仅使用现有认证 API · 15 秒可见页轻量刷新')))
