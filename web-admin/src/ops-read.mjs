@@ -166,7 +166,7 @@ export async function readOpsResults(dir) {
     try { data = JSON.parse(await fs.readFile(path.join(resultsDir, name), 'utf8')) }
     catch { continue }
     if (data?.version !== 1 || data.id !== name.slice(0, -5) ||
-      (data.type !== 'cancel-task' && data.type !== 'retry-outbox') ||
+      !['cancel-task', 'retry-outbox', 'archive-session', 'unbind-session'].includes(data.type) ||
       !['completed', 'not-found', 'rejected', 'error'].includes(data.state)) continue
     results.push({
       id: data.id, type: data.type, state: data.state, ts: safeNum(data.ts),
