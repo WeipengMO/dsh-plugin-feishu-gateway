@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-feishu-admin",
-  "version": "0.2.0-rc.1",
-  "description": "Authenticated DSH Web settings panel for an independently running Feishu channel",
+  "version": "0.2.0-rc.2",
+  "description": "Native DSH Feishu operations dashboard in the left sidebar with credential-only settings",
   "type": "module",
   "main": "./lib/index.mjs",
   "exports": {
