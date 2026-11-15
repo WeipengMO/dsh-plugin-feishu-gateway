@@ -139,3 +139,31 @@ export function summarizeOps(events, snapshot) {
     alerts: alerts.slice(0, 50),
   }
 }
+
+export async function readOpsResults(dir) {
+  const control = path.join(dir, 'ops-control')
+  const resultsDir = path.join(control, 'results')
+  for (const part of [dir, control, resultsDir]) {
+    const stat = await fs.lstat(part).catch(e => { if (e.code === 'ENOENT') return null; throw e })
+    if (!stat) return []
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error('unsafe command results directory')
+  }
+  const names = (await fs.readdir(resultsDir)).filter(name =>
+    /^[a-f0-9-]{36}\.json$/.test(name)).sort().slice(-100)
+  const results = []
+  for (const name of names) {
+    const st = await fs.lstat(path.join(resultsDir, name))
+    if (!st.isFile() || st.isSymbolicLink() || st.size > 1024) continue
+    let data
+    try { data = JSON.parse(await fs.readFile(path.join(resultsDir, name), 'utf8')) }
+    catch { continue }
+    if (data?.version !== 1 || data.id !== name.slice(0, -5) ||
+      (data.type !== 'cancel-task' && data.type !== 'retry-outbox') ||
+      !['completed', 'not-found', 'rejected', 'error'].includes(data.state)) continue
+    results.push({
+      id: data.id, type: data.type, state: data.state, ts: safeNum(data.ts),
+      ...(safeRef(data.ref) ? { ref: data.ref } : {}),
+    })
+  }
+  return results.sort((a,b) => (b.ts ?? 0) - (a.ts ?? 0))
+}
