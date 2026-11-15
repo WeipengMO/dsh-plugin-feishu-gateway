@@ -1,0 +1,6 @@
+# Web-only management companion; never inserts feishu-gateway into this profile.
+- insert:
+    - id: feishu-channel-admin
+      name: 'dsh-plugin-feishu-admin'
+      inject: [webServer, connection]
+      config: {}
