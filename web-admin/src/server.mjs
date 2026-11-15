@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
+import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
 
@@ -323,6 +324,24 @@ export function createAdminHandler(options = {}) {
         const limit = params.has('limit') ? Number(params.get('limit')) : 100
         const kind = params.get('kind') || undefined
         return json(res, 200, { ok: true, events: await readOpsEvents(stateDir, { kind, limit }) })
+      }
+      if (req.method === 'GET' && (route === PREFIX + '/ops/usage' ||
+          route === PREFIX + '/ops/usage/export')) {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const report = await queryUsage(stateDir, parseUsageQuery(params))
+        if (route.endsWith('/export')) {
+          const csv = usageCsv(report)
+          res.writeHead(200, {
+            'content-type': 'text/csv; charset=utf-8',
+            'content-disposition': 'attachment; filename="feishu-token-usage.csv"',
+            'content-length': Buffer.byteLength(csv),
+            'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+            'referrer-policy': 'no-referrer',
+          })
+          res.end(csv)
+          return
+        }
+        return json(res, 200, { ok: true, report })
       }
       if (req.method === 'GET' && route === PREFIX + '/agent-profile') {
         return json(res, 200, { ok: true, profile: await listAgentFiles(await agentProfileContext(stateDir)) })
