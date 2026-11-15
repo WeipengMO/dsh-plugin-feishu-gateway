@@ -16,6 +16,10 @@ This package adds a native **飞书管理** operations workbench to DSH Web's le
 
 See [../docs/AGENT-PROFILE-ISOLATION.md](../docs/AGENT-PROFILE-ISOLATION.md) for the separate Feishu-only native Agent cwd and explicit old DSH instruction cleanup. See [../docs/AGENT-PROFILE-MANAGER.md](../docs/AGENT-PROFILE-MANAGER.md) for live Workspace resolution, identity/memory files, DSH native context sync, safe restores and upgrade checks. See [../docs/OPERATIONS-CONTROL-CENTER-V2.md](../docs/OPERATIONS-CONTROL-CENTER-V2.md) for prior operations APIs; the older [management v1 architecture](../docs/MANAGEMENT-WORKBENCH.md) is retained for history.
 
+## Historical token analytics (Issue #17)
+
+The existing Usage view now reads a separate protected, append-only per-task usage ledger with model-reported input/output/cache tokens; absent provider usage is explicitly unknown. New authenticated routes: /ops/usage and /ops/usage/export (CSV). UI includes a calendar heatmap, day/week/month trends, IANA time zone, model/bot/hashed user/chat/Session filters and CSV. See [../docs/TOKEN-USAGE-ANALYTICS.md](../docs/TOKEN-USAGE-ANALYTICS.md). This branch is not yet a published release or tenant acceptance.
+
 ## Current constraints
 
 The admin service and channel service must run as the same Unix user on the same host, or share access to the configured state and credentials paths. The channel host must expose its pre-existing loopback `/health` and `/diagnostics` endpoints on port 18095. The admin API does not parse or rewrite the user's Profile YAML; settings omitted in the managed overlay continue to inherit from it.
