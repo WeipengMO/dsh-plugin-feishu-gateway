@@ -83,6 +83,9 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
   const get = key => safeNum(doc.stats?.[key]) ?? 0
   return {
     ts: doc.ts, stale: Math.abs(now - doc.ts) > 15000,
+    ...(typeof doc.workspace === 'string' && path.isAbsolute(doc.workspace) &&
+      doc.workspace.length <= 4096 && !doc.workspace.includes('\0')
+      ? { workspace: path.normalize(doc.workspace) } : {}),
     status: safeLabel(doc.status) ?? 'unknown',
     tasks, sessions, transport: transports,
     stats: {
