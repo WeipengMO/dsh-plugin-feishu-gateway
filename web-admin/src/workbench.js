@@ -162,7 +162,7 @@ function Workbench() {
         h('p', { className: 'fgw-muted' }, bot.domain === 'lark' ? 'Lark · 国际' : 'Feishu · 中国'),
         h(WbRow, { label: '通道开关', value: bot.enabled === false ? '禁用' : '启用' }),
         h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
-        h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。')))),
+        h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
   } else if (selected === 'delivery') {
     body = h(React.Fragment, null,
