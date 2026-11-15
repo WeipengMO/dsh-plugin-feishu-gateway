@@ -13,7 +13,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
-  restoreAgentFile, saveAgentSettings, applyAgentProfile } from './agent-profile.mjs'
+  restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -356,6 +356,14 @@ export function createAdminHandler(options = {}) {
           const body = await readBody(req)
           exactKeys(body, ['settings', 'expectedRevision'])
           const result = await saveAgentSettings(await agentProfileContext(stateDir), body)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/agent-profile/detach-legacy') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['expectedRevision'])
+          const result = await detachLegacyOverlay(await agentProfileContext(stateDir), body)
           return json(res, 200, { ok: true, result })
         })
       }
