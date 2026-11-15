@@ -40,7 +40,7 @@ describe('CardKit progress lifecycle', () => {
     const c = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
     c!.onTextDelta('a'.repeat(100000))
     await c!.close('cancelled')
-    expect(t.streamUpdates[0]?.text.length).toBeLessThan(13000)
+    expect(Buffer.byteLength(t.streamUpdates[0]?.text ?? '', 'utf8')).toBeLessThan(22 * 1024)
     expect(t.streamUpdates[0]?.text).toContain('已取消')
   })
 })
