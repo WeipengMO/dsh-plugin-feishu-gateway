@@ -246,6 +246,16 @@ function isValidUpdatedAt(value: string): boolean {
   return v.length <= 40 && UPDATED_AT_RE.test(v) && Number.isFinite(Date.parse(v))
 }
 
+/**
+ * OpenClaw-style silent reply. A short `NO_REPLY` (optionally with a trailing
+ * reason) suppresses Feishu delivery for this occurrence without being treated
+ * as a failure. Long reports that merely mention the token are never suppressed.
+ */
+function isSilentReply(text: string): boolean {
+  const trimmed = text.trim()
+  return trimmed.length > 0 && trimmed.length <= 80 && /\bNO_REPLY\b/i.test(trimmed)
+}
+
 function nativeOutcome(error: ScheduleNativeError): ScheduleCommandOutcome {
   switch (error.kind) {
     case 'not_found':
@@ -824,16 +834,21 @@ export class ScheduleManager {
     const deliveryState = await this.deliveryStore.load()
     const taskId = this.taskIdForSession(deliveryState, turn.sessionId)
     const config = taskId ? deliveryState.configs[taskId] : undefined
+    const text = this.turnText(turn)
+    // OpenClaw-style silent reply: a non-trading day or "nothing to report"
+    // turn must not produce a Feishu message, but is still recorded as skipped.
+    const silent = isSilentReply(text)
     let delivered = false
     let error: string | null = null
-    if (taskId && config && config.notify !== 'none' && this.notifyAllows(config.notify, turn.status)) {
+    if (taskId && config && config.notify !== 'none' && !silent &&
+      this.notifyAllows(config.notify, turn.status)) {
       const check = await this.hooks.validateFeishuTarget(toDeliveryInput(config))
       if (check.ok) {
         const key = `schedule:${taskId}:${messageId}`
         try {
           delivered = await this.hooks.sendFeishu(
             config.botId,
-            { chatId: config.chatId, text: this.turnText(turn), format: 'text' },
+            { chatId: config.chatId, text, format: 'text' },
             key,
           )
         } catch { delivered = false }
@@ -855,7 +870,7 @@ export class ScheduleManager {
       taskId,
       messageId,
       sessionRef: sessionRef(typeof turn.sessionId === 'string' ? turn.sessionId : ''),
-      status: this.normalizeStatus(turn.status),
+      status: silent ? 'skipped' : this.normalizeStatus(turn.status),
       elapsedMs: boundedNum(turn.elapsedMs, 0, 1e13),
       ...(typeof turn.tokens === 'number' ? { tokens: boundedNum(turn.tokens, 0, 1e13) } : {}),
       ...(typeof turn.model === 'string' && MODEL_RE.test(turn.model) ? { model: turn.model.slice(0, 96) } : {}),

@@ -494,6 +494,23 @@ describe('ScheduleManager — observed turns and fallback', () => {
     expect(ledger.dedupe).toContain('msg-xyz')
   })
 
+  it('suppresses a short NO_REPLY (silent skip), but not a long report mentioning it', async () => {
+    const { spy, fp, manager } = await boot()
+    manager.attachNative(fp.port)
+    await manager.execute(createCommand({ notify: 'both' }))
+    await manager.onScheduleTurn({ ...successTurn, messageId: 'msg-silent', text: 'NO_REPLY' })
+    expect(spy.sent).toHaveLength(0)
+    await manager.refresh()
+    expect(manager.snapshot().runs[0]).toMatchObject({ status: 'skipped', delivered: false })
+
+    await manager.onScheduleTurn({ ...successTurn, messageId: 'msg-long',
+      text: '今日简报正文。'.repeat(40) + ' 不要输出 NO_REPLY 令牌。' })
+    expect(spy.sent).toHaveLength(1)
+    await manager.refresh()
+    expect(manager.snapshot().runs.find((r) => r.messageId === 'msg-long'))
+      .toMatchObject({ status: 'success', delivered: true })
+  })
+
   it('respects notify=none, failure notices and the allowlist re-check', async () => {
     const { spy, fp, manager } = await boot()
     manager.attachNative(fp.port)
