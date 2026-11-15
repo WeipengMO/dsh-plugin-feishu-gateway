@@ -21,7 +21,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs',
+const CFG_KEYS = ['bots', 'allowlist', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 
@@ -67,6 +67,12 @@ export function validateConfig(input) {
     if (typeof input.workspace !== 'string' || input.workspace.length > 4096 ||
       !path.isAbsolute(input.workspace) || input.workspace.includes('\0')) throw httpError(400, 'workspace must be an absolute path')
     result.workspace = path.normalize(input.workspace)
+  }
+  if (input.agentWorkspace !== undefined) {
+    if (typeof input.agentWorkspace !== 'string' || input.agentWorkspace.length > 4096 ||
+        !path.isAbsolute(input.agentWorkspace) || input.agentWorkspace.includes('\0'))
+      throw httpError(400, 'agentWorkspace must be an absolute path')
+    result.agentWorkspace = path.normalize(input.agentWorkspace)
   }
   if (input.agent !== undefined) {
     if (!object(input.agent)) throw httpError(400, 'agent must be an object')
