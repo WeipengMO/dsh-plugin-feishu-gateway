@@ -3,6 +3,7 @@ import type {
   AgentRoute,
   CordisLike,
   GatewayLogger,
+  ModelTokenUsage,
   SessionBridge,
   SessionReply,
   WaitOptions,
@@ -42,6 +43,10 @@ interface TurnState {
   readonly resolve: () => void
   settled: boolean
   events: number
+  model?: string
+  usage?: ModelTokenUsage
+  generationMs: number
+  readonly attemptStarts: Map<string, number>
   /** Set when `turn/end` reports a non-completed reason (native Agent failure). */
   failure?: string
 }
@@ -65,6 +70,8 @@ export class DshSessionBridge implements SessionBridge {
   private readonly agents: AgentRegistryLike | undefined
   private readonly handles = new Map<string, AgentHandleLike>()
   private readonly turns = new Map<string, TurnState>()
+  /** Reuse the last confirmed native request route on subsequent turns. */
+  private readonly sessionModels = new Map<string, string>()
   private readonly disposers: Array<() => void> = []
   private disposed = false
 
@@ -231,6 +238,9 @@ export class DshSessionBridge implements SessionBridge {
       text,
       reason,
       assistantEvents: turn.events,
+      ...(turn.model ? { model: turn.model } : {}),
+      ...(turn.usage ? { usage: turn.usage } : {}),
+      ...(turn.generationMs > 0 ? { generationMs: turn.generationMs } : {}),
     }
   }
 
@@ -259,6 +269,7 @@ export class DshSessionBridge implements SessionBridge {
     // Never invoke this on a healthy follow-up turn.
     this.settle(sessionId)
     this.turns.delete(sessionId)
+    this.sessionModels.delete(sessionId)
     const handle = this.handles.get(sessionId)
     if (!handle) return
     this.handles.delete(sessionId)
@@ -282,6 +293,7 @@ export class DshSessionBridge implements SessionBridge {
     }
     for (const id of [...this.turns.keys()]) this.settle(id)
     this.turns.clear()
+    this.sessionModels.clear()
     const handles = [...this.handles.values()]
     this.handles.clear()
     await Promise.allSettled(handles.map((handle) => handle.dispose()))
@@ -292,7 +304,11 @@ export class DshSessionBridge implements SessionBridge {
     const done = new Promise<void>((r) => {
       resolve = r
     })
-    const turn: TurnState = { durable: [], attempts: [], live: [], done, resolve, settled: false, events: 0 }
+    const turn: TurnState = {
+      durable: [], attempts: [], live: [], done, resolve, settled: false,
+      events: 0, generationMs: 0, attemptStarts: new Map(),
+      ...(this.sessionModels.has(sessionId) ? { model: this.sessionModels.get(sessionId) } : {}),
+    }
     this.turns.set(sessionId, turn)
     return turn
   }
@@ -307,10 +323,31 @@ export class DshSessionBridge implements SessionBridge {
   private onSessionEvent(session: unknown, event: unknown): void {
     const sessionId = String((session as { id?: unknown })?.id ?? '')
     if (!sessionId) return
+    const type = (event as { type?: unknown })?.type
+    const data = (event as { data?: Record<string, unknown> })?.data
+    // Native DSH records the effective route under request/context (or
+    // request/header). Read from the same stream as token settlements.
+    const context = type === 'request/context' ? data :
+      type === 'request/header' ? (data?.header as { config?: Record<string, unknown> } | undefined)?.config : undefined
+    if (context && typeof context.model === 'string' && context.model.length > 0) {
+      const provider = typeof context.provider === 'string' ? context.provider : ''
+      const name = provider ? provider + '/' + context.model : context.model
+      this.sessionModels.set(sessionId, name)
+    }
     const turn = this.turns.get(sessionId)
     if (!turn) return
-    const type = (event as { type?: unknown })?.type
+    if (this.sessionModels.has(sessionId)) turn.model = this.sessionModels.get(sessionId)
     if (type === 'assistant/message' || type === 'assistant/attempt') {
+      const usage = reportedUsage(data)
+      if (usage) {
+        const before = turn.usage
+        turn.usage = {
+          inputTokens: (before?.inputTokens ?? 0) + usage.inputTokens,
+          outputTokens: (before?.outputTokens ?? 0) + usage.outputTokens,
+          cacheReadTokens: (before?.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0),
+          cacheWriteTokens: (before?.cacheWriteTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
+        }
+      }
       const text = extractText((event as { data?: unknown })?.data)
       if (text) (type === 'assistant/message' ? turn.durable : turn.attempts).push(text)
       turn.events += 1
@@ -339,8 +376,19 @@ export class DshSessionBridge implements SessionBridge {
     if (!sessionId) return
     const turn = this.turns.get(sessionId)
     if (!turn) return
-    const frame = (payload as { frame?: { type?: unknown; chunk?: unknown } })?.frame
-    if (frame?.type === 'chunk') {
+    const frame = (payload as {
+      frame?: { type?: unknown; attemptId?: unknown; chunk?: unknown }
+    })?.frame
+    const attemptId = typeof frame?.attemptId === 'string' ? frame.attemptId : 'default'
+    if (frame?.type === 'start') {
+      turn.attemptStarts.set(attemptId, Date.now())
+    } else if (frame?.type === 'end') {
+      const started = turn.attemptStarts.get(attemptId)
+      if (started !== undefined) {
+        turn.generationMs += Math.max(0, Date.now() - started)
+        turn.attemptStarts.delete(attemptId)
+      }
+    } else if (frame?.type === 'chunk') {
       const chunk = frame.chunk as { type?: unknown; text?: unknown } | undefined
       if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
         turn.live.push(chunk.text)
@@ -374,4 +422,28 @@ async function makeUserMessage(text: string): Promise<unknown> {
     content: Object.freeze([Object.freeze({ type: 'text', text })]),
     source: Object.freeze({ kind: 'user' }),
   })
+}
+
+/** Read native DSH provider usage; never approximate tokens from text length. */
+function reportedUsage(data: Record<string, unknown> | undefined): ModelTokenUsage | undefined {
+  if (!data) return undefined
+  const entries = Array.isArray(data.stream) ? data.stream : []
+  let candidate: unknown = data.usage
+  if (!candidate) {
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const item = entries[i] as { chunk?: { type?: string; usage?: unknown }; type?: string; usage?: unknown } | undefined
+      if (item?.chunk?.type === 'usage') { candidate = item.chunk.usage; break }
+      if (item?.type === 'usage') { candidate = item.usage; break }
+    }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined
+  const value = candidate as Record<string, unknown>
+  const valid = (num: unknown) => typeof num === 'number' && Number.isSafeInteger(num) && num >= 0
+  if (!valid(value.inputTokens) || !valid(value.outputTokens)) return undefined
+  return {
+    inputTokens: value.inputTokens as number,
+    outputTokens: value.outputTokens as number,
+    ...(valid(value.cacheReadTokens) ? { cacheReadTokens: value.cacheReadTokens as number } : {}),
+    ...(valid(value.cacheWriteTokens) ? { cacheWriteTokens: value.cacheWriteTokens as number } : {}),
+  }
 }
