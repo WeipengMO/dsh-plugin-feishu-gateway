@@ -221,7 +221,7 @@ function Workbench() {
     body = h('div', { className: 'fgw-advanced' },
       h('p', { className: 'fgw-muted' },
         '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
-      h(Panel, { key: configTab, initialTab: configTab }))
+      h(Panel, { key: configTab, initialTab: configTab, onChanged: load }))
   } else {
     body = h(OpsPage, { kind: selected, ops, onConfig, onCommand })
   }
