@@ -1,6 +1,8 @@
 import { appIdLooksValid } from '../config.js'
 import type {
   BotCredentials,
+  CardActionEvent,
+  FeishuCardHandle,
   FeishuEventHandlers,
   FeishuTransport,
   GatewayLogger,
@@ -11,6 +13,7 @@ import type {
 } from '../types.js'
 import { newId } from '../util/id.js'
 import { extractFeishuPostText, feishuMarkdownContent } from './post-content.js'
+import { progressCard, PROGRESS_ELEMENT_ID } from './card-content.js'
 
 /** Official SDK, imported lazily so the module stays loadable in offline tests. */
 const LARK_MODULE = '@larksuiteoapi/node-sdk'
@@ -18,12 +21,13 @@ const LARK_MODULE = '@larksuiteoapi/node-sdk'
 interface LarkMessageApiResult {
   readonly code?: number
   readonly msg?: string
-  readonly data?: { readonly message_id?: string }
+  readonly data?: { readonly message_id?: string; readonly card_id?: string }
 }
 
 interface LarkClientLike {
   readonly im: {
     readonly message: {
+      patch(payload: { data: { content: string }; path: { message_id: string } }): Promise<LarkMessageApiResult>
       create(payload: {
         data: { receive_id: string; msg_type: string; content: string; uuid?: string }
         params: { receive_id_type: string }
@@ -34,6 +38,11 @@ interface LarkClientLike {
       }): Promise<LarkMessageApiResult>
     }
   }
+  request(payload: {
+    method: 'POST' | 'PUT' | 'PATCH'
+    url: string
+    data: Record<string, unknown>
+  }): Promise<LarkMessageApiResult>
 }
 
 interface LarkWsLike {
@@ -48,6 +57,17 @@ interface LarkModuleLike {
   }
   WSClient: new (params: Record<string, unknown>) => LarkWsLike
   Domain: { Feishu: number; Lark: number }
+}
+
+interface RawCardActionEvent {
+  readonly event?: {
+    readonly operator?: { readonly open_id?: string }
+    readonly context?: { readonly open_chat_id?: string; readonly open_message_id?: string }
+    readonly action?: { readonly value?: unknown }
+  }
+  readonly operator?: { readonly open_id?: string }
+  readonly context?: { readonly open_chat_id?: string; readonly open_message_id?: string }
+  readonly action?: { readonly value?: unknown }
 }
 
 interface RawReceiveEvent {
@@ -113,6 +133,28 @@ export class LarkTransport implements FeishuTransport {
     const dispatcher = new mod.EventDispatcher({})
     dispatcher.register({
       'im.message.receive_v1': (event: RawReceiveEvent) => this.handleEvent(event),
+      // The official Feishu WS dispatcher handles callbacks (not HTTP webhooks)
+      // and expects a toast response within three seconds.
+      'card.action.trigger': async (event: RawCardActionEvent) => {
+        const value = event.event ?? event
+        const data = value.action?.value
+        const action = data && typeof data === 'object' && !Array.isArray(data)
+          ? data as CardActionEvent['value'] : undefined
+        const actorOpenId = value.operator?.open_id
+        const chatId = value.context?.open_chat_id
+        const messageId = value.context?.open_message_id
+        if (!this.handlers?.onCardAction || !actorOpenId || !chatId || !messageId || !action) {
+          return { toast: { type: 'warning', content: '无法验证此卡片操作' } }
+        }
+        try {
+          return await this.handlers.onCardAction({
+            botId: this.botId, actorOpenId, chatId, messageId, value: action,
+          })
+        } catch {
+          // Never stringify callback or exception: may contain secret values.
+          return { toast: { type: 'error', content: '操作失败或已过期' } }
+        }
+      },
     })
 
     this.ws = new mod.WSClient({
@@ -173,6 +215,81 @@ export class LarkTransport implements FeishuTransport {
       params: { receive_id_type: 'chat_id' },
     })
     return unwrap(result, `send to ${target.chatId}`)
+  }
+
+  /** A short-lived, non-durable card. Failure to send an approval card DENIES approval. */
+  async sendInteractiveCard(
+    target: { replyToMessageId: string }, card: Record<string, unknown>,
+  ): Promise<FeishuCardHandle> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    const result = await this.client.im.message.reply({
+      path: { message_id: target.replyToMessageId },
+      data: { msg_type: 'interactive', content: JSON.stringify(card), uuid: newId('card') },
+    })
+    const receipt = unwrap(result, 'send interactive card')
+    if (!receipt.messageId) throw new Error('Feishu card response has no message id')
+    return { messageId: receipt.messageId }
+  }
+
+  async updateInteractiveCard(messageId: string, card: Record<string, unknown>): Promise<void> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    const result = await this.client.im.message.patch({
+      path: { message_id: messageId },
+      data: { content: JSON.stringify(card) },
+    })
+    unwrap(result, 'patch interactive card')
+  }
+
+  /** Native CardKit card entity; v1 REST endpoints support schema 2.0. */
+  async startStreamCard(target: { replyToMessageId: string }, nonce: string): Promise<FeishuCardHandle> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    const response = await this.client.request({
+      method: 'POST',
+      url: '/open-apis/cardkit/v1/cards',
+      data: { type: 'card_json', data: JSON.stringify(progressCard(nonce)) },
+    })
+    unwrap(response, 'create CardKit entity')
+    const cardId = response.data?.card_id
+    if (!cardId || !/^[A-Za-z0-9_-]{1,20}$/.test(cardId)) {
+      throw new Error('CardKit create returned no valid card id')
+    }
+    const send = await this.client.im.message.reply({
+      path: { message_id: target.replyToMessageId },
+      data: {
+        msg_type: 'interactive',
+        content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
+        uuid: newId('card'),
+      },
+    })
+    const receipt = unwrap(send, 'send CardKit card')
+    if (!receipt.messageId) throw new Error('Feishu stream card response has no message id')
+    return { cardId, messageId: receipt.messageId }
+  }
+
+  async updateStreamCard(cardId: string, text: string, sequence: number): Promise<void> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(cardId)) throw new Error('invalid CardKit card id')
+    const response = await this.client.request({
+      method: 'PUT',
+      url: `/open-apis/cardkit/v1/cards/${cardId}/elements/${PROGRESS_ELEMENT_ID}/content`,
+      data: { content: text, sequence, uuid: newId('update') },
+    })
+    unwrap(response, 'update CardKit stream')
+  }
+
+  async finishStreamCard(cardId: string, sequence: number): Promise<void> {
+    if (!this.client) throw new Error('Feishu transport is not connected')
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(cardId)) throw new Error('invalid CardKit card id')
+    const response = await this.client.request({
+      method: 'PATCH',
+      url: `/open-apis/cardkit/v1/cards/${cardId}/settings`,
+      data: {
+        settings: JSON.stringify({ config: { streaming_mode: false } }),
+        sequence,
+        uuid: newId('finish'),
+      },
+    })
+    unwrap(response, 'finish CardKit stream')
   }
 
   private transition(state: TransportState, error?: Error): void {
