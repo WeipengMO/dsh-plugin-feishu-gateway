@@ -793,6 +793,7 @@ export class FeishuGateway {
     const health = this.health()
     const snapshot: OpsSnapshot = {
       version: 1, ts: Date.now(), status: health.status,
+      workspace: this.config.workspace,
       tasks: [...this.activeTurns.values()].map(turn => ({
         ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
         botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,
