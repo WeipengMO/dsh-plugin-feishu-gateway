@@ -36,11 +36,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Proxy startup offline smoke (no real network)
+        run: |
+          bash -n scripts/channel/start-feishu-channel.sh
+          bash -n tests/proxy-startup.smoke.sh
+          bash tests/proxy-startup.smoke.sh
+
       - name: Typecheck
         run: pnpm run typecheck
 
       - name: Build
         run: pnpm run build
+
+      - name: ESM runtime import smoke (catch CJS interop regressions)
+        run: |
+          node --input-type=module -e "await import('./lib/channel/lark-transport.js'); console.log('LarkTransport ESM import OK')"
+          node --input-type=module -e "const { default: ProxyAgent } = await import('https-proxy-agent'); const agent = ProxyAgent('http://127.0.0.1:9'); if (typeof agent?.addRequest !== 'function') throw Error('Invalid v5 proxy Agent'); console.log('Proxy agent v5 factory OK')"
+          node --input-type=module -e "await import('./lib/index.js'); console.log('Gateway entrypoint import OK')"
 
       - name: Unit + integration tests (mock transports only)
         run: pnpm run test

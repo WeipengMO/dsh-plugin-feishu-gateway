@@ -76,7 +76,7 @@ function buildTransports(config: GatewayConfig, logger: GatewayLogger): FeishuTr
       )
       continue
     }
-    transports.push(new LarkTransport(bot.id, resolved.credentials, logger))
+    transports.push(new LarkTransport(bot.id, resolved.credentials, logger, config.networkProxy))
     logger.info('bot %s credentials resolved from %s', bot.id, resolved.source)
   }
   return transports

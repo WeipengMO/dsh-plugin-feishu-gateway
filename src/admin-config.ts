@@ -14,6 +14,7 @@ export interface ManagedChannelConfig {
   workspace?: string
   agent?: { provider?: string; model?: string }
   replyTimeoutMs?: number
+  networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean }
   replyFormat?: 'text' | 'markdown'
   sendRetries?: number
   outboxRetryIntervalMs?: number
@@ -48,7 +49,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'replyFormat', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'workspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect',
     'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
@@ -103,6 +104,15 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   }
   if (value.replyTimeoutMs !== undefined) {
     result.replyTimeoutMs = positiveInteger(value.replyTimeoutMs, 'replyTimeoutMs', 5_000, 1_800_000)
+  }
+  if (value.networkProxy !== undefined) {
+    const v = value.networkProxy
+    if (!dictionary(v)) throw new Error('networkProxy must be an object')
+    assertFields(v, ['enabled', 'urlEnv', 'fallbackDirect'])
+    if (typeof v.enabled !== 'boolean' || typeof v.fallbackDirect !== 'boolean' ||
+        typeof v.urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.urlEnv))
+      throw new Error('invalid networkProxy configuration')
+    result.networkProxy = { enabled: v.enabled, urlEnv: v.urlEnv, fallbackDirect: v.fallbackDirect }
   }
   if (value.replyFormat !== undefined) {
     if (value.replyFormat !== 'text' && value.replyFormat !== 'markdown') throw new Error('invalid replyFormat')

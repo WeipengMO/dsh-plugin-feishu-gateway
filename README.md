@@ -42,6 +42,8 @@
 
 源码中的两个卡片开关**默认仍为 `false`**，上述 `true` 是此次部署的显式管理配置，不是全局默认变更。审批决策由原生 DSH 控制：只授权当前请求的 `allowed-once`，拒绝或超时不放行；卡片只是入口，不能绕过原生策略。审批卡片仅显示工具名称，**不展示完整命令参数**，不要在不了解操作内容时盲目授权。
 
+**待验收的可靠性修复（本分支，未发布）：**增加超时原因审计、工具错误状态卡片、轻量网页查询指南，以及代理优先并在启动预检失败时回退直连的开关。需要同时更新 Gateway 与 Web Admin、通过 CI 并在 VPS 真机复验后才能安装。配置只保存代理环境变量名，不保存代理地址。详见 [可靠性及代理部署说明](docs/RELIABILITY-AND-PROXY.md)。
+
 操作说明：[审批与流式卡片](docs/APPROVAL-STREAMING.md) · [Web Admin](docs/WEB-ADMIN.md) · [飞书通道](docs/FEISHU-CHANNEL.md)。
 
 ## 构建、验收与安装
@@ -53,7 +55,7 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-生成的两个安装包（**本轮仅修改 Web Admin UI**；已安装 Gateway `0.2.0-rc.7` 时只需升级 `web` Profile）：
+当前发布版的两个安装包（**以下是历史 rc.7 安装说明，不包含本修复分支**）：
 
 - `dist/dsh-plugin-feishu-gateway-0.2.0-rc.7.tgz`
 - `dist/dsh-plugin-feishu-admin-0.2.0-rc.7.tgz`

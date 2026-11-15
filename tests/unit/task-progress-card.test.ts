@@ -46,6 +46,22 @@ describe('CardKit single-message progress lifecycle', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('shows sanitized tool activity and failure statistics while running', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = new MockFeishuTransport('default')
+      const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
+      card!.onToolActivity({ name: 'web_fetch', phase: 'started', calls: 1, failures: 0 })
+      card!.onToolActivity({ name: 'web_fetch', phase: 'failed', calls: 1, failures: 1, httpStatus: 403 })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(t.streamUpdates[0]?.text).toContain('HTTP 403')
+      expect(t.streamUpdates[0]?.text).toContain('失败 1 次')
+      expect(t.streamUpdates[0]?.text).not.toContain('https://')
+      expect(await card!.close('done', 'answer', { elapsedMs: 1000, toolCalls: 1, toolFailures: 1 })).toBe(true)
+      expect(String(finishedBody(t).elements.at(-1)?.content)).toContain('工具调用：1 次（失败 1 次）')
+    } finally { vi.useRealTimers() }
+  })
+
   it('can complete without intermediate stream deltas or available model usage', async () => {
     const t = new MockFeishuTransport('default')
     const card = await TaskProgressCard.start(t, 'om_original', silentLogger, 500)
