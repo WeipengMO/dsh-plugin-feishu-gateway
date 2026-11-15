@@ -20,6 +20,10 @@ DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
 - 不含 `dsh-headless`（它是一次性应用），由 `channel-host.mjs` 持有进程生命周期
 - 状态：`~/.dsh/feishu-channel-state/`（`inbox.jsonl` / `outbox.json` / `sessions.json` / `channel.log`）
 
+## Web 可视化管理
+
+可额外安装独立的 **dsh-plugin-feishu-admin** 到 `web` Profile，在 DSH Web 设置页查看飞书通道健康、修改模型/白名单/机器人并写入受限凭据。网关仍在 `feishu-channel` Profile 独立运行。安装、systemd 管理及验收步骤详见 [WEB-ADMIN.md](WEB-ADMIN.md)。
+
 ## 凭据（绝不提交）
 
 凭据放在**仓库之外**的 `~/.dsh/feishu-channel.env`（权限 `600`）：
