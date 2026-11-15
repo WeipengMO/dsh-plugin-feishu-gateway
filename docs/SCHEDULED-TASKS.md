@@ -273,6 +273,27 @@ dsh --profile feishu-gateway-test --dump-config
 dsh --profile <隔离 Web 测试 Profile> --dump-config
 ```
 
+> **能力缺口（实测，`@deepseek-ai/dsh@0.2.2-rc.1`）**：`@deepseek-ai/dsh-base`
+> **不挂载** `@deepseek-ai/dsh-schedule`；只有 `dsh-sdk-app` / `dsh-web-app` 的
+> bundle patch 才带 `schedule` 行。只装 Gateway 的 `feishu-channel` 类 Profile
+> （`dsh-base` + 插件）默认 `ctx.schedule` 不存在，页面会显示
+> `available:false` —— 这是**正确降级**，不是插件缺陷。适配方案是在该 Profile
+> 的 `cordis.patch.yml` 显式追加官方 Host 服务行（**仍是 DSH 原生能力，不是自建
+> 调度器**）：
+>
+> ```yaml
+> - insert:
+>     - id: schedule
+>       name: '@deepseek-ai/dsh-schedule'
+> ```
+>
+> 该包及其 peer 依赖由已安装的 DSH Host 解析（本机位于
+> `~/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`），
+> 无需 `pnpm add`。追加后用 `dsh --profile <Profile> --dump-config | grep dsh-schedule`
+> 确认，再重启服务；`ops-schedule.json` 应变为 `available:true` 且带
+> `limits.newSessionIntervalSeconds`。生产部署前必须备份 Profile patch 与
+> `stateDir`（见 README 的升级注意）。
+
 确认：
 
 1. 两个 Profile 的 `--dump-config` 中没有把 Gateway 误装进 `web`，也没有改动生产
@@ -318,6 +339,7 @@ dsh --profile <隔离 Web 测试 Profile> --dump-config
 - **`ctx.schedule` 未挂载**：若目标 Profile 没有提供原生 schedule 服务，页面显示
   `available:false` 与明确 `reason`（`DSH native schedule service is not mounted in this
   profile`），**不做任何回退，也不自建调度器**；此时没有「降级可用」的定时任务能力。
+  `dsh-base` 型 Profile 的实测缺口与官方服务行适配见 §5.2。
 - **Host 创建 Session 的 `session/event` 可见性**：本功能用 Gateway 自有的 `session`
   目标 + `schedule/resolve-agent` waterfall 来接回实时 Agent，但插件级 ctx 对 Host
   创建/恢复的 Session 事件仍可能受 scope 过滤影响。因此提供 5 分钟宽限期、且在原生任务仍标记 `executionActive` 时不触发的**兜底通知**
