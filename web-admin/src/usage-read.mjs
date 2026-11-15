@@ -108,22 +108,43 @@ async function usageFiles(stateDir) {
   const folder = await fs.lstat(dir).catch(e => { if (e.code === 'ENOENT') return null; throw e })
   if (!folder) return []
   if (!folder.isDirectory() || folder.isSymbolicLink()) throw Error('unsafe usage history directory')
-  return (await fs.readdir(dir)).filter(n => DAY.test(n.slice(0, 10)) && n === n.slice(0, 10) + '.jsonl').sort()
+  return (await fs.readdir(dir)).filter(n => DAY.test(n.slice(0, 10)) &&
+    n === n.slice(0, 10) + '.jsonl' &&
+    !Number.isNaN(Date.parse(n.slice(0, 10) + 'T00:00:00Z')) &&
+    utcDay(Date.parse(n.slice(0, 10) + 'T00:00:00Z')) === n.slice(0, 10)).sort()
+}
+async function readUsageFile(stateDir, name) {
+  const file = path.join(stateDir, 'ops-usage', name)
+  const st = await fs.lstat(file)
+  if (!st.isFile() || st.isSymbolicLink() || st.size > 16 * 1024 * 1024)
+    throw Error('unsafe or oversized usage history file')
+  return fs.readFile(file, 'utf8')
+}
+async function firstTrackedDay(stateDir, names, tz) {
+  // The exact first *local* day matters: UTC filenames can be a different
+  // calendar date in the selected time zone. No pre-collection zeroes.
+  for (const name of names) {
+    let earliest = null
+    for (const line of (await readUsageFile(stateDir, name)).split('\n')) {
+      if (!line || line.length > 4096) continue
+      let row
+      try { row = validRecord(JSON.parse(line)) } catch { continue }
+      if (row && (earliest === null || row.ts < earliest)) earliest = row.ts
+    }
+    if (earliest !== null) return dayInZone(earliest, tz)
+  }
+  return null
 }
 export async function queryUsage(stateDir, query, now = Date.now()) {
   const filenames = await usageFiles(stateDir)
-  const earliest = filenames.length ? shiftDay(filenames[0].slice(0, 10), -1) : null
+  const earliest = await firstTrackedDay(stateDir, filenames, query.tz)
   const scanned = new Map()
   const facets = { models: new Set(), bots: new Set(), users: new Set(),
     chats: new Set(), sessions: new Set() }
   for (const name of filenames) {
     const date = name.slice(0, 10)
     if (date < shiftDay(query.from, -1) || date > shiftDay(query.to, 1)) continue
-    const file = path.join(stateDir, 'ops-usage', name)
-    const st = await fs.lstat(file)
-    if (!st.isFile() || st.isSymbolicLink() || st.size > 16 * 1024 * 1024)
-      throw Error('unsafe or oversized usage history file')
-    const contents = await fs.readFile(file, 'utf8')
+    const contents = await readUsageFile(stateDir, name)
     for (const line of contents.split('\n')) {
       if (!line || line.length > 4096) continue
       let parsed
