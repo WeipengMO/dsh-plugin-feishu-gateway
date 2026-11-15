@@ -4,8 +4,8 @@
  * atomically claims it before acting. Processing files are NEVER retried after
  * crashes: an unacknowledged cancellation is uncertain, not automatic replay.
  *
- * Only two capability-limited commands exist: cancel an already running task,
- * or ask the durable Outbox to re-drain existing pending UUIDs.
+ * Capability-limited commands: cancel a running task, re-drain Outbox, or
+ * archive/unlink one unchanged Feishu binding. No command deletes DSH data.
  */
 import { mkdir, readdir, lstat, readFile, rename, open, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -15,8 +15,9 @@ export interface OperatorCommand {
   readonly version: 1
   readonly id: string
   readonly ts: number
-  readonly type: 'cancel-task' | 'retry-outbox'
+  readonly type: 'cancel-task' | 'retry-outbox' | 'archive-session' | 'unbind-session'
   readonly ref?: string
+  readonly expectedLastActiveAt?: number
 }
 export interface OperatorResult {
   readonly version: 1
@@ -77,14 +78,19 @@ export async function processOperatorCommands(
     let state: OperatorResult['state'] = 'rejected'
     try {
       const data = JSON.parse(await readFile(claimed, 'utf8'))
+      const isSession = data.type === 'archive-session' || data.type === 'unbind-session'
       if (data?.version === 1 && data.id === name.slice(0, -5) &&
         typeof data.ts === 'number' && Date.now() - data.ts >= 0 &&
         Date.now() - data.ts < 30_000 &&
-        (data.type === 'cancel-task' || data.type === 'retry-outbox') &&
-        (data.type !== 'cancel-task' || REF.test(data.ref)) &&
-        (data.type !== 'retry-outbox' || data.ref === undefined)) {
+        (data.type === 'cancel-task' || data.type === 'retry-outbox' || isSession) &&
+        (data.type === 'retry-outbox' ? data.ref === undefined && data.expectedLastActiveAt === undefined :
+          REF.test(data.ref)) &&
+        (!isSession || (Number.isSafeInteger(data.expectedLastActiveAt) &&
+          data.expectedLastActiveAt >= 0 && data.expectedLastActiveAt <= 1e13)) &&
+        (isSession || data.expectedLastActiveAt === undefined)) {
         cmd = { version: 1, id: data.id, ts: data.ts, type: data.type,
-          ...(data.ref ? { ref: data.ref } : {}) }
+          ...(data.ref ? { ref: data.ref } : {}),
+          ...(isSession ? { expectedLastActiveAt: data.expectedLastActiveAt } : {}) }
         state = await execute(cmd)
       }
     } catch { state = 'error' }
