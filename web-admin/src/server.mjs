@@ -227,6 +227,14 @@ export function createAdminHandler(options = {}) {
   const reject = options.requestRejection
   if (typeof reject !== 'function') throw new Error('DSH connection.requestRejection required')
   const managed = path.join(stateDir, 'admin-config.json')
+  // Save/credential/restart commands are serialized within this Web Host.
+  // A stale ETag check must not race another accepted config write.
+  let mutationQueue = Promise.resolve()
+  const serializeMutation = work => {
+    const next = mutationQueue.then(work, work)
+    mutationQueue = next.catch(() => undefined)
+    return next
+  }
   return async (req, res) => {
     try {
       security(req, reject)
@@ -250,26 +258,32 @@ export function createAdminHandler(options = {}) {
         return json(res, 200, { ok: true, diagnostics: await loopback(healthPort, '/diagnostics') })
       }
       if (req.method === 'PUT' && route === PREFIX + '/config') {
-        const body = await readBody(req)
-        exactKeys(body, ['expectedRevision', 'config'])
-        const before = await configFile(managed)
-        if (body.expectedRevision !== before.revision) throw httpError(409, 'config changed; reload before saving')
-        const config = validateConfig(body.config)
-        await atomicPrivateWrite(managed, JSON.stringify({ version: VERSION, config }, null, 2) + '\n')
-        const result = await configFile(managed)
-        return json(res, 200, { ok: true, revision: result.revision, restartRequired: true })
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['expectedRevision', 'config'])
+          const before = await configFile(managed)
+          if (body.expectedRevision !== before.revision) throw httpError(409, 'config changed; reload before saving')
+          const config = validateConfig(body.config)
+          await atomicPrivateWrite(managed, JSON.stringify({ version: VERSION, config }, null, 2) + '\n')
+          const result = await configFile(managed)
+          return json(res, 200, { ok: true, revision: result.revision, restartRequired: true })
+        })
       }
       if (req.method === 'PUT' && route === PREFIX + '/credentials') {
-        const body = await readBody(req)
-        const current = await configFile(managed)
-        await setCredential(envFile, body, (current.config.bots ?? [{ id: 'default' }]).map(bot => bot.id))
-        return json(res, 200, { ok: true, restartRequired: true })
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          const current = await configFile(managed)
+          await setCredential(envFile, body, (current.config.bots ?? [{ id: 'default' }]).map(bot => bot.id))
+          return json(res, 200, { ok: true, restartRequired: true })
+        })
       }
       if (req.method === 'POST' && route === PREFIX + '/restart') {
-        await readBody(req)
-        try { await execFile('systemctl', ['--user', 'restart', unit], { timeout: 12000 }) }
-        catch { throw httpError(503, 'systemd user service unavailable; configure ' + unit + ' and retry') }
-        return json(res, 200, { ok: true, requested: true })
+        return await serializeMutation(async () => {
+          await readBody(req)
+          try { await execFile('systemctl', ['--user', 'restart', unit], { timeout: 12000 }) }
+          catch { throw httpError(503, 'systemd user service unavailable; configure ' + unit + ' and retry') }
+          return json(res, 200, { ok: true, requested: true })
+        })
       }
       return json(res, 404, { ok: false, error: 'unknown management endpoint' })
     } catch (error) {

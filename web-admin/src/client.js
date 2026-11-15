@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
       const [timeout, setTimeout] = useState('')
       const [retry, setRetry] = useState('')
       const [interval, setIntervalValue] = useState('')
-      const [autoConnect, setAutoConnect] = useState(true)
+      const [autoConnect, setAutoConnect] = useState('inherit')
       const [botId, setBotId] = useState('default')
       const [appId, setAppId] = useState('')
       const [appSecret, setAppSecret] = useState('')
@@ -83,7 +83,7 @@ window.__ModuleLoader__.load({
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
         setRetry(c.sendRetries === undefined ? '' : String(c.sendRetries))
         setIntervalValue(c.outboxRetryIntervalMs === undefined ? '' : String(c.outboxRetryIntervalMs / 1000))
-        setAutoConnect(c.autoConnect !== false)
+        setAutoConnect(c.autoConnect === undefined ? 'inherit' : c.autoConnect ? 'enabled' : 'disabled')
         setBotId(current => (data.bots || []).some(b => b.id === current) ? current : (data.bots?.[0]?.id || 'default'))
       }, [])
       const reload = useCallback(async () => {
@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
         if (retry.trim()) result.sendRetries = Number(retry)
         if (interval.trim()) result.outboxRetryIntervalMs = Number(interval) * 1000
-        if (!autoConnect) result.autoConnect = false
+        if (autoConnect !== 'inherit') result.autoConnect = autoConnect === 'enabled'
         return result
       }
       async function perform(task, success) {
@@ -173,9 +173,12 @@ window.__ModuleLoader__.load({
             field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
             field('发送尝试次数', textInput(retry, setRetry, '继承 Profile', { type: 'number', min: 1, max: 10 })),
             field('补发间隔（秒）', textInput(interval, setIntervalValue, '继承 Profile', { type: 'number', min: 1, max: 300 }))),
-          h('label', { className: 'fga-check' },
-            h('input', { type: 'checkbox', checked: autoConnect, onChange: e => setAutoConnect(e.target.checked) }),
-            '随飞书通道启动自动连接'),
+          field('自动连接',
+            h('select', { className: 'fga-input', value: autoConnect,
+              onChange: e => setAutoConnect(e.target.value) },
+              h('option', { value: 'inherit' }, '继承 Profile 配置'),
+              h('option', { value: 'enabled' }, '启用'),
+              h('option', { value: 'disabled' }, '停用'))),
           action('保存配置', save, busy || !state)),
         tab === 'permissions' && h('div', { className: 'fga-section' },
           h('label', { className: 'fga-check' },

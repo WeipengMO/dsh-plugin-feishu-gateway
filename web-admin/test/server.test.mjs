@@ -167,3 +167,39 @@ test('refuses symlinked state directory when saving managed config', async () =>
     assert.equal(response.status, 409)
   } finally { await f.close() }
 })
+
+test('simultaneous edits with the same revision accept only one commit', async () => {
+  const f = await fixture()
+  try {
+    const initial = await f.request('/state')
+    const rev = initial.json.revision
+    const outcomes = await Promise.all([
+      f.request('/config', 'PUT', { expectedRevision: rev, config: { replyTimeoutMs: 5000 } }, mutating),
+      f.request('/config', 'PUT', { expectedRevision: rev, config: { replyTimeoutMs: 6000 } }, mutating),
+    ])
+    assert.deepEqual(outcomes.map(r => r.status).sort(), [200, 409])
+    const now = await f.request('/state')
+    assert.ok([5000, 6000].includes(now.json.config.replyTimeoutMs))
+  } finally { await f.close() }
+})
+
+test('Cordis registration exposes only a guarded Web management handler', async () => {
+  const { apply } = await import('../src/server.mjs')
+  let registered
+  let disposed = false
+  const ctx = {
+    get(name) {
+      if (name === 'webServer') return { register(data) { registered = data; return () => { disposed = true } } }
+      if (name === 'connection') return { requestRejection: () => undefined }
+      return undefined
+    },
+    logger: { info: () => undefined },
+    effect(install) { this.dispose = install() },
+  }
+  apply(ctx, {})
+  assert.equal(registered?.kind, 'prefix')
+  assert.equal(registered?.path, '/api/feishu-admin')
+  assert.equal(typeof registered?.handler, 'function')
+  ctx.dispose()
+  assert.equal(disposed, true)
+})
