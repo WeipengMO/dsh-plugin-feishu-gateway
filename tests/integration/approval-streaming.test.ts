@@ -119,6 +119,44 @@ describe('Feishu callback and native DSH approval integration', () => {
     await b.gateway.stop()
   })
 
+  it('enforces the original sender for group approvals and cancellation even in a shared session', async () => {
+    const b = await boot(new SlowBridge(), {
+      approvalCards: true, streamCards: true,
+      groupPolicy: 'open', groupSenderAllowlist: ['ou_alice', 'ou_bob'],
+      groups: [{ chatId: 'oc_shared', enabled: true, requireMention: false, sessionScope: 'group' }],
+    })
+    await b.t.emitMessage({ messageId: 'om_group_work', chatId: 'oc_shared',
+      senderId: 'ou_alice', chatType: 'group', text: 'run tool' })
+    await until(() => b.bridge.prompts.length === 1 && b.t.streamCards.length === 1)
+    const sessionId = b.bridge.prompts[0]!.sessionId
+    const decision = b.gateway.answerApproval({ agent: { id: sessionId }, toolName: 'bash' },
+      async () => 'unavailable')
+    await until(() => b.gateway.health().pendingApprovals === 1)
+    const card = b.t.interactiveCards[0]!
+    const actionValue = (card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value
+    const approval = { botId: 'default', chatId: 'oc_shared', messageId: card.messageId,
+      actorOpenId: 'ou_bob', value: actionValue }
+    // Bob is permitted to use the group, but is not Alice, the turn owner.
+    expect((await b.t.emitCardAction(approval)).toast.type).toBe('warning')
+    expect(b.gateway.health().pendingApprovals).toBe(1)
+    expect((await b.t.emitCardAction({ ...approval, actorOpenId: 'ou_alice' })).toast.type).toBe('success')
+    expect(await decision).toBe('allowed-once')
+
+    const progress = b.t.streamCards[0]!
+    const cancelCard = { botId: 'default', chatId: 'oc_shared', actorOpenId: 'ou_bob',
+      messageId: progress.messageId,
+      value: { namespace: 'dsh-feishu-gateway', kind: 'cancel', nonce: progress.nonce } }
+    expect((await b.t.emitCardAction(cancelCard)).toast.type).toBe('warning')
+    await b.t.emitMessage({ messageId: 'om_bob_cancel', chatId: 'oc_shared',
+      senderId: 'ou_bob', chatType: 'group', text: '/cancel' })
+    await until(() => b.t.sent.some(x => x.replyToMessageId === 'om_bob_cancel'))
+    expect(b.bridge.cancelled).not.toContain(sessionId)
+    expect((await b.t.emitCardAction({ ...cancelCard, actorOpenId: 'ou_alice' })).toast.type).toBe('success')
+    await b.gateway.whenIdle()
+    expect(b.bridge.cancelled).toContain(sessionId)
+    await b.gateway.stop()
+  })
+
   it('uses one final CardKit reply with no duplicate text and preserves the native Session', async () => {
     const b = await boot(new MockSessionBridge({ reply: 'final model response' }), { streamCards: true })
     await b.emit('om_answer', 'hello')
