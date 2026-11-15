@@ -470,3 +470,29 @@ test('historical usage and CSV endpoints inherit DSH browser authorization', asy
     assert.equal((await f.request('/ops/usage?from=2020-01-01&to=2026-11-15')).status, 400)
   } finally { await f.close() }
 })
+
+
+test('authenticated Session inventory endpoint is paginated and does not disclose raw IDs', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true })
+    await writeFile(path.join(f.stateDir, 'sessions.json'), JSON.stringify({ bindings: {
+      'default:oc_sensitive_chat': {
+        sessionId: 'dsh-sensitive-session', createdAt: Date.parse('2026-01-03'),
+        lastActiveAt: Date.parse('2026-02-04'), persisted: true,
+      },
+    } }))
+    const anonymous = await f.request('/sessions', 'GET', undefined, {})
+    assert.equal(anonymous.status, 401)
+    const res = await f.request('/sessions?from=2026-02-01&pageSize=1')
+    assert.equal(res.status, 200)
+    assert.equal(res.json.report.total, 1)
+    const raw = JSON.stringify(res.json)
+    assert.equal(raw.includes('oc_sensitive_chat'), false)
+    assert.equal(raw.includes('dsh-sensitive-session'), false)
+    const invalid = await f.request('/sessions?status=invalid')
+    assert.equal(invalid.status, 400)
+    const duplicate = await f.request('/sessions?bot=a&bot=b')
+    assert.equal(duplicate.status, 400)
+  } finally { await f.close() }
+})
