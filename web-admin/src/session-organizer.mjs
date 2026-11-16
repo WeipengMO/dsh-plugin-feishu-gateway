@@ -24,6 +24,18 @@ const ms = value => {
 }
 const emptyConfig = Object.freeze({ enabled: false, revealNames: false, graceHours: 24 })
 const emptyCursor = () => ({ version: 1, bindings: {}, schedule: {}, missing: {}, handled: [], pending: {}, retired: {} })
+// Serialize all stateful workspace operations inside the Web process. A manual
+// archive must never race the timer's cursor write or another manual run.
+const operationQueue = new Map()
+function serialized(stateDir, action) {
+  const previous = operationQueue.get(stateDir) || Promise.resolve()
+  const running = previous.catch(() => {}).then(action)
+  operationQueue.set(stateDir, running)
+  void running.finally(() => {
+    if (operationQueue.get(stateDir) === running) operationQueue.delete(stateDir)
+  }).catch(() => {})
+  return running
+}
 
 async function privateJson(dir, name) {
   const base = await fs.lstat(dir).catch(e => {
@@ -219,7 +231,11 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     orphanCount: data.records.filter(row => row.orphan).length,
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
-export async function reconcileSessionOrganization(stateDir, services, { dryRun = true, now = Date.now() } = {}) {
+export function reconcileSessionOrganization(stateDir, services, options = {}) {
+  if (options.dryRun !== false) return reconcileOrganizationInternal(stateDir, services, options)
+  return serialized(stateDir, () => reconcileOrganizationInternal(stateDir, services, options))
+}
+async function reconcileOrganizationInternal(stateDir, services, { dryRun = true, now = Date.now() } = {}) {
   const data = await sourceData(stateDir, services.persistence, services.registry)
   if (!data.available) return { available: false, reason: data.reason, dryRun }
   const settings = await organizationSettings(stateDir)
@@ -318,7 +334,10 @@ async function auditOrganization(stateDir, sessionId, state) {
   await fs.appendFile(filename, JSON.stringify({ version: 1, ts: Date.now(),
     kind: 'system', state, session: hash(sessionId) }) + '\n', { mode: 0o600 })
 }
-export async function archiveNativeSession(stateDir, services, sessionId) {
+export function archiveNativeSession(stateDir, services, sessionId) {
+  return serialized(stateDir, () => archiveNativeSessionInternal(stateDir, services, sessionId))
+}
+async function archiveNativeSessionInternal(stateDir, services, sessionId) {
   if (typeof sessionId !== 'string' || !SAFE_ID.test(sessionId))
     throw Object.assign(new Error('invalid native Session'), { status: 400 })
   const data = await sourceData(stateDir, services.persistence, services.registry)
