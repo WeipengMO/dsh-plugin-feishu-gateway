@@ -227,7 +227,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
   }
   return { available: true, workspaceTitle: data.workspace?.title || null,
     workspaceId: data.workspace?.id || null, settings, total: filtered.length,
-    page, pageSize, items, nativeCount: data.records.length,
+    page, pageSize, items, canRestore: typeof services.registry?.unarchiveSession === 'function', nativeCount: data.records.length,
     orphanCount: data.records.filter(row => row.orphan).length,
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
@@ -355,4 +355,37 @@ async function archiveNativeSessionInternal(stateDir, services, sessionId) {
   handled.add(sessionId)
   await privateWrite(stateDir, CURSOR_FILE, { ...cursor, handled: [...handled].slice(-10000) })
   return { sessionRef: hash(sessionId), archived: true, nativeHistoryPreserved: true }
+}
+
+/**
+ * Restore a DSH sidebar archive only when the runtime exposes an official
+ * unarchive capability. Never edit WorkspaceRegistry JSON by hand.
+ * This is not recovery of a deleted transcript.
+ */
+export function restoreNativeSession(stateDir, services, sessionRef) {
+  return serialized(stateDir, () => restoreNativeSessionInternal(stateDir, services, sessionRef))
+}
+async function restoreNativeSessionInternal(stateDir, services, sessionRef) {
+  if (typeof sessionRef !== 'string' || !/^[0-9a-f]{16}$/.test(sessionRef))
+    throw Object.assign(new Error('invalid session reference'), { status: 400 })
+  if (typeof services.registry?.unarchiveSession !== 'function')
+    throw Object.assign(new Error('DSH version does not support unarchive'), { status: 501 })
+  const data = await sourceData(stateDir, services.persistence, services.registry)
+  if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
+  const matches = data.records.filter(row => row.idRef === sessionRef)
+  if (matches.length !== 1 || !matches[0].archived)
+    throw Object.assign(new Error('session is no longer archived; refresh'), { status: 409 })
+  // Reject ID collisions, stale catalog matches and any session whose owner
+  // is currently performing work. The operation only removes an archive flag.
+  const row = matches[0]
+  if (row.status === 'active' || data.activeTasks[row.id])
+    throw Object.assign(new Error('active Session cannot be restored here'), { status: 409 })
+  await services.registry.unarchiveSession(row.id)
+  await auditOrganization(stateDir, row.id, 'native-session-manual-restored')
+  const prev = await privateJson(stateDir, CURSOR_FILE)
+  const cursor = isObj(prev) && prev.version === 1 ? prev : emptyCursor()
+  const handled = new Set(Array.isArray(cursor.handled) ? cursor.handled.filter(x => SAFE_ID.test(x)) : [])
+  handled.add(row.id) // never re-hide a manually restored Session on reconciliation
+  await privateWrite(stateDir, CURSOR_FILE, { ...cursor, handled: [...handled].slice(-10000) })
+  return { sessionRef, restored: true, nativeHistoryPreserved: true }
 }
