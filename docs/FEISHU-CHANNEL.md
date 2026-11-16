@@ -1,127 +1,39 @@
-# 飞书 Channel（在 DSH 中通过飞书与 DSH 对话）
+# 在飞书中使用 DSH
 
-本目录/profile 把**飞书私聊**接到 **DSH 原生 Session**：你在飞书里给机器人发消息，
-DSH 用**与 Web 端相同的模型**处理，并把回复发回飞书。
+Gateway 将被授权的飞书消息交给 **DSH 原生 Agent/Session**，再通过飞书 REST 发回回复。会话历史由 DSH 保存，不是插件自行创建的一份聊天记录。
 
-## 架构
+**重要**：运行飞书通道的 `feishu-channel` Profile 与 DSH Web 的 `web` Profile 是分离的；它们的模型目录、凭据和工作区不一定一致。安装与连接说明见 [首次部署](GETTING-STARTED.md)。
 
-```
-飞书私聊 ──(WebSocket 长连接)──> dsh-plugin-feishu-gateway
-                                      │  allowlist(open_id) / 持久化 Inbox
-                                      ▼
-                            DSH 原生 Session（ctx.agents）
-                                      │  provider magpie / model group/deepseek
-                                      ▼
-                            DSH 回复 ──(飞书 REST)──> 飞书私聊
-```
+## 飞书聊天命令
 
-- Profile：`~/.dsh/profiles/feishu-channel/`（**独立 profile**，不修改 `web` profile）
-- 复用同一个 `DSH_HOME`，因此**复用同一份凭据库与同一模型路由**（`MAGPIE_API_KEY`）
-- 不含 `dsh-headless`（它是一次性应用），由 `channel-host.mjs` 持有进程生命周期
-- 状态：`~/.dsh/feishu-channel-state/`（`inbox.jsonl` / `outbox.json` / `sessions.json` / `channel.log`）
+以下命令发送到允许使用机器人的聊天，不作为普通 Agent 提示词执行；具体可用性与当前安装版本有关。
 
-## Web 可视化管理
-
-可额外安装独立的 **dsh-plugin-feishu-admin** 到 `web` Profile，在 DSH Web 设置页查看飞书通道健康、修改模型/白名单/机器人并写入受限凭据。网关仍在 `feishu-channel` Profile 独立运行。安装、systemd 管理及验收步骤详见 [WEB-ADMIN.md](WEB-ADMIN.md)。
-
-## 原生工具审批和流式任务卡片（0.2.0-rc.1）
-
-**源码默认禁用，但本次部署已明确开启** `streamCards=true`、`approvalCards=true`，且 `feishu-channel` 的原生审批插件与 preset 都是 `ask`。当前已发布飞书应用的 CardKit 写入/流式更新与 `card.action.trigger` 回调均实机生效；通常新增应用权限仍需在飞书开发者后台发布。详见 [最终验收快照](ACCEPTANCE-0.2.0-rc.1.md) 与 [APPROVAL-STREAMING.md](APPROVAL-STREAMING.md)。
-
-## 富文本与 Markdown 回复（0.1.3）
-
-入站增加对 `post` **纯文本型富文本**的支持，可以提取标题、正文、Markdown 和 HTTP(S) 链接。携带图片/视频/@ 等不支持的富文本不会被部分读取后提交给 Agent，而是安全拒绝。真正的图片和文件双向传输仍待开发。
-
-AI 回复仍默认使用 `text`；可以在原 Profile 设置 `replyFormat: markdown`，或在 **Web Admin → 模型与配置 → AI 回复格式** 选择 `Markdown 富文本` 并重启通道启用官方 `post/md` 渲染。飞书 post 请求体有大小限制，超长回复会截断并注明。
-
-## 飞书内管理命令
-
-在已授权的**私聊**里发送以下命令（不作为 Agent 提示词）：
-
-| 命令 | 行为 | 安全边界 |
+| 命令 | 作用 | 注意 |
 | --- | --- | --- |
-| `/help` | 列出命令 | 不创建 Session |
-| `/status` | 当前聊天任务状态、通道健康与 Outbox | 不返回凭据或会话内容 |
-| `/cancel` | 立即请求取消当前聊天运行中的 Agent turn | 仅取消本聊天；命令可绕过该聊天长任务队列，但不会回滚已经执行的工具操作 |
-| `/new` | 当前任务结束后解除旧 Session 绑定，后续消息创建新 Session | 原 DSH 会话历史保留，不会将旧 Session 的任务意外中断 |
+| `/help` | 显示帮助 | 不启动新的 Agent 对话 |
+| `/status` | 查看当前聊天和通道状态 | 不暴露凭据 |
+| `/new` | 为当前聊天创建下一段全新上下文 | 旧 DSH 历史仍保留，不等于删除 |
+| `/cancel` / `/stop` | 请求停止当前聊天正在执行的任务 | 已执行的工具副作用不能回滚 |
+| `/models` | 展示飞书 Gateway Host 可发现的所有模型 | 可发现不等于已验证可调用 |
+| `/model provider/model` | 为当前聊天选择模型 | 其他聊天与 DSH 默认模型不受影响 |
 
-只有完整的 `/help` 等命令会被网关拦截；其它文字照常发送给 Agent。重复事件由 Inbox 幂等处理；崩溃时不自动重放已开始的取消操作。取消的 turn 在 Inbox 中记录为终态 `failed`，以防止危险操作重复执行。
+模型路由、多个备用模型以及 Token 统计详见 [模型与用量](USAGE-AND-MODELS.md)。
 
-## 凭据（绝不提交）
+## 聊天、历史和群聊
 
-凭据放在**仓库之外**的 `~/.dsh/feishu-channel.env`（权限 `600`）：
+- **私聊**：仅处理已授权 `open_id` 的消息。白名单为空表示不处理私聊。
+- **群聊**：默认关闭；显式配置群策略、成员白名单和 @ 要求后才能启用，建议按群成员隔离原生 Session。详见 [群聊管理](GROUP-CHAT.md)。
+- **会话**：同一聊天通常继续使用已有 DSH Session，`/new` 切换下一段会话；旧历史继续由 DSH 持有。
+- **格式**：支持纯文本、兼容的富文本入站，以及可选 Markdown 风格回复。含不支持媒体节点的消息不能当作完整可用输入；图片/文件双向传输仍待实现。
 
-```bash
-FEISHU_GATEWAY_DEFAULT_APP_ID=cli_...
-FEISHU_GATEWAY_DEFAULT_APP_SECRET=...
-```
+## 工具审批和流式回复
 
-- 插件只从**环境变量**读取，日志只打印来源名（`env:FEISHU_GATEWAY_DEFAULT_APP_SECRET`），不打印值。
-- `.gitignore` 已忽略 `.env` / `.env.*` / `feishu-channel.env`，仓库内不会出现密钥。
-- 本轮凭据取自 openclaw 现有飞书应用（`channels.feishu.appId` + `secrets.json` 的
-  `/config/feishuAppSecret`），仅写入上述 `600` 文件，未写入任何仓库文件。
+可选 CardKit 卡片展示任务进度、最终回复和当前可用的模型/用量信息；高风险工具审批仍由 DSH 原生审批策略决定。允许一次、拒绝、超时及取消都有独立语义，**卡片不是越过 DSH 审批的后门**。详见 [卡片与审批说明](APPROVAL-STREAMING.md)。
 
-## 启动 / 停止
+## 排障入口
 
-```bash
-scripts/channel/start-feishu-channel.sh --daemon   # 后台启动 + PID 文件
-scripts/channel/start-feishu-channel.sh --status   # 健康检查（含 transports / inbox / outbox）
-scripts/channel/start-feishu-channel.sh --stop     # 优雅停止
-scripts/channel/start-feishu-channel.sh            # 前台运行（调试用）
-```
+在 DSH Web「飞书管理」查看连接状态与消息投递。若机器人没有响应，优先检查飞书应用是否发布、WebSocket 是否连接、用户 `open_id` 是否获授权，以及 Gateway Profile 的模型是否可用。
 
-控制面只绑定 `127.0.0.1:18095`：`GET /health`、`GET /diagnostics`、`POST /shutdown`。
-
-## 开机自启（可选）
-
-```bash
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/dsh-feishu-channel.service <<'EOF'
-[Unit]
-Description=DSH Feishu channel
-After=network-online.target
-
-[Service]
-Type=simple
-ExecStart=%h/dsh-workspace/projects/dsh-plugin-feishu-gateway/scripts/channel/start-feishu-channel.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user daemon-reload
-systemctl --user enable --now dsh-feishu-channel.service
-```
-
-## 配置要点（`~/.dsh/profiles/feishu-channel/cordis.patch.yml`）
-
-| 项 | 值 | 说明 |
-| --- | --- | --- |
-| `offline` | `false` | 真正建立飞书长连接 |
-| `autoConnect` | `true` | 启动即连接 |
-| `allowlist` | 你的 `open_id` | 只接受白名单用户的私聊；空列表 = 全部拒绝 |
-| `allowGroups` | `false` | 仅私聊 |
-| `workspace` | `/home/ubuntu/dsh-workspace` | Agent 的工作目录 |
-| `replyTimeoutMs` | `300000` | 长任务上限（5 分钟） |
-| `outboxRetryIntervalMs` | `30000` | 飞书 REST 失败时，即使长连接未断开也会周期补发 |
-| 模型 | `magpie` / `group/deepseek` | 与 Web 端 `agent-default-model` 一致 |
-| 沙箱 | `workspace-write` | 只能写 workspace |
-| 审批 | `ask`（当前部署） | 已具备卡片审批 UI；普通 `workspace-write` 工具不触发审批，沙箱权限升级等原生 `approval/request` 才触发 |
-
-## 排障
-
-| 现象 | 处理 |
-| --- | --- |
-| `transports.default != connected` | 检查 `channel.log` 是否有 `ws client ready`；确认飞书应用已开启「长连接接收事件」并订阅 `im.message.receive_v1` |
-| 发消息无回复，`rejected.sender-not-allowlisted` 增长 | 你的 `open_id` 不在 `allowlist` 中 |
-| `rejected.groups-disabled` | 只支持私聊，群聊默认拒绝 |
-| `health.errors` 增长 | 看 `channel.log` 的 `message ... failed`，通常是模型路由或权限问题 |
-| `invalid durable state` | 不会自动清空 Outbox/Session；备份后人工修复对应 JSON，再启动服务 |
-| `.owner.lock.reaper` 持续存在 | 上次清理旧锁的进程可能意外退出；确认所有 Gateway 已停止后，人工检查再处理 |
-| 回复很慢/超时 | 长任务可调大 `replyTimeoutMs` |
-
-## 与测试 harness 的区别
-
-`scripts/e2e/` 是**测试**用途（隔离 `DSH_HOME`、可 mock LLM、断言后销毁）。
-本 channel 是**长期运行**的真实部署，使用真实凭据与真实模型，不做断言、只做健康检查。
+- [飞书开放平台权限](FEISHU-APP.md)
+- [网络代理与服务控制](OPERATIONS.md)
+- [真实端到端验证](E2E.md)
