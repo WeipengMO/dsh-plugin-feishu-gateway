@@ -666,6 +666,44 @@ describe('model directory and fallback rescue', () => {
     await gateway.stop()
   })
 
+  it('uses multiple fallback models in order and stops after a successful answer', async () => {
+    const { gateway, transport, bridge } = await harness({ agent: {
+      provider: 'magpie', model: 'group/deepseek',
+      fallbacks: [
+        { provider: 'openai', model: 'alpha' },
+        { provider: 'magpie', model: 'group/hy4-free' },
+      ],
+    } }, 'rescued', {
+      turnFailures: [{ toolCalls: 0, failure: 'first failed' },
+        { toolCalls: 0, failure: 'second failed' }],
+    })
+    await transport.emitMessage(alice({ messageId: 'om_multi_fallback' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toEqual([
+      { sessionId: expect.any(String), provider: 'openai', model: 'alpha' },
+      { sessionId: expect.any(String), provider: 'magpie', model: 'group/hy4-free' },
+    ])
+    expect(bridge.prompts).toHaveLength(3)
+    expect(transport.sent[0]?.text).toBe('rescued')
+    await gateway.stop()
+  })
+
+  it('never proceeds to the second fallback once a tool has run', async () => {
+    const { gateway, transport, bridge } = await harness({ agent: {
+      provider: 'magpie', model: 'primary',
+      fallbacks: [{ provider: 'openai', model: 'first' }, { provider: 'openai', model: 'second' }],
+    } }, 'unused', { turnFailures: [
+      { toolCalls: 0, failure: 'primary failed' },
+      { toolCalls: 1, failure: 'second turn ran a tool' },
+    ] })
+    await transport.emitMessage(alice({ messageId: 'om_multi_tool_fallback' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toHaveLength(1)
+    expect(bridge.prompts).toHaveLength(2)
+    expect(transport.sent[0]?.text).toContain('处理失败')
+    await gateway.stop()
+  })
+
   it('never replays a failed turn once a tool ran, even with a fallback route', async () => {
     const { gateway, transport, bridge } = await harness({ agent: route }, 'unused', {
       turnFailures: [{ toolCalls: 1, failure: 'error: 500' }],
