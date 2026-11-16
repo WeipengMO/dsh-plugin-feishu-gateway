@@ -208,7 +208,7 @@ async function writeResult(dir: string, result: OperatorResult): Promise<void> {
 /** Keep result details a compact, allowlisted alphabet (no IDs or stack traces). */
 function boundedDetail(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
-  const clean = value.replace(/[^A-Za-z0-9 _.:/+@-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+  const clean = value.replace(/[^A-Za-z0-9 _.:/+@=-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
   return clean || undefined
 }
 
