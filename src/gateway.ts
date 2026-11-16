@@ -602,7 +602,7 @@ export class FeishuGateway {
             ? '备用模型（按顺序尝试，仅在未执行工具时重试）：' +
               fallbacks.map((item, index) => '\n' + (index + 1) + '. ' + item.provider + '/' + item.model).join('')
             : ''
-          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 30_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
           if (!catalog) {
             reply = [currentLine, fallbackLine, '模型目录暂不可用，请稍后重试。'].filter(Boolean).join('\n')
@@ -620,7 +620,7 @@ export class FeishuGateway {
         if (!choice) {
           reply = '请发送 /model provider/model 切换当前会话模型；发送 /models 查看可用模型。'
         } else {
-          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 30_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
           if (!catalog) {
             reply = '模型目录暂不可用，请稍后重试。'
@@ -1280,7 +1280,7 @@ export class FeishuGateway {
     if (this.bridge.listModels && !this.modelCatalogLoading && now - this.modelCatalogAttempt >= 60_000) {
       this.modelCatalogAttempt = now
       this.modelCatalogLoading = true
-      void withTimeout(this.bridge.listModels(), 10_000).then(result => {
+      void withTimeout(this.bridge.listModels(), 30_000).then(result => {
         if (!result.timedOut && !this.stopped) {
           const routes = result.value.models.map(item => item.provider + '/' + item.model)
             .filter(name => /^[A-Za-z0-9_.:/-]{1,256}$/.test(name))
