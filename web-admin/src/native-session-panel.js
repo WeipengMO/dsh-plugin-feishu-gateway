@@ -17,7 +17,7 @@ function FeishuSessionCenter() {
     view==='archive'&&h(React.Fragment,null,
       h('div',{className:'fgw-session-explainer'},
         h('strong',null,'已归档：隐藏但不删除'),
-        h('p',null,'归档会话仍然占用磁盘空间。当前 DSH 版本尚无本后台可用的原生恢复接口，因此不要把归档当作回收站。')),
+        h('p',null,'归档会话仍然占用磁盘空间。在下方可以尝试恢复到 DSH 列表；只有运行时提供恢复接口才显示可用按钮。')),
       h(FeishuNativeSessionLedger,{key:'archive',mode:'archive'})),
     view==='bindings'&&h('div',{className:'fgw-session-advanced-area'},
       h('div',{className:'fgw-session-explainer'},
@@ -111,14 +111,26 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       const native = lookup.report?.items?.find(x => x.sessionRef === row.sessionRef && x.orphan)
       if (!native?.sessionId) throw Error('历史记录已变更，请刷新重试')
       const { preview } = await request('/sessions/native/preview', 'POST', { sessionId: native.sessionId })
-      if (!window.confirm('从常用侧栏隐藏这段 DSH 对话？\n会话：' + (row.sessionTitle || row.sessionRef) +
+      if (!window.confirm('归档这段 DSH 对话？\n会话：' + (row.sessionTitle || row.sessionRef) +
         '\n引用：' + preview.sessionRef +
-        '\n历史记录不会删除，也不会节省磁盘空间。当前后台尚不能恢复归档，请确认后再操作。')) {
+        '\n历史记录不会删除，也不会节省磁盘空间。如果 DSH 提供恢复接口，可以从“已归档”中恢复。')) {
         setNotice('已取消原生 Session 归档')
         return
       }
       const result = await request('/sessions/native/archive', 'POST', { token: preview.token })
       setNotice('已从侧栏隐藏：' + result.result.sessionRef + '（数据未删除）')
+      void refresh()
+    } catch (e) { setError(e.message || String(e)) }
+    finally { setBusy(false) }
+  }
+  const restore = async row => {
+    if (row.status !== 'archived' || !report?.canRestore) return
+    if (!window.confirm('恢复归档的「' + (row.sessionTitle || row.scheduleTitle || '未命名对话') +
+      '」？\\n恢复后它会重新出现在 DSH 的会话列表中，不会重新建立已经解除的飞书聊天关联。')) return
+    setBusy(true)
+    try {
+      const result = await request('/sessions/native/restore', 'POST', { sessionRef: row.sessionRef })
+      setNotice('已恢复到 DSH 会话列表：' + result.result.sessionRef)
       void refresh()
     } catch (e) { setError(e.message || String(e)) }
     finally { setBusy(false) }
@@ -214,10 +226,14 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
               x.botId&&h('div',null,'机器人：',x.botId)))},
           {key:'lastActiveAt',title:'最近使用',render:x=>formatDate(x.lastActiveAt)},
           {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unbound:'不再关联',archived:'已归档'})[x.status]||'未知')},
-          {key:'actions',title:'操作',render:x=>
+          {key:'actions',title:'操作',render:x=>x.status==='archived' ?
             h('button',{type:'button',className:'fgw-refresh',
-              disabled:busy||!x.orphan||x.status!=='unbound',
-              onClick:()=>void archive(x)},'从侧栏隐藏')}
+              disabled:busy||!report?.canRestore,
+              title:report?.canRestore?'恢复到 DSH 会话列表':'此 DSH 版本没有可用的恢复接口',
+              onClick:()=>void restore(x)},'恢复') :
+            x.orphan&&x.status==='unbound' ?
+              h('button',{type:'button',className:'fgw-refresh',disabled:busy,
+                onClick:()=>void archive(x)},'归档') : '—'}
         ] }),
       report?.available && h('div',{className:'fgw-session-pages'},
         h('span',null,'共 '+wbCount(report.total)+' 条 · 第 '+query.page+'/'+Math.max(1,Math.ceil(report.total/25))+' 页'),
