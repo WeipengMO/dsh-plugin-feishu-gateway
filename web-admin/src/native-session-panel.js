@@ -3,7 +3,7 @@
  * Workspace reconciliation is opt-in and never resumes native Sessions.
  */
 function FeishuNativeSessionLedger() {
-  const [query, setQuery] = useState({ status: 'all', type: 'all', search: '', orphan: false, page: 1 })
+  const [query, setQuery] = useState({ status: 'all', type: 'all', bot: '', from: '', to: '', search: '', orphan: false, page: 1 })
   const [reveal, setReveal] = useState(false)
   const [report, setReport] = useState(null)
   const [plan, setPlan] = useState(null)
@@ -15,7 +15,8 @@ function FeishuNativeSessionLedger() {
     setBusy(true)
     try {
       const params = new URLSearchParams({
-        status: query.status, type: query.type, search: query.search,
+        status: query.status, type: query.type, bot: query.bot,
+        from: query.from, to: query.to, search: query.search,
         orphan: query.orphan ? '1' : '0', page: String(query.page),
         reveal: reveal ? '1' : '0'
       })
@@ -124,9 +125,18 @@ function FeishuNativeSessionLedger() {
             onChange: e => filter('type', e.target.value) },
             [['all','全部'],['p2p','私聊'],['group','群聊'],['schedule','定时']].map(([value,label]) =>
               h('option', {key:value,value},label)))),
-        h('label', { className: 'fgw-session-filter' }, h('span', null, '检索标题或引用'),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '机器人 ID'),
+          h('input', { className: 'fga-input', value: query.bot, maxLength: 32,
+            onChange: e => filter('bot', e.target.value), placeholder: '所有机器人' })),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '开始日期 (UTC)'),
+          h('input', { className: 'fga-input', type: 'date', value: query.from,
+            onChange: e => filter('from', e.target.value) })),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '结束日期 (UTC)'),
+          h('input', { className: 'fga-input', type: 'date', value: query.to,
+            onChange: e => filter('to', e.target.value) })),
+        h('label', { className: 'fgw-session-filter' }, h('span', null, '检索引用 / Bot / 定时任务'),
           h('input', { className: 'fga-input', value: query.search, maxLength:128,
-            onChange: e => filter('search',e.target.value), placeholder: '标题、引用、Bot ID' })),
+            onChange: e => filter('search',e.target.value), placeholder: 'Session 引用、任务标题' })),
         h('label', { className: 'fga-check' },
           h('input', { type: 'checkbox', checked: query.orphan,
             onChange: e => filter('orphan', e.target.checked) }), '仅看孤儿'),
