@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   archiveNativeSession,
+  restoreNativeSession,
   organizationSettings,
   reconcileSessionOrganization,
   saveOrganizationSettings,
@@ -47,6 +48,10 @@ async function fixture(t, { bound = SID, other = false } = {}) {
       async create() { return workspace },
       async archiveSession(id) {
         if (!archived.includes(id)) archived.push(id)
+      },
+      async unarchiveSession(id) {
+        const i = archived.indexOf(id)
+        if (i >= 0) archived.splice(i, 1)
       },
     },
     query: { async readTitle(id) { return 'title for ' + id.slice(-3) } },
@@ -166,4 +171,40 @@ test('native ledger filters bot and last activity UTC date interval', async t =>
   const future = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
   const filtered = await sessionOrganizationInventory(f.stateDir, f.native, { from: future })
   assert.equal(filtered.total, 0)
+})
+
+test('archived Session can be restored with a native capability without touching history', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'archived' })
+  assert.equal(list.canRestore, true)
+  assert.equal(list.items.length, 1)
+  const restored = await restoreNativeSession(f.stateDir, f.native, list.items[0].sessionRef)
+  assert.equal(restored.restored, true)
+  assert.equal(restored.nativeHistoryPreserved, true)
+  assert.deepEqual(f.archived, [])
+  await assert.rejects(restoreNativeSession(f.stateDir, f.native, list.items[0].sessionRef),
+    { status: 409 })
+  await saveOrganizationSettings(f.stateDir, { enabled: true })
+  const dryRun = await reconcileSessionOrganization(f.stateDir, f.native)
+  assert.equal(dryRun.archive.some(row => row.id === ORPHAN), false)
+})
+
+test('restore is disabled when the installed DSH runtime has no unarchive API', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  delete f.native.registry.unarchiveSession
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'archived' })
+  assert.equal(list.canRestore, false)
+  await assert.rejects(restoreNativeSession(f.stateDir, f.native, list.items[0].sessionRef),
+    { status: 501 })
+  assert.ok(f.archived.includes(ORPHAN))
+})
+
+test('restore rejects forged or stale Session references', async t => {
+  const f = await fixture(t)
+  await assert.rejects(restoreNativeSession(f.stateDir, f.native, 'unsafe/../ref'),
+    { status: 400 })
+  await assert.rejects(restoreNativeSession(f.stateDir, f.native, '0'.repeat(16)),
+    { status: 409 })
 })
