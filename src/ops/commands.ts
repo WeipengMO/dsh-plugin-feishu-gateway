@@ -37,12 +37,25 @@ export interface OperatorCommand {
   readonly version: 1
   readonly id: string
   readonly ts: number
-  readonly type: 'cancel-task' | 'retry-outbox' | 'archive-session' | 'unbind-session' | 'schedule'
+  readonly type: 'cancel-task' | 'retry-outbox' | 'archive-session' | 'unbind-session' | 'batch-sessions' | 'schedule'
   readonly ref?: string
   readonly expectedLastActiveAt?: number
   /** Bounded, server-derived label of the authenticated DSH Web operator. */
   readonly actor?: string
   readonly schedule?: ScheduleOperatorPayload
+  /** At most 20 versioned, hashed Feishu binding operations. No raw chat/session ID. */
+  readonly batch?: SessionBatchPayload
+}
+
+export interface SessionBatchItem {
+  readonly ref: string
+  readonly chatRef: string
+  readonly botId: string
+  readonly expectedLastActiveAt: number
+}
+export interface SessionBatchPayload {
+  readonly action: 'archive' | 'unlink'
+  readonly items: readonly SessionBatchItem[]
 }
 export interface OperatorResult {
   readonly version: 1
@@ -70,6 +83,7 @@ const INSTANT = /^\d{4}-\d{2}-\d{2}T[\d:.Z+-]{1,40}$/
 /** Schedule commands carry a prompt/spec; legacy commands stay tiny. */
 const LEGACY_MAX_BYTES = 1024
 const SCHEDULE_MAX_BYTES = 8192
+const BATCH_MAX_BYTES = 4096
 const RESULT_STATES = new Set<OperatorResult['state']>(['completed', 'not-found', 'rejected', 'error', 'conflict'])
 const SCHEDULE_ACTIONS = new Set<ScheduleCommandAction>([
   'create', 'update', 'pause', 'resume', 'run', 'delete', 'delete-inactive', 'refresh',
@@ -77,6 +91,31 @@ const SCHEDULE_ACTIONS = new Set<ScheduleCommandAction>([
 const SCHEDULE_KEYS = ['action', 'clientRef', 'taskId', 'title', 'prompt', 'spec', 'notify', 'delivery', 'expectedUpdatedAt']
 const DELIVERY_KEYS = ['botId', 'chatId', 'chatType', 'senderId']
 const NOTIFY_VALUES = new Set(['result', 'failure', 'both', 'none'])
+
+/** Validate every field again in the owner process; the browser is not an authority. */
+function parseSessionBatch(value: unknown): SessionBatchPayload | null {
+  if (!isPlainObject(value) || Object.keys(value).some(key => key !== 'action' && key !== 'items') ||
+    (value.action !== 'archive' && value.action !== 'unlink') || !Array.isArray(value.items) ||
+    value.items.length < 1 || value.items.length > 20) return null
+  const items: SessionBatchItem[] = []
+  const seen = new Set<string>()
+  for (const item of value.items) {
+    if (!isPlainObject(item) ||
+      Object.keys(item).some(key => !['ref', 'chatRef', 'botId', 'expectedLastActiveAt'].includes(key)) ||
+      typeof item.ref !== 'string' || !REF.test(item.ref) ||
+      typeof item.chatRef !== 'string' || !REF.test(item.chatRef) ||
+      typeof item.botId !== 'string' || !BOT_ID.test(item.botId) ||
+      typeof item.expectedLastActiveAt !== 'number' ||
+      !Number.isSafeInteger(item.expectedLastActiveAt) ||
+      item.expectedLastActiveAt < 0 || item.expectedLastActiveAt > 1e13) return null
+    const key = item.botId + ':' + item.chatRef
+    if (seen.has(key)) return null
+    seen.add(key)
+    items.push({ ref: item.ref, chatRef: item.chatRef, botId: item.botId,
+      expectedLastActiveAt: item.expectedLastActiveAt })
+  }
+  return { action: value.action, items }
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -211,12 +250,15 @@ export async function processOperatorCommands(
       const data = JSON.parse(await readFile(claimed, 'utf8')) as Record<string, unknown>
       const isSession = data.type === 'archive-session' || data.type === 'unbind-session'
       const isSchedule = data.type === 'schedule'
+      const isBatch = data.type === 'batch-sessions'
       if (isSchedule) resultType = 'schedule'
+      if (isBatch) resultType = 'batch-sessions'
       const legacy = data.type === 'cancel-task' || data.type === 'retry-outbox' || isSession
       const fresh = typeof data.ts === 'number' && Date.now() - data.ts >= 0 &&
         Date.now() - data.ts < 30_000
       if (data?.version === 1 && data.id === name.slice(0, -5) && fresh &&
-        (legacy || isSchedule) && fileSize <= (isSchedule ? SCHEDULE_MAX_BYTES : LEGACY_MAX_BYTES)) {
+        (legacy || isSchedule || isBatch) &&
+        fileSize <= (isSchedule ? SCHEDULE_MAX_BYTES : isBatch ? BATCH_MAX_BYTES : LEGACY_MAX_BYTES)) {
         if (isSchedule) {
           const schedule = parseSchedulePayload(data.schedule)
           const actor = typeof data.actor === 'string' && ACTOR.test(data.actor)
@@ -225,6 +267,19 @@ export async function processOperatorCommands(
             const command: OperatorCommand = {
               version: 1, id: data.id as string, ts: data.ts as number,
               type: 'schedule', actor, schedule,
+            }
+            cmd = command
+            const outcome = await execute(command)
+            state = typeof outcome === 'string' ? outcome : outcome.state
+            detail = boundedDetail(typeof outcome === 'string' ? undefined : outcome.detail)
+          }
+        } else if (isBatch && Object.keys(data).every(key =>
+          ['version', 'id', 'ts', 'type', 'batch'].includes(key))) {
+          const batch = parseSessionBatch(data.batch)
+          if (batch) {
+            const command: OperatorCommand = {
+              version: 1, id: data.id as string, ts: data.ts as number,
+              type: 'batch-sessions', batch,
             }
             cmd = command
             const outcome = await execute(command)
