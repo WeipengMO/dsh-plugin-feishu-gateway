@@ -633,3 +633,52 @@
 @media(prefers-reduced-motion:reduce) {
   .fgw-usage-dashboard .fgw-heat-day,.fgw-usage-token-bar { transition:none; }
 }
+
+
+/* Issue #19: scheduled tasks workspace (list / run history / audit + editor). */
+.fgw-schedule{display:flex;flex-direction:column;gap:16px;min-width:0}
+.fgw-sched-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.fgw-sched-tabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--border,#8883);flex:1;min-width:0}
+.fgw-sched-tab{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted-foreground,#8b96a5);font:inherit;font-size:13px;padding:9px 14px;cursor:pointer;white-space:nowrap}
+.fgw-sched-tab:hover{color:inherit}
+.fgw-sched-tab.is-active{color:var(--primary,#4f80d9);border-bottom-color:var(--primary,#4f80d9);font-weight:660}
+.fgw-sched-tab:focus-visible{outline:2px solid var(--ring,#4f88f0);outline-offset:2px;border-radius:6px}
+.fgw-sched-filters{display:flex;align-items:end;flex-wrap:wrap;gap:12px;min-width:0}
+.fgw-sched-filter{display:flex;flex-direction:column;gap:6px;min-width:170px;flex:1;font-size:12px;color:var(--muted-foreground,#9298a3)}
+.fgw-sched-filter .fga-input{min-width:0;width:100%}
+.fgw-sched-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:start}
+.fgw-sched-form .fgw-block-body{display:flex;flex-direction:column;gap:16px;padding:18px 21px 20px}
+.fgw-sched-prompt-input{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.6}
+.fgw-sched-weekdays{display:flex;flex-wrap:wrap;gap:7px}
+.fgw-sched-weekday{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border:1px solid var(--border,#8885);border-radius:9px;font-size:12px;cursor:pointer;background:var(--card,transparent)}
+.fgw-sched-weekday.is-on{border-color:color-mix(in srgb,var(--primary,#4f7adb) 55%,var(--border,#8884));background:color-mix(in srgb,var(--primary,#4f7adb) 10%,transparent);color:var(--primary,#5081dc);font-weight:640}
+.fgw-sched-weekday input{accent-color:var(--primary,#467cf4);width:14px;height:14px;margin:0}
+.fgw-sched-delivery-preview{display:flex;flex-direction:column;gap:5px;padding:11px 14px;border:1px solid color-mix(in srgb,var(--primary,#5388e4) 22%,var(--border,#8883));border-radius:11px;background:color-mix(in srgb,var(--primary,#5388e4) 5%,var(--card,transparent));font-size:12px;line-height:1.6}
+.fgw-sched-delivery-preview strong{font-size:12px;font-weight:660}
+.fgw-sched-delivery-preview span{color:var(--muted-foreground,#8e99a6);overflow-wrap:anywhere}
+.fgw-sched-preview{border:1px solid var(--border,#8884);border-radius:12px;padding:14px 16px;background:var(--muted,rgba(127,127,127,.04))}
+.fgw-sched-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}
+.fgw-sched-preview-head strong{font-size:13px;font-weight:660}
+.fgw-sched-preview .fgw-muted{font-size:11px}
+.fgw-sched-occ{margin:9px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:5px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--foreground,inherit)}
+.fgw-sched-list{display:flex;flex-direction:column;gap:12px}
+.fgw-sched-task{min-width:0;border:1px solid var(--border,#8884);border-radius:14px;background:var(--card,transparent);overflow:hidden}
+.fgw-sched-task-main{display:flex;flex-direction:column;gap:8px;padding:16px 18px 12px}
+.fgw-sched-task-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fgw-sched-task-title strong{font-size:14px;font-weight:660;overflow-wrap:anywhere}
+.fgw-sched-task-meta{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11.5px;color:var(--muted-foreground,#8f9aa8);line-height:1.5}
+.fgw-sched-active{color:#c78e33;font-weight:650}
+.fgw-sched-task-actions{display:flex;flex-wrap:wrap;gap:8px;padding:0 18px 15px}
+.fgw-sched-task-actions .fga-button{padding:6px 11px;font-size:12px;min-height:32px}
+.fgw-sched-confirm{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0 18px 15px;padding:11px 13px;border:1px solid rgba(215,74,74,.32);border-radius:10px;background:rgba(215,74,74,.07);font-size:12px;line-height:1.6}
+.fgw-sched-confirm .fga-button{padding:6px 11px;font-size:12px;min-height:32px}
+.fgw-sched-detail{border-top:1px solid var(--border,#8883);padding:6px 18px 16px}
+.fgw-sched-prompt-title{font-size:12px;font-weight:640;margin:14px 0 6px}
+.fgw-sched-prompt{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--muted,#8882);border-radius:9px;padding:11px 13px;max-height:240px;overflow:auto}
+.fgw-sched-unavailable{display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;padding:40px 20px;border:1px dashed var(--border,#8886);border-radius:14px;color:var(--muted-foreground,#929baa)}
+.fgw-sched-unavailable strong{font-size:15px;font-weight:660;color:var(--foreground,inherit)}
+.fgw-sched-unavailable p{max-width:560px;line-height:1.7;font-size:12px;margin:0;overflow-wrap:anywhere}
+.fgw-sched-footbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding-top:4px}
+.fgw-sched-footbar .fga-button{padding:7px 12px;font-size:12px;min-height:34px}
+@media(max-width:860px){.fgw-sched-form-grid{grid-template-columns:minmax(0,1fr)}.fgw-sched-filter{min-width:140px}}
+@media(max-width:690px){.fgw-sched-tabs{overflow-x:auto}.fgw-sched-toolbar{flex-direction:column;align-items:stretch}.fgw-sched-task-actions{gap:6px}.fgw-sched-filter{flex:1 1 100%}}

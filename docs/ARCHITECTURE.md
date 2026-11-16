@@ -73,7 +73,7 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 | --- | --- | --- |
 | Agent 模型/工作区绑定 | `AgentOptions { provider, model, reasoningEffort, maxTokens }` + `CreateAgentOptions.meta.cwd` | 已支持可选覆盖，默认继承 profile |
 | 审批 | `ctx.approval` / `ctx.on('approval/request', (req, next) => ...)`，四种 `ApprovalOutcome` | 未桥接；危险操作仍走 DSH 原生审批 |
-| 定时主动通知 | `ctx.schedule.create({ title, prompt, timing, target })`，`target: { kind:'session', sessionId }` | 未实现 |
+| 定时主动通知 | `ctx.schedule`（原生 `ScheduleService`：`create` / `list` / `view` / `edit` / `run` / `history` / `deleteInactive` / `deliveryLimits`）；`target: { kind:'session', sessionId }` | 已桥接（Issue #19，开发分支）：`ctx.inject(['schedule'])` 取得原生服务，Web Admin → 跨 Profile `ops-control` 命令邮箱 → Gateway `ScheduleManager`；每个任务用 Gateway 自有 `session` 目标，经 `schedule/resolve-agent` waterfall 接回实时 Agent，`session/event` 结果走 DurableOutbox 发到飞书；`schedule-delivery.json` 仅为飞书投递旁路，**不另建 Cron 引擎**。详见 §2.5 |
 | Session 持久化 | `ctx.sessionPersistence` / `session/flush`，由 profile 的 `dsh-session-persistence-jsonl` 提供 | 由 DSH 自己负责；插件只持久化「聊天 → Session id」映射 |
 | 凭证 | `ctx.credentials.resolve(credentialRef(name))` / `modifyRecord` | 本版只用环境变量名（`apiKeyEnv` 同款模式），因为只需要固定变量 |
 
@@ -155,6 +155,14 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 | `inbox.jsonl` | 追加日志（`received`/`running`/`processed`/`failed`/`uncertain`） | 防止崩溃重放 Agent 副作用，保守恢复 |
 | `outbox.json` | 原子 JSON（pending + sent ledger） | 单进程串行补发、固定 UUID、消息幂等键 |
 | `sessions.json` | 原子 JSON（chat → sessionId） | 重启后 `ctx.agents.resume` |
+| `schedule-delivery.json` | 原子 JSON | 定时任务旁路：`taskId → 飞书 chat 目标 + notify`（Issue #19；**不是**调度器） |
+| `schedule-runs.json` | 原子 JSON | 定时任务执行台账：状态 / 耗时 / Token / `sessionRef` / `delivered` / 错误摘要，按 `messageId` 去重（Issue #19） |
+| `schedule-audit.jsonl` | 追加日志 | 定时任务命令审计：actor / 时间 / action / taskId / 状态 / 参数摘要，从不写 prompt 正文（Issue #19） |
+| `ops-schedule.json` | 原子 JSON（0600，version 1） | 定时任务脱敏只读模型：`available` / `limits` / `tasks` / `deliveries` / `runs` / `audit`，供 Web Admin 读取（Issue #19） |
+
+> 上表后四行是定时任务（Issue #19，开发分支）新增，见 §2.5；它们**不改变**下面关于
+> v0.1.0 基础模型「三个 `JsonStore` 状态文件 + `inbox.jsonl` append-only 日志」的既有结论
+> ——下文的「三个 `JsonStore` 状态文件」仍指 `dedup.json` / `outbox.json` / `sessions.json`。
 
 三个 `JsonStore` 状态文件使用「同目录**按实例唯一**的临时文件 + `rename`」原子写入；
 `inbox.jsonl` 是 **append-only 日志**（`appendFile`，带 `0o600`），不是 `rename` 路径，
@@ -196,6 +204,47 @@ Inbox 的准入权威是**实例内的内存 Map**。两个 Gateway 实例（或
 
 `health()` / `diagnostics()` 暴露只读状态：`transports`、`sessionBridge.available`、
 `inbox/outbox/dedup` 计数、`processed/rejected/errors`、`uptimeMs`。
+
+### 2.5 定时任务桥接（Issue #19，开发分支）
+
+> 本节是 `feat/scheduled-tasks` 分支的设计说明；能力清单、接口、验证 runbook 与验收状态见
+> [SCHEDULED-TASKS.md](SCHEDULED-TASKS.md)，跨 Profile 字段以
+> [SCHEDULE-API-CONTRACT.md](SCHEDULE-API-CONTRACT.md) 为准。**尚未在真实飞书租户验证**，
+> 不改变 §4 / §5 的历史实机复验结论。
+
+数据流（沿用 §2.1 的端口化风格；新增的只是桥接层与旁路存储，任务调度本身归原生 Host）：
+
+```text
+DSH Web（web Profile）
+  └─ 飞书管理 → 定时任务 → /api/feishu-admin/schedule*（security 会话鉴权）
+       └─ ops-control/requests/<uuid>.json（schedule 命令 ≤ 8192 B，actor 由服务端写）
+            │  跨 Profile 命令邮箱；Gateway 原子「先领取、再执行」，且始终重新校验
+            ▼
+DSH feishu-channel（Gateway Profile）
+  └─ ScheduleManager ─ ctx.inject(['schedule']) ─▶ ctx.schedule（原生 Host 服务）
+       │  create/edit/run/history/deleteInactive/deliveryLimits
+       │  target: { kind:'session', sessionId }（Gateway 自有 Session：ensureTaskSession）
+       ▼
+DSH 原生 Session：到期以 source.kind:'schedule' 的 user message 投递，
+  schedule/resolve-agent waterfall 把恢复请求接回 Gateway 持有的实时 Agent
+       │  session/event（assistant/message · assistant/attempt · turn/end）
+       │  → ObservedScheduleTurn
+       ▼
+DurableOutbox（幂等键 schedule:<taskId>:<messageId>）→ 已授权飞书 chat
+```
+
+边界：
+
+- 任务定义、重复规则、暂停/恢复/立即执行/删除、错过运行处理与持久投递历史**全部由原生
+  `ctx.schedule` 拥有**；Gateway 只是跨 Profile 管理命令桥 + 飞书投递旁路
+  （`schedule-delivery.json`），**不引入第二套 Cron 引擎、第二套 Agent / LLM 循环**。
+- 原生服务是 **Host-wide**（无任务级授权），因此 Web Admin **不是信任边界**：命令在
+  Gateway 侧权威复核（`validateSpec` + `validateFeishuTarget`），飞书目标每次投递前重新
+  核对白名单 / 群策略。不绕开 allowlist / group policy 或 DSH 原生工具审批。
+- 读模型 `ops-schedule.json` 为脱敏快照（version 1、原子写 0600），Web Admin 只读；原生
+  `schedule/changed` emit 触发 Gateway `refresh()` 重建读模型与执行台账。
+- `ctx.schedule` 未挂载时（`available:false`）页面显示「原生定时服务不可用」，
+  **不回退到自建调度器**；原生投递回执是收件箱持久化确认，不是模型执行完成。
 
 ---
 

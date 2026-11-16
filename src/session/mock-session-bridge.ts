@@ -1,4 +1,4 @@
-import type { AgentRoute, SessionBridge, SessionReply, WaitOptions } from '../types.js'
+import type { AgentRoute, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions } from '../types.js'
 import { sleep } from '../util/retry.js'
 
 export interface MockSessionBridgeOptions {
@@ -24,6 +24,7 @@ export class MockSessionBridge implements SessionBridge {
   readonly cancelled: string[] = []
   readonly disposedSessions: string[] = []
   private readonly live = new Map<string, string>()
+  private readonly scheduleHandlers = new Set<(turn: ObservedScheduleTurn) => void>()
   private pendingFailure: string | undefined
   private disposed = false
 
@@ -68,6 +69,18 @@ export class MockSessionBridge implements SessionBridge {
     return { text: reply, reason: 'idle', assistantEvents: 1 }
   }
 
+  watchScheduleTurns(handler: (turn: ObservedScheduleTurn) => void): () => void {
+    this.scheduleHandlers.add(handler)
+    return () => { this.scheduleHandlers.delete(handler) }
+  }
+
+  /** Test helper: simulate one native schedule delivery turn. */
+  emitScheduleTurn(turn: ObservedScheduleTurn): void {
+    for (const handler of [...this.scheduleHandlers]) {
+      try { handler(turn) } catch { /* observers must not break the test bridge */ }
+    }
+  }
+
   cancel(sessionId: string): void {
     this.cancelled.push(sessionId)
   }
@@ -81,6 +94,7 @@ export class MockSessionBridge implements SessionBridge {
     this.disposed = true
     for (const id of this.live.keys()) this.disposedSessions.push(id)
     this.live.clear()
+    this.scheduleHandlers.clear()
   }
 
   private assertLive(): void {

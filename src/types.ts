@@ -40,13 +40,21 @@ export interface InboundMessage {
 }
 
 export interface OutboundTarget {
-  /** `chat_id` destination; used when not replying in-thread. */
+  /** `chat_id` (or `open_id`) destination; used when not replying in-thread. */
   readonly chatId?: string
+  /** Feishu receive_id_type for `chatId`; defaults to `chat_id`. */
+  readonly receiveIdType?: 'chat_id' | 'open_id'
   /** Feishu `message_id` to reply to (preferred, keeps the conversation). */
   readonly replyToMessageId?: string
   readonly text: string
   /** Optional rich post/md reply; omitted for backward-compatible plain text. */
   readonly format?: 'markdown'
+  /**
+   * Optional Feishu interactive card (`msg_type: 'interactive'`). When set,
+   * the transport sends this card instead of `text`; `text` stays as the
+   * durable fallback / audit representation of the same content.
+   */
+  readonly card?: Record<string, unknown>
   /** Stable per-message idempotency UUID reused on every REST retry. */
   readonly uuid?: string
 }
@@ -236,6 +244,22 @@ export interface WaitOptions {
 }
 
 /**
+ * A turn that DSH's native schedule service injected into one of our Feishu
+ * Sessions (`source.kind === 'schedule'`), observed through `session/event`.
+ * The Gateway uses it to deliver the Agent's answer back to the Feishu chat.
+ */
+export interface ObservedScheduleTurn {
+  readonly sessionId: string
+  /** Native user message id of the delivered occurrence (dedupe key). */
+  readonly messageId: string
+  readonly text: string
+  readonly status: 'success' | 'failed' | 'timeout' | 'empty'
+  readonly elapsedMs: number
+  readonly model?: string
+  readonly tokens?: number
+}
+
+/**
  * Port: the bridge to DSH native Sessions.
  *
  * The gateway only ever talks to this. `DshSessionBridge` drives the official
@@ -254,6 +278,12 @@ export interface SessionBridge {
   submit(sessionId: string, text: string, signal: AbortSignal): Promise<void>
   /** Wait for the turn to settle and collect the assistant's reply text. */
   waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply>
+  /**
+   * Observe turns that the native DSH schedule service injects directly into a
+   * Session (`source.kind === 'schedule'`), without a Gateway `submit()` call.
+   * Returns a disposer. Optional so older/test bridges stay compatible.
+   */
+  watchScheduleTurns?(handler: (turn: ObservedScheduleTurn) => void): () => void
   /** Visible assistant text deltas, never internal reasoning. */
   onTextDelta?(sessionId: string, callback: (text: string) => void): () => void
   onToolActivity?(sessionId: string, callback: (activity: SessionToolActivity) => void): () => void
@@ -269,6 +299,12 @@ export interface SessionBridge {
 export interface CordisLike {
   get(name: string): unknown
   provide(name: string, value?: unknown): () => void
-  on(name: string, listener: (...args: any[]) => void): () => boolean | void
+  /** Listeners may return a value for waterfall events (e.g. schedule/resolve-agent). */
+  on(name: string, listener: (...args: any[]) => unknown): () => boolean | void
   effect(execute: () => unknown, label?: string): unknown
+  /**
+   * Optional service-dependency injection (`ctx.inject(['schedule'], cb)`).
+   * Absent in the offline test context; the Gateway degrades to "unavailable".
+   */
+  inject?(deps: string[], callback: (ctx: CordisLike) => void): unknown
 }

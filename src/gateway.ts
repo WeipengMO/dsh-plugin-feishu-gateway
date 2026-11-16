@@ -25,7 +25,10 @@ import { chatKey, newId, sessionIdFor } from './util/id.js'
 import { withTimeout } from './util/retry.js'
 import { OpsTelemetry, opsRef, type OpsEvent, type OpsSnapshot } from './ops/telemetry.js'
 import { resolveFeishuWorkspace, prepareFeishuWorkspace } from './agent-workspace.js'
+import { loadManagedConfig } from './admin-config.js'
+import { resolveConfig } from './config.js'
 import { processOperatorCommands, type OperatorCommand, type OperatorResult } from './ops/commands.js'
+import { ScheduleManager, type FeishuDeliveryInput, type ScheduleCommand } from './schedule/index.js'
 
 export interface GatewayDeps {
   readonly config: GatewayConfig
@@ -111,8 +114,15 @@ export class FeishuGateway {
   private outboxRetryTimer: ReturnType<typeof setInterval> | undefined
   private opsTimer: ReturnType<typeof setInterval> | undefined
   private commandTimer: ReturnType<typeof setInterval> | undefined
+  private scheduleTimer: ReturnType<typeof setInterval> | undefined
   private commandRunning = false
   private commandPromise: Promise<void> | undefined
+  private unwatchScheduleTurns: (() => void) | undefined
+  /** Native DSH schedule bridge (task definitions live in the Host service). */
+  private readonly schedules: ScheduleManager
+  /** Reserved Gateway-owned Sessions for scheduled tasks, by command clientRef. */
+  private readonly taskSessions = new Map<string, string>()
+  private readonly restoredTaskSessions = new Set<string>()
   private readonly ops: OpsTelemetry
   private readonly isolatedWorkspace: string
   private readonly transportStats = new Map<string, { reconnects: number; failures: number; lastConnectedAt?: number; lastDisconnectedAt?: number }>()
@@ -165,6 +175,32 @@ export class FeishuGateway {
       (state, botId, ref) => this.audit({ kind: 'delivery', state, botId, ref }),
     )
     this.rejected = Object.fromEntries(REJECT_REASONS.map((reason) => [reason, 0])) as Record<RejectReason, number>
+    this.schedules = new ScheduleManager({
+      logger: deps.logger,
+      stateDir: deps.config.stateDir,
+      now: () => Date.now(),
+      isStopped: () => this.stopped,
+      ensureTaskSession: (clientRef) => this.ensureTaskSession(clientRef),
+      releaseTaskSession: (sessionId) => this.releaseTaskSession(sessionId),
+      validateFeishuTarget: (target) => this.validateScheduleTarget(target),
+      sendFeishu: (botId, target, idempotencyKey) => this.outbox.send(botId, {
+        chatId: target.chatId,
+        ...(target.chatId.startsWith('ou_') ? { receiveIdType: 'open_id' as const } : {}),
+        text: target.text,
+        ...(target.card ? { card: target.card } : {}),
+        ...(target.format === 'markdown' && !target.card ? { format: 'markdown' as const } : {}),
+      }, idempotencyKey),
+    })
+  }
+
+  /** Attached by `apply()` once the native `schedule` service resolves. */
+  get scheduleManager(): ScheduleManager {
+    return this.schedules
+  }
+
+  /** True when the Session belongs to a Gateway-managed scheduled task. */
+  isTaskSession(sessionId: string): boolean {
+    return this.schedules.isTaskSession(sessionId)
   }
 
   async start(): Promise<void> {
@@ -182,6 +218,7 @@ export class FeishuGateway {
       const pending = await this.inbox.open()
       await this.registry.open()
       const outboxPending = await this.outbox.open()
+      await this.schedules.start()
       if (!this.bridge.available) {
         this.logger.warn('native DSH Sessions unavailable (%s); inbound messages will receive a diagnostic reply',
           this.bridge.unavailableReason ?? 'unknown reason')
@@ -233,6 +270,24 @@ export class FeishuGateway {
       this.opsTimer.unref?.()
       this.commandTimer = setInterval(() => this.runOperatorMailbox(), 1500)
       this.commandTimer.unref?.()
+      // Native schedule deliveries inject a `source.kind === 'schedule'` user
+      // message into one of our Feishu Sessions. The bridge observes the turn
+      // and the manager forwards the answer through the durable Outbox.
+      this.unwatchScheduleTurns = this.bridge.watchScheduleTurns?.((turn) => {
+        void this.schedules.onScheduleTurn(turn).catch((error) => {
+          this.logger.warn('scheduled task notification failed: %s', String(error))
+        })
+      })
+      this.scheduleTimer = setInterval(() => {
+        if (this.stopped) return
+        void this.schedules.refresh().catch((error) => {
+          this.logger.warn('schedule catalog refresh failed: %s', String(error))
+        })
+        void this.restoreTaskSessions().catch((error) => {
+          this.logger.debug('schedule session restore failed: %s', String(error))
+        })
+      }, 10_000)
+      this.scheduleTimer.unref?.()
       if (this.config.autoConnect) {
         this.outboxRetryTimer = setInterval(() => {
           if (this.stopped || this.outbox.stats().pending === 0) return
@@ -277,6 +332,10 @@ export class FeishuGateway {
     this.opsTimer = undefined
     if (this.commandTimer) clearInterval(this.commandTimer)
     this.commandTimer = undefined
+    if (this.scheduleTimer) clearInterval(this.scheduleTimer)
+    this.scheduleTimer = undefined
+    this.unwatchScheduleTurns?.()
+    this.unwatchScheduleTurns = undefined
     await this.commandPromise
     this.outboxRetryTimer = undefined
     this.abortController.abort()
@@ -296,6 +355,7 @@ export class FeishuGateway {
     this.audit({ kind: 'system', state: 'stopped' })
     this.refreshOps()
     await this.ops.whenIdle()
+    await this.schedules.stop()
     this.chatQueues.clear()
     this.scheduledMessageIds.clear()
     this.logger.info(
@@ -758,6 +818,98 @@ export class FeishuGateway {
     }
   }
 
+  /**
+   * Reserve one Gateway-owned native DSH Session for a scheduled task.
+   * The native schedule service then targets it with `{ kind:'session' }`, so
+   * `session/event` reaches our plugin-level listener (verified for Sessions
+   * created through `ctx.agents.create`) and the answer can reach Feishu.
+   */
+  private async ensureTaskSession(clientRef: string): Promise<string> {
+    const existing = this.taskSessions.get(clientRef)
+    if (existing) return existing
+    const sessionId = `${sessionIdFor('schedule', clientRef)}-${newId('session')}`
+    await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent)
+    this.taskSessions.set(clientRef, sessionId)
+    this.restoredTaskSessions.add(sessionId)
+    this.logger.info('reserved native session %s for scheduled task %s', sessionId, clientRef)
+    return sessionId
+  }
+
+  /** Retire a task Session after its native task is deleted (best effort). */
+  private async releaseTaskSession(sessionId: string): Promise<void> {
+    for (const [ref, id] of this.taskSessions) {
+      if (id === sessionId) this.taskSessions.delete(ref)
+    }
+    this.restoredTaskSessions.delete(sessionId)
+    try { await this.bridge.retire?.(sessionId) }
+    catch (error) { this.logger.warn('failed to retire scheduled task session: %s', String(error)) }
+  }
+
+  /**
+   * After a restart the persisted task -> Session map is known to the manager
+   * but the Bridge owns no live handle yet. Restore them so native deliveries
+   * can resolve an active Agent without a Web-only `sessionController`.
+   */
+  private async restoreTaskSessions(): Promise<void> {
+    if (this.stopped || !this.bridge.available) return
+    for (const task of this.schedules.snapshot().tasks) {
+      const target = task.target as unknown as { sessionId?: unknown } | undefined
+      const sessionId = typeof target?.sessionId === 'string' ? target.sessionId : undefined
+      if (!sessionId || !this.schedules.isTaskSession(sessionId) ||
+        this.restoredTaskSessions.has(sessionId)) continue
+      try {
+        await this.bridge.resume(sessionId)
+        this.restoredTaskSessions.add(sessionId)
+      } catch (error) {
+        this.logger.debug('cannot restore scheduled task session %s: %s', sessionId, String(error))
+      }
+    }
+  }
+
+  /**
+   * Re-check a Feishu delivery target against the CURRENT managed policy.
+   * Scheduled tasks must never bypass the user/group allowlist, group rules or
+   * native tool approval. A hot revocation therefore also stops delivery.
+   */
+  private async validateScheduleTarget(
+    target: FeishuDeliveryInput,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const fail = (reason: string): { ok: false; reason: string } => ({ ok: false, reason })
+    let config: GatewayConfig
+    try {
+      config = loadManagedConfig(resolveConfig(this.config))
+    } catch {
+      config = this.config
+    }
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(target.botId)) return fail('invalid bot id')
+    if (!config.bots.some((bot) => bot.id === target.botId && bot.enabled !== false)) {
+      return fail('unknown or disabled bot')
+    }
+    if (!/^(?:oc_|ou_)[A-Za-z0-9_-]{2,128}$/.test(target.chatId)) return fail('invalid chat id')
+    if (target.chatType === 'p2p') {
+      if (!target.senderId || !/^ou_[A-Za-z0-9_-]{2,128}$/.test(target.senderId)) {
+        return fail('missing target user')
+      }
+      if (config.allowlist.length === 0 || !config.allowlist.includes(target.senderId)) {
+        return fail('target user is not allowlisted')
+      }
+      return { ok: true }
+    }
+    if (target.chatType === 'group') {
+      if (config.groupPolicy === 'disabled') return fail('group delivery is disabled')
+      const rule = config.groups.find((group) =>
+        group.chatId === target.chatId && group.enabled !== false)
+      if (!rule) return fail('group is not authorized')
+      if (config.groupSenderAllowlist.length === 0) return fail('no group senders allowed')
+      if (rule.senderAllowlist &&
+        !rule.senderAllowlist.some((id) => config.groupSenderAllowlist.includes(id))) {
+        return fail('no allowed group senders')
+      }
+      return { ok: true }
+    }
+    return fail('invalid chat type')
+  }
+
   private async ensureSession(key: string, botId: string, chatId: string): Promise<string> {
     const existing = this.registry.get(key)
     if (!existing) {
@@ -827,18 +979,35 @@ export class FeishuGateway {
     }
   }
 
+  /** Process the mailbox once. Public so integration tests avoid a timer wait. */
+  async pollOperatorCommands(): Promise<number> {
+    return processOperatorCommands(this.config.stateDir, (command) =>
+      this.executeOperatorCommand(command))
+  }
+
   private runOperatorMailbox(): void {
     if (this.stopped || this.commandRunning) return
     this.commandRunning = true
-    const pending = processOperatorCommands(this.config.stateDir, async (command) =>
-      this.executeOperatorCommand(command))
+    const pending = this.pollOperatorCommands()
     this.commandPromise = pending.then(() => undefined).catch(() => {
       this.logger.warn('operations mailbox unavailable')
     }).finally(() => { this.commandRunning = false })
   }
 
-  private async executeOperatorCommand(command: OperatorCommand): Promise<OperatorResult['state']> {
+  private async executeOperatorCommand(command: OperatorCommand): Promise<OperatorResult['state'] | {
+    readonly state: OperatorResult['state']; readonly detail?: string
+  }> {
     if (this.stopped) return 'rejected'
+    if (command.type === 'schedule') {
+      if (!command.schedule) return { state: 'rejected', detail: 'missing schedule payload' }
+      const outcome = await this.schedules.execute({
+        ...command.schedule,
+        actor: command.actor ?? 'dsh-web-admin',
+      } as unknown as ScheduleCommand)
+      this.audit({ kind: 'system', state: `schedule-${command.schedule.action}` })
+      const detail = outcome.message ?? outcome.taskId ?? outcome.state
+      return { state: outcome.state, detail: `${outcome.state} ${detail}`.slice(0, 200) }
+    }
     if (command.type === 'retry-outbox') {
       // Existing durable Outbox UUID/idempotency and permanent-failure rules
       // remain intact. This NEVER re-executes an uncertain Agent turn.

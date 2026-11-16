@@ -6,6 +6,7 @@ const WORKBENCH_PANEL_ID = 'feishu-management'
 const WORKBENCH_NAV = [
   ['overview', '总览', '▦'],
   ['tasks', '实时任务', '◷'],
+  ['schedule', '定时任务', '⏱'],
   ['messages', '消息投递', '⇄'],
   ['sessions', 'Session 管理', '◇'],
   ['approvals', '审批审计', '✓'],
@@ -231,6 +232,13 @@ function Workbench() {
       h('p', { className: 'fgw-muted' },
         '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
       h(Panel, { key: configTab, initialTab: configTab, onChanged: load }))
+  } else if (selected === 'schedule') {
+    // SchedulePanel fetches /schedule, /schedule/preview, /schedule/commands and
+    // /schedule/results itself via the shared authenticated `request` helper.
+    // `/state` is passed through so the delivery target select is constrained
+    // to configured bots, allowlist users and enabled groups without a second
+    // round trip. Rendered only when the workbench has a valid state.
+    body = h(SchedulePanel, { state, onChanged: load })
   } else {
     body = h(OpsPage, { kind: selected, ops, onConfig, onCommand })
   }

@@ -259,6 +259,26 @@ describe('LarkTransport (SDK mocked)', () => {
     expect(sdkState.created[0]?.data).toMatchObject({ receive_id: 'oc_1', msg_type: 'text' })
   })
 
+  it('sends a scheduled result as a durable interactive card via create', async () => {
+    const t = transport()
+    await t.connect({ onMessage: () => {}, onStateChange: () => {} })
+    const card = { config: { wide_screen_mode: true },
+      header: { title: { tag: 'plain_text', content: '每日简报' }, template: 'blue' },
+      elements: [{ tag: 'div', text: { tag: 'lark_md', content: '正文' } }] }
+    const receipt = await t.sendText({
+      chatId: 'oc_1', text: 'fallback', uuid: 'CARD-UUID', card,
+    })
+    expect(receipt.messageId).toBe('om_created')
+    expect(sdkState.created[0]?.params).toEqual({ receive_id_type: 'chat_id' })
+    expect(sdkState.created[0]?.data).toMatchObject({
+      receive_id: 'oc_1', msg_type: 'interactive', uuid: 'CARD-UUID',
+    })
+    expect(JSON.parse((sdkState.created[0]?.data as { content: string }).content)).toEqual(card)
+    // An interactive card wins over the markdown post switch.
+    await t.sendText({ chatId: 'oc_1', text: 'x', format: 'markdown', card })
+    expect((sdkState.created[1]?.data as { msg_type: string }).msg_type).toBe('interactive')
+  })
+
   it('rejects a send without any target and surfaces SDK error codes', async () => {
     const t = transport()
     await t.connect({ onMessage: () => {}, onStateChange: () => {} })

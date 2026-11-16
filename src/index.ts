@@ -5,6 +5,7 @@ import { LarkTransport } from './channel/lark-transport.js'
 import { MockFeishuTransport } from './channel/mock-transport.js'
 import { FeishuGateway } from './gateway.js'
 import { DshSessionBridge } from './session/dsh-session-bridge.js'
+import { createNativeSchedulePort } from './schedule/index.js'
 import { fromCordisLogger } from './util/logger.js'
 import { redactProxyUrl, resolveProxyUrl } from './util/proxy-url.js'
 import type {
@@ -116,6 +117,38 @@ export function apply(ctx: Context, config: GatewayConfig): void {
     health: () => gateway.health(),
     diagnostics: () => gateway.diagnostics(),
     config: () => redactedConfigSummary(loadManagedConfig(resolveConfig(config))),
+  })
+
+  // The native DSH Schedule service is a Host service that can resolve after
+  // this plugin is applied. Defer all schedule wiring with ctx.inject() so a
+  // profile without `dsh-schedule` keeps the Gateway fully functional and the
+  // Web Admin shows an honest "native schedule service unavailable" state.
+  const dshCtx = ctx as unknown as CordisLike
+  dshCtx.inject?.(['schedule'], (scope: CordisLike) => {
+    scope.effect(() => {
+      const manager = gateway.scheduleManager
+      manager.attachNative(createNativeSchedulePort(scope))
+      const offChanged = scope.on('schedule/changed', () => manager.onChanged())
+      // The schedule service asks its embedding to resolve a Session's live
+      // Agent. Return the Gateway-owned Agent for our task Sessions; all other
+      // Sessions fall through to the Host's own resolver.
+      const offResolve = scope.on('schedule/resolve-agent',
+        (sessionId: unknown, next: () => Promise<unknown>) => {
+          const id = String(sessionId ?? '')
+          if (!manager.isTaskSession(id)) return next()
+          const agents = scope.get('agents') as { get?(id: string): unknown } | undefined
+          const live = agents?.get?.(id)
+          return live ? Promise.resolve(live) : next()
+        })
+      void manager.refresh().catch((error: unknown) => {
+        logger.warn('initial schedule catalog refresh failed: %s', String(error))
+      })
+      return () => {
+        offChanged()
+        offResolve()
+        manager.attachNative(undefined)
+      }
+    }, 'feishu-gateway.schedule')
   })
 
   ctx.effect(() => {
