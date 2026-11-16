@@ -121,29 +121,50 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
         '部分任务未上报 usage')))
 }
 
-/** Horizontal bars compare recorded model use without inventing absent rows. */
-function UsageModelBars({ rows, metricText }) {
+/** Shared model/bot bars; details appear only on hover, focus or touch. */
+function UsageModelBars({ rows, metricText, kind = 'model' }) {
+  const [tip, setTip] = useState(null)
   const data = Array.isArray(rows) ? rows : []
+  const isBot = kind === 'bot'
   if (!data.length) return h('div', { className: 'fgw-usage-model-empty' },
-    '所选条件下没有模型用量记录')
+    '所选条件下没有' + (isBot ? '机器人' : '模型') + '用量记录')
   const peak = Math.max(1, ...data.map(row => Number.isFinite(row.value) && row.value >= 0 ? row.value : 0))
+  const showTip = (event, row, label) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const half = 104
+    const below = rect.top < 140
+    setTip({ row, label, below,
+      x: Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half)),
+      y: below ? rect.bottom + 8 : rect.top - 8 })
+  }
   return h('div', { className: 'fgw-usage-model-bars', role: 'list',
-    'aria-label': '按模型统计' + metricText },
+    'aria-label': '按' + (isBot ? '机器人' : '模型') + '统计' + metricText },
     ...data.map(row => {
       const value = Number.isFinite(row.value) && row.value >= 0 ? row.value : 0
       const partial = Number.isSafeInteger(row.unknownTurns) && row.unknownTurns > 0
-      const label = String(row.model || 'unknown')
-      return h('div', { className: 'fgw-usage-model-row', key: label, role: 'listitem' },
-        h('div', { className: 'fgw-usage-model-label' },
-          h('span', { title: label }, label === 'unknown' ? '未知模型' : label),
-          h('strong', null, wbCount(value), ' Token')),
-        h('div', { className: 'fgw-usage-model-track',
-          role: 'img', 'aria-label': label + '：' + wbCount(value) + ' ' + metricText +
-            (partial ? '，部分用量未上报' : '') },
+      const name = String((isBot ? row.botId : row.model) || 'unknown')
+      const label = name === 'unknown' ? (isBot ? '未知机器人' : '未知模型') : name
+      return h('div', { className: 'fgw-usage-model-row', key: name, role: 'listitem',
+        tabIndex: 0, 'aria-label': label + '：' + wbCount(value) + ' ' + metricText +
+          (partial ? '，部分用量未上报或缺少分类明细' : ''),
+        onMouseEnter: event => showTip(event, row, label), onMouseLeave: () => setTip(null),
+        onFocus: event => showTip(event, row, label), onBlur: () => setTip(null),
+        onTouchStart: event => showTip(event, row, label) },
+        h('div', { className: 'fgw-usage-model-label' }, h('span', null, label)),
+        h('div', { className: 'fgw-usage-model-track', 'aria-hidden': true },
           h('div', { className: 'fgw-usage-model-bar', style: { width: (value / peak * 100) + '%' } })),
-        partial && h('span', { className: 'fgw-usage-model-partial' },
-          '部分用量未上报或缺少分类明细 · ' + wbCount(row.unknownTurns) + ' 项'))
-    }))
+        partial && h('span', { className: 'fgw-usage-model-partial' }, '部分用量未上报或缺少分类明细'))
+    }),
+    tip && h('div', { className: 'fgw-heat-tip fgw-usage-bar-tip', role: 'tooltip',
+      style: { left: tip.x + 'px', top: tip.y + 'px',
+        transform: tip.below ? 'translate(-50%,0)' : 'translate(-50%,-100%)' } },
+      h('div', { className: 'fgw-heat-tip-date' }, tip.label),
+      h('div', { className: 'fgw-heat-tip-row' }, h('span', null, metricText),
+        h('strong', null, wbCount(tip.row.value))),
+      h('div', { className: 'fgw-heat-tip-row' }, h('span', null, '有用量任务'),
+        h('strong', null, wbCount(tip.row.calls))),
+      tip.row.unknownTurns > 0 && h('div', { className: 'fgw-heat-tip-row' },
+        h('span', null, '缺失或不完整用量'), h('strong', null, wbCount(tip.row.unknownTurns)))))
 }
 
 function UsageField({ title, children }) {
@@ -397,12 +418,6 @@ function UsagePanel() {
   const series = report?.series || []
   const totals = report?.summary || {}
   const metricText = { total: '总 Token', input: '输入 Token', output: '输出 Token' }[metric]
-  const cols = [
-    { key: 'model', title: '模型' }, { key: 'botId', title: '机器人' },
-    { key: 'calls', title: '有用量任务', render: x => wbCount(x.calls) },
-    { key: 'unknownTurns', title: '缺失 usage', render: x => wbCount(x.unknownTurns) },
-    { key: 'value', title: metricText, render: x => wbCount(x.value) }
-  ]
   const chartData = usageTrendBuckets(series)
   const resetFilters = () => {
     setModel(''); setBotId(''); setUser(''); setChat(''); setSession('')
@@ -495,9 +510,8 @@ function UsagePanel() {
         h('div', { className: 'fgw-two-column fgw-usage-breakdowns' },
           h(WbBlock, { title: '按模型统计', aside: '所选时段 · ' + metricText },
             h(UsageModelBars, { rows: report.byModel, metricText })),
-          h(WbBlock, { title: '按机器人统计' },
-            h(OpsTable, { rows: report.byBot,
-              columns: cols.filter(c => c.key !== 'model') }))),
+          h(WbBlock, { title: '按机器人统计', aside: '所选时段 · ' + metricText },
+            h(UsageModelBars, { rows: report.byBot, metricText, kind: 'bot' }))),
         h(OpsNote, null, '历史用量仅来自 DSH 原生 usage 事件，不额外调用模型。' +
           ' 定时任务新版记录完整上报用量；历史记录仅能补入已有总数，缺失输入、输出与缓存明细。' +
           ' 采集开始之前的日期不代表零用量。' +

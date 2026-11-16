@@ -374,6 +374,7 @@ test('model usage is a bar chart and the redundant model catalog panel is absent
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
   assert.match(panel, /function UsageModelBars/)
   assert.match(panel, /h\(UsageModelBars, \{ rows: report.byModel, metricText \}\)/)
+  assert.match(panel, /h\(UsageModelBars, \{ rows: report.byBot, metricText, kind: 'bot' \}\)/)
   assert.match(panel, /部分用量未上报或缺少分类明细/)
   assert.doesNotMatch(panel, /title: '飞书通道可用模型'/)
   assert.match(css, /\.fgw-usage-model-track/)
@@ -408,21 +409,37 @@ test('date fields apply only valid inclusive ranges', () => {
   assert.equal(changes.length, 1)
 })
 
-test('model usage bars scale values and mark incomplete data', () => {
+test('model and bot bars scale values and reveal details on hover, touch and focus', () => {
   const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
   const code = panel.slice(panel.indexOf('function UsageModelBars('), panel.indexOf('function UsageField('))
+  let tip = null
   const bars = runInNewContext(code + '\nUsageModelBars', {
     h: (type, props, ...children) => ({ type, props: props || {}, children }),
     wbCount: value => String(value), Math, Number, String, Array,
+    useState: () => [tip, value => { tip = value }], window: { innerWidth: 1000 },
   })
-  const tree = bars({ metricText: '总 Token', rows: [
-    { model: 'a', value: 100, unknownTurns: 0 },
-    { model: 'b', value: 25, unknownTurns: 1 },
-  ] })
+  const rows = [{ model: 'a', botId: 'bot-a', value: 100, calls: 3, unknownTurns: 0 },
+    { model: 'b', botId: 'bot-b', value: 25, calls: 2, unknownTurns: 1 }]
+  let tree = bars({ metricText: '总 Token', rows })
   assert.equal(tree.children[0].children[1].children[0].props.style.width, '100%')
   assert.equal(tree.children[1].children[1].children[0].props.style.width, '25%')
   assert.match(tree.children[1].children[2].children[0], /部分用量/)
-  assert.match(bars({ metricText: '总 Token', rows: [] }).children[0], /没有模型用量记录/)
+  assert.equal(tree.children[0].children[0].children.length, 1)
+  const event = { currentTarget: { getBoundingClientRect: () => ({ left: 20, width: 100, top: 200, bottom: 220 }) } }
+  for (const handler of ['onMouseEnter', 'onTouchStart', 'onFocus']) {
+    tip = null
+    tree.children[1].props[handler](event)
+    assert.equal(tip.row.value, 25)
+    const shown = bars({ metricText: '总 Token', rows })
+    assert.equal(shown.children.at(-1).props.role, 'tooltip')
+    assert.equal(shown.children.at(-1).children[1].children[1].children[0], '25')
+  }
+  tree.children[1].props.onBlur()
+  assert.equal(tip, null)
+  const botTree = bars({ metricText: '输入 Token', rows, kind: 'bot' })
+  assert.equal(botTree.children[0].children[0].children[0].children[0], 'bot-a')
+  assert.equal(botTree.children[0].props.tabIndex, 0)
+  assert.match(bars({ metricText: '总 Token', rows: [], kind: 'bot' }).children[0], /没有机器人用量记录/)
 })
 
 test('usage chart buckets maintain partial and unavailable coverage', () => {
