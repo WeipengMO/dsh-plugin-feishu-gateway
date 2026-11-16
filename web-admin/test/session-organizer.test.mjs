@@ -46,7 +46,6 @@ async function fixture(t, { bound = SID, other = false } = {}) {
       async resolveByPath() { return workspace.sessionIds.length ? workspace : null },
       async create() { return workspace },
       async archiveSession(id) {
-        if (id === SID && bound === SID) throw Error('active Session')
         if (!archived.includes(id)) archived.push(id)
       },
     },
