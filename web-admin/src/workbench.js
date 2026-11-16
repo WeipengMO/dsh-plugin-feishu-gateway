@@ -14,13 +14,13 @@ const WORKBENCH_NAV = [
   ['advanced', '模型与连接', '⚙'],
 ]
 const WORKBENCH_TABS = {
-  conversations: [['tasks', '实时任务'], ['messages', '消息投递'], ['sessions', 'Session 管理']],
+  conversations: [['tasks', '实时任务'], ['messages', '消息投递'], ['sessions', '会话管理']],
   channels: [['bots', '机器人'], ['groups', '群聊管理'], ['security', '安全与权限']],
   analytics: [['usage', 'Token 用量'], ['approvals', '审批审计']],
   operations: [['alerts', '告警中心'], ['diagnostics', '连接与日志']],
 }
 const WORKBENCH_DESCRIPTIONS = {
-  conversations: '集中查看实时任务、投递状态和 Session 绑定。',
+  conversations: '查看正在运行的任务、消息发送情况和历史对话。',
   automation: '管理 DSH 原生定时任务、运行记录和飞书通知。',
   channels: '统一管理机器人、群聊、白名单与工具执行权限。',
   'agent-profile': '管理飞书 Agent 的独立工作区身份和记忆。',
