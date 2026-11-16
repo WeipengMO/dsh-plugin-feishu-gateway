@@ -787,7 +787,7 @@ export class FeishuGateway {
           })
           break
         } catch (error) {
-          if (!this.canRetryWithFallback(error, sessionId)) throw error
+          if (!this.canRetryWithFallback(error)) throw error
           const current = this.bridge.currentModel?.(sessionId)
           let fallback = pendingFallbacks.shift()
           while (fallback && current?.provider === fallback.provider && current?.model === fallback.model) {
@@ -801,7 +801,7 @@ export class FeishuGateway {
           unsubscribeTools?.()
           unsubscribeTools = undefined
           this.logger.warn(
-            'model request failed before any tool call; retrying once on fallback route %s/%s',
+            'model request failed before any tool call; trying next fallback route %s/%s',
             fallback.provider, fallback.model)
           this.audit({ kind: 'task', state: 'fallback-retry', botId: record.botId,
             ref: record.messageId, session: sessionId,
@@ -1392,7 +1392,7 @@ export class FeishuGateway {
    * tool ran. Once a tool executed, replaying the turn could duplicate side
    * effects, so the existing fail-closed path is kept unchanged.
    */
-  private canRetryWithFallback(error: unknown, sessionId: string): boolean {
+  private canRetryWithFallback(error: unknown): boolean {
     if (this.stopped || !this.bridge.selectModel) return false
     if (!(error instanceof SessionTurnFailure)) return false
     if (error.toolCalls > 0 || error.toolFailures > 0) return false
