@@ -5,20 +5,29 @@
 const WORKBENCH_PANEL_ID = 'feishu-management'
 const WORKBENCH_NAV = [
   ['overview', '总览', '▦'],
-  ['tasks', '实时任务', '◷'],
-  ['schedule', '定时任务', '⏱'],
-  ['messages', '消息投递', '⇄'],
-  ['sessions', 'Session 管理', '◇'],
-  ['approvals', '审批审计', '✓'],
+  ['conversations', '会话与消息', '⇄'],
+  ['automation', '定时任务', '◷'],
+  ['channels', '接入与权限', '◉'],
   ['agent-profile', 'Agent 档案', '▤'],
-  ['bots', '机器人', '◉'],
-  ['groups', '群聊管理', '♟'],
-  ['usage', '用量统计', '▥'],
-  ['alerts', '告警中心', '!'],
-  ['security', '安全与权限', '♧'],
-  ['diagnostics', '日志与诊断', '⌁'],
-  ['advanced', '高级配置', '⚙'],
+  ['analytics', '用量与审计', '▥'],
+  ['operations', '运维与诊断', '⌁'],
+  ['advanced', '模型与连接', '⚙'],
 ]
+const WORKBENCH_TABS = {
+  conversations: [['tasks', '实时任务'], ['messages', '消息投递'], ['sessions', 'Session 管理']],
+  channels: [['bots', '机器人'], ['groups', '群聊管理'], ['security', '安全与权限']],
+  analytics: [['usage', 'Token 用量'], ['approvals', '审批审计']],
+  operations: [['alerts', '告警中心'], ['diagnostics', '连接与日志']],
+}
+const WORKBENCH_DESCRIPTIONS = {
+  conversations: '集中查看实时任务、投递状态和 Session 绑定。',
+  automation: '管理 DSH 原生定时任务、运行记录和飞书通知。',
+  channels: '统一管理机器人、群聊、白名单与工具执行权限。',
+  'agent-profile': '管理飞书 Agent 的独立工作区身份和记忆。',
+  analytics: '查看 Token 消耗与工具审批审计。',
+  operations: '检查告警、连接状态和运行日志。',
+  advanced: '配置模型、代理、卡片和重试策略。',
+}
 
 function FeishuSidebarIcon({ size = 18 }) {
   return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
@@ -81,7 +90,9 @@ function Workbench() {
   const [state, setState] = useState(null)
   const [live, setLive] = useState(undefined)
   const [ops, setOps] = useState(null)
-  const [configTab, setConfigTab] = useState('settings')
+  const [sectionTab, setSectionTab] = useState({
+    conversations: 'tasks', channels: 'bots', analytics: 'usage', operations: 'alerts',
+  })
   const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
   const [profileUnsaved, setProfileUnsaved] = useState(false)
@@ -130,7 +141,14 @@ function Workbench() {
     : undefined
   const online = health?.status === 'ok'
   const refresh = () => { void load() }
-  const onConfig = tab => { setConfigTab(tab || 'settings'); setSelected('advanced') }
+  const onConfig = tab => {
+    if (tab === 'bots' || tab === 'permissions') {
+      setSectionTab(current => ({ ...current, channels: tab === 'bots' ? 'bots' : 'security' }))
+      setSelected('channels')
+    } else setSelected('advanced')
+  }
+  const tabs = WORKBENCH_TABS[selected] || []
+  const changeTab = id => setSectionTab(current => ({ ...current, [selected]: id }))
   const onCommand = async (type, ref) => {
     const warning = type === 'cancel-task'
       ? '确认取消这个正在运行的任务？已经执行的外部操作不会自动回滚。'
@@ -140,7 +158,7 @@ function Workbench() {
     try {
       const payload = type === 'cancel-task' ? { type, ref } : { type }
       await request('/ops/commands', 'POST', payload)
-      setOperatorNotice('操作已提交到 Gateway 队列，尚不代表已执行成功。请稍后刷新「告警中心」查看结果。')
+      setOperatorNotice('操作已提交到 Gateway 队列，尚不代表已执行成功。请稍后在「运维与诊断 → 告警中心」查看结果。')
       void load()
     } catch (e) { setOperatorNotice('操作提交失败：' + (e.message || String(e))) }
   }
@@ -194,7 +212,7 @@ function Workbench() {
           h('span', { className: 'fgw-muted' }, '入站等待：', wbCount(health?.inbox?.pending)),
           h('span', { className: 'fgw-muted' }, '投递等待：', wbCount(health?.outbox?.pending)),
           h('span', { className: 'fgw-muted' }, '去重记录：', wbCount(health?.dedupEntries)))))
-  } else if (selected === 'bots') {
+  } else if (selected === 'channels' && sectionTab.channels === 'bots') {
     body = h('div', { className: 'fgw-grid-cards' },
       bots.map(bot => h('article', { className: 'fgw-detail-card', key: bot.id },
         h('div', { className: 'fgw-detail-top' }, h('span', { className: 'fgw-avatar fgw-avatar-large' }, '飞'),
@@ -205,11 +223,11 @@ function Workbench() {
         h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
         h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
       bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
-  } else if (selected === 'groups') {
+  } else if (selected === 'channels' && sectionTab.channels === 'groups') {
     body = h(GroupManagementPanel, { onChanged: load })
   } else if (selected === 'agent-profile') {
     body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
-  } else if (selected === 'security') {
+  } else if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null,
       h(ExecPolicyPanel, {}),
       h('div', { className: 'fgw-two-column' },
@@ -225,23 +243,37 @@ function Workbench() {
           h(WbRow, { label: '当前等待审批', value: wbCount(health?.pendingApprovals) }),
           h(WbRow, { label: '配置生效', value: state?.pendingRestart ? '待重启' : '无待生效修改' }),
           h(OpsNote, null, '执行权限由上方设置控制；审批卡片开启时，超出沙箱的操作会转为飞书审批。'))),
-      h(OpsAction, { label: '编辑白名单与群聊策略', onClick: () => onConfig('permissions') }),
       ops?.telemetryAvailable && h(WbBlock, { title: '最近审批安全事件' },
         h(OpsTimeline, { events: ops.summary?.approvals?.slice(0, 20) })))
   } else if (selected === 'advanced') {
     body = h('div', { className: 'fgw-advanced' },
       h('p', { className: 'fgw-muted' },
         '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
-      h(Panel, { key: configTab, initialTab: configTab, onChanged: load }))
-  } else if (selected === 'schedule') {
+      h(Panel, { key: 'settings', initialTab: 'settings', hideTabs: true, onChanged: load }))
+  } else if (selected === 'automation') {
     // SchedulePanel fetches /schedule, /schedule/preview, /schedule/commands and
     // /schedule/results itself via the shared authenticated `request` helper.
     // `/state` is passed through so the delivery target select is constrained
     // to configured bots, allowlist users and enabled groups without a second
     // round trip. Rendered only when the workbench has a valid state.
     body = h(SchedulePanel, { state, onChanged: load })
+  } else if (selected === 'conversations' || selected === 'analytics' || selected === 'operations') {
+    body = h(OpsPage, { kind: sectionTab[selected], ops, onConfig, onCommand })
   } else {
-    body = h(OpsPage, { kind: selected, ops, onConfig, onCommand })
+    body = h(WbEmpty, { headline: '未知页面', description: '请选择左侧的管理功能。' })
+  }
+  // Settings share the section with their Gateway capability.
+  if (selected === 'channels' && sectionTab.channels === 'bots') {
+    body = h(React.Fragment, null, body,
+      h(WbBlock, { title: '机器人配置', aside: '启用状态、接入区域；凭据保留在 DSH 设置' },
+        h('div', { className: 'fgw-advanced' },
+          h(Panel, { key: 'bots', initialTab: 'bots', hideTabs: true, onChanged: load }))))
+  }
+  if (selected === 'channels' && sectionTab.channels === 'security') {
+    body = h(React.Fragment, null, body,
+      h(WbBlock, { title: '私聊白名单', aside: '仅允许可信用户访问 Agent 工具' },
+        h('div', { className: 'fgw-advanced' },
+          h(Panel, { key: 'permissions', initialTab: 'permissions', hideTabs: true, onChanged: load }))))
   }
 
   return h('div', { className: 'fgw-root' },
@@ -264,12 +296,13 @@ function Workbench() {
     h('main', { className: 'fgw-content' + (selected === 'agent-profile' ? ' fgw-content-profile' : '') },
       h('div', { className: 'fgw-topbar' },
         h('div', null, h('div', { className: 'fgw-eyebrow' }, 'DSH / FEISHU GATEWAY'),
-          h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理')),
+          h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理'),
+          !tabs.length && h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected])),
         h('div', { className: 'fgw-top-actions' },
           selected !== 'agent-profile' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
           selected !== 'advanced' && selected !== 'agent-profile' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
-            onClick: () => onConfig(selected === 'bots' ? 'bots' : selected === 'security' ? 'permissions' : 'settings') }, '配置管理'),
-          selected !== 'agent-profile' && selected !== 'schedule' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
+            onClick: () => onConfig('settings') }, '模型与连接'),
+          selected !== 'agent-profile' && selected !== 'automation' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
         h('div', null, h('div', { className: 'fgw-hero-kicker' }, 'GATEWAY OPERATIONS'),
@@ -277,6 +310,20 @@ function Workbench() {
           h('p', null, '与 DSH 原生 Session 同步，集中监控机器人、投递、审批和服务健康。')),
         h('div', { className: 'fgw-hero-status' }, h(WbState, { value: health?.status || 'unknown' }),
           h('span', null, state?.service ?? '服务状态未知'))),
+      tabs.length > 0 && h('div', { className: 'fgw-section-switcher' },
+        h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected]),
+        h('div', { className: 'fgw-section-tabs', role: 'tablist', 'aria-label': WORKBENCH_NAV.find(item => item[0] === selected)?.[1] },
+          tabs.map(([id, label]) => h('button', { type: 'button', role: 'tab', key: id,
+            className: 'fgw-section-tab' + (sectionTab[selected] === id ? ' is-active' : ''),
+            'aria-selected': sectionTab[selected] === id, onClick: () => changeTab(id) }, label)))),
+      selected === 'overview' && h('div', { className: 'fgw-shortcuts' },
+        [['conversations', '消息与会话', '查看任务、投递和历史 Session'],
+         ['automation', '定时任务', '管理计划和通知'],
+         ['channels', '机器人与权限', '管理群聊和安全策略'],
+         ['analytics', '用量与审计', 'Token 消耗和审批记录']]
+          .map(([id, title, description]) =>
+            h('button', { key: id, type: 'button', className: 'fgw-shortcut', onClick: () => setSelected(id) },
+              h('strong', null, title), h('span', null, description), h('span', { 'aria-hidden': true }, '›')))),
       loading && !state && h('div', { className: 'fgw-caution' }, '正在读取管理服务…'),
       error && h('div', { className: 'fgw-alert', role: 'alert' }, '管理服务暂不可用：', error),
       operatorNotice && h('div', { className: 'fgw-caution', role: 'status' }, operatorNotice),
