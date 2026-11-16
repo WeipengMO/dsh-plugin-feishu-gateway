@@ -420,6 +420,44 @@ describe('DshSessionBridge', () => {
     expect(fake.disposed).toHaveLength(2)
   })
 
+  it('passes the host default model selection on cold resume', async () => {
+    // Real-runtime regression (dsh 0.2.2-rc.1): a persisted Agent restored by
+    // ctx.agents.resume() has no provider/model, so the next scheduled turn
+    // ended immediately with "agent ... has no provider/model" before any
+    // assistant message, and Feishu only received the fallback notice card.
+    const { ctx, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'mock-route', model: 'mock-model' }),
+    })
+    const restored = new DshSessionBridge(ctx, silentLogger)
+    await restored.resume('session-1')
+    expect(fake.resumed[0]).toMatchObject({
+      resumeSessionId: 'session-1',
+      agentOptions: { provider: 'mock-route', model: 'mock-model' },
+    })
+    await restored.dispose()
+  })
+
+  it('prefers an explicit plugin route on cold resume and keeps no empty agentOptions', async () => {
+    const { ctx, fake } = setup()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'host-default', model: 'host-model' }),
+    })
+    const restored = new DshSessionBridge(ctx, silentLogger)
+    await restored.resume('session-1', { provider: 'explicit', model: 'explicit-model' })
+    expect(fake.resumed[0]).toMatchObject({
+      agentOptions: { provider: 'explicit', model: 'explicit-model' },
+    })
+    await restored.dispose()
+
+    // No default-model service and no route: stay compatible (no agentOptions).
+    const bare = setup()
+    const bridge = new DshSessionBridge(bare.ctx, silentLogger)
+    await bridge.resume('session-2')
+    expect(bare.fake.resumed[0]).toEqual({ resumeSessionId: 'session-2' })
+    await bridge.dispose()
+  })
+
   it('refuses to use a cached Agent when the official registry no longer owns it', async () => {
     const { ctx, bridge, fake } = setup()
     await bridge.create('session-1', '/workspace')

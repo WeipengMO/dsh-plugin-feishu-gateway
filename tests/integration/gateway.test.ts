@@ -129,6 +129,22 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await gateway.stop()
   })
 
+  it('passes the configured agent route when resuming a Session', async () => {
+    const { gateway, transport, bridge } = await harness({
+      agent: { provider: 'magpie', model: 'group/deepseek' },
+    })
+    await transport.emitMessage(alice({ messageId: 'om_route_1', chatId: 'oc_route' }))
+    await gateway.whenIdle()
+    await transport.emitMessage(alice({ messageId: 'om_route_2', chatId: 'oc_route' }))
+    await gateway.whenIdle()
+    expect(bridge.resumed).toEqual([bridge.created[0]!.sessionId])
+    expect(bridge.resumedRoutes).toEqual([{
+      sessionId: bridge.created[0]!.sessionId,
+      route: { provider: 'magpie', model: 'group/deepseek' },
+    }])
+    await gateway.stop()
+  })
+
   it('keeps a chat on one Session over three same-process messages', async () => {
     const { gateway, transport, bridge } = await harness()
     for (const messageId of ['om_turn_1', 'om_turn_2', 'om_turn_3']) {

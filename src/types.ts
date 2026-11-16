@@ -284,7 +284,7 @@ export interface SessionBridge {
   /** Create a fresh native Session under a caller-chosen identity. */
   create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void>
   /** Restore a previously persisted native Session into a live Agent. */
-  resume(sessionId: string): Promise<void>
+  resume(sessionId: string, route?: AgentRoute): Promise<void>
   /** Models advertised by this Gateway Host, not another DSH Profile. */
   listModels?(): Promise<ModelCatalog>
   currentModel?(sessionId: string): { provider: string; model: string } | undefined

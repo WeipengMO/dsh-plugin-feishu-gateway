@@ -198,18 +198,17 @@ export class DshSessionBridge implements SessionBridge {
     agent.model.select({ provider, model })
   }
 
-  async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
-    if (this.handles.has(sessionId)) return
-    const agents = this.requireAgents()
-    const meta: Record<string, unknown> = { cwd }
-
-    // A native Agent created through ctx.agents.create() has NO provider/model
-    // unless one is supplied: the `agent-default-model` service only records a
-    // model selection for agents the host creates itself. Verified in a real
-    // DSH 0.2.2-rc.1 runtime — without this, every turn ends with
-    // "agent ... has no provider/model" and the user gets an empty-reply
-    // fallback. Fall back to the profile's own default selection when the
-    // plugin's `agent` route is not configured (the default case).
+  /**
+   * A native Agent created through `ctx.agents.create()` — and a persisted one
+   * loaded through `ctx.agents.resume()` — has NO provider/model unless one is
+   * supplied: the `agent-default-model` service only records a model selection
+   * for agents the host creates itself. Verified in a real DSH 0.2.2-rc.1
+   * runtime — without this, every turn ends with
+   * "agent ... has no provider/model" and the user gets an empty-reply /
+   * fallback-notice instead of content. Prefer the plugin's explicit `agent`
+   * route, then the profile's own default selection (the default case).
+   */
+  private routeAgentOptions(route?: AgentRoute): Record<string, unknown> | undefined {
     const selection = this.defaultModelSelection()
     const provider = route?.provider ?? selection?.provider
     const model = route?.model ?? selection?.model
@@ -218,17 +217,25 @@ export class DshSessionBridge implements SessionBridge {
     if (provider) agentOptions.provider = provider
     if (model) agentOptions.model = model
     if (reasoningEffort) agentOptions.reasoningEffort = reasoningEffort
+    return Object.keys(agentOptions).length > 0 ? agentOptions : undefined
+  }
 
+  async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
+    if (this.handles.has(sessionId)) return
+    const agents = this.requireAgents()
+    const meta: Record<string, unknown> = { cwd }
+
+    const agentOptions = this.routeAgentOptions(route)
     const handle = await agents.create({
       sessionId,
       meta,
-      ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
+      ...(agentOptions ? { agentOptions } : {}),
     })
     this.handles.set(sessionId, handle)
     this.logger.info('created native DSH session %s', sessionId)
   }
 
-  async resume(sessionId: string): Promise<void> {
+  async resume(sessionId: string, route?: AgentRoute): Promise<void> {
     const agents = this.requireAgents()
     const cached = this.handles.get(sessionId)
 
@@ -256,7 +263,14 @@ export class DshSessionBridge implements SessionBridge {
     }
 
     try {
-      const handle = await agents.resume({ resumeSessionId: sessionId })
+      // Cold resume drops the creation-time route unless it is supplied again.
+      // Without agentOptions the loaded Agent has no provider/model and the next
+      // scheduled or user turn fails before any message is emitted.
+      const agentOptions = this.routeAgentOptions(route)
+      const handle = await agents.resume({
+        resumeSessionId: sessionId,
+        ...(agentOptions ? { agentOptions } : {}),
+      })
       this.handles.set(sessionId, handle)
       this.logger.info('restored persisted native DSH session %s', sessionId)
     } catch (error) {

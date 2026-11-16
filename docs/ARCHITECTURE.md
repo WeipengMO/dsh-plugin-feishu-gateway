@@ -295,6 +295,14 @@ DurableOutbox（幂等键 schedule:<taskId>:<messageId>）→ 已授权飞书 ch
   该行为有 Mock 回归测试，但跨多轮真实模型上下文、冷恢复与
   超时 / 异常 / 取消后的隔离仍须在长期存活的真实 DSH Host 中验收。
   若 Host 生命周期本身只维持单次任务，需要提供常驻 Host 后再测试。
+- **2026-11-16 修复（冷恢复丢失模型路由）**：`ctx.agents.resume()` 同样不会继承
+  `create()` 时的 provider/model。Gateway 服务重启后，`restoreTaskSessions()` 恢复的定时任务
+  Session（以及重启后第一条私聊消息恢复的用户 Session）会以
+  `agent ... has no provider/model` 在产生任何 `user/message` / `assistant/message` 之前直接
+  `turn/end`；Gateway 无法把它登记为 run，5 分钟后只发出兜底通知，飞书侧因此只有
+  「定时任务已触发…」卡片而没有内容。现已让 `create()` 与 `resume()` 共用同一套
+  route / `agentDefaultModel.currentSelection()` 选择并以 `agentOptions` 传回，
+  兜底通知同时改为如实说明「未获取到执行结果」并补记 `skipped` 运行记录。
 - 社区参考项目调研报告已标注可达性与「已验证 / 推断」；本项目代码从零编写，未 Fork。
 
 ---

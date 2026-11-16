@@ -20,6 +20,7 @@ export class MockSessionBridge implements SessionBridge {
 
   readonly created: Array<{ sessionId: string; cwd: string; route?: AgentRoute }> = []
   readonly resumed: string[] = []
+  readonly resumedRoutes: Array<{ sessionId: string; route: AgentRoute }> = []
   readonly prompts: Array<{ sessionId: string; text: string }> = []
   readonly cancelled: string[] = []
   readonly disposedSessions: string[] = []
@@ -39,9 +40,10 @@ export class MockSessionBridge implements SessionBridge {
     this.live.set(sessionId, cwd)
   }
 
-  async resume(sessionId: string): Promise<void> {
+  async resume(sessionId: string, route?: AgentRoute): Promise<void> {
     this.assertLive()
     this.resumed.push(sessionId)
+    if (route) this.resumedRoutes.push({ sessionId, route })
     this.live.set(sessionId, 'resumed')
   }
 

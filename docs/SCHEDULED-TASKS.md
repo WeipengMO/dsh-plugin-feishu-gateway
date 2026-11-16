@@ -159,8 +159,11 @@ wall-clock 转 UTC（DST 安全、时区显式，不用固定数值偏移），�
 - **重复发送保护**：按 `messageId` 去重（内存 + 持久化 `schedule-runs.json` 台账），叠加
   Outbox 幂等键；原生回执本身可能因 flush/回执两次独立提交而重复，故不能只依赖它。
 - **兜底通知**：`refresh()` 若发现新的原生 `lastDelivery` 在 5 分钟宽限期内没有匹配的
-  Gateway run（Host 创建的 Session 事件被 scope 过滤掉时会发生），发送一条有界提示
-  「任务已触发，结果在 DSH Session 中」，保证飞书侧至少有通知。
+  Gateway run（Host 创建的 Session 事件被 scope 过滤掉、Host 重启打断 turn、或 turn 在
+  产出任何 assistant 消息前就失败时会发生），发送一条有界提示
+  「定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在 DSH Session 查看详情」，
+  并在执行台账补一条 `skipped` 记录（`error=execution result unavailable`），
+  避免「只看到已触发卡片、却没有任何结果或失败说明」。
 - **失败 / 空回复**：`notify` 含 `failure` 时发送有界失败通知。命令结果
   （`OperatorResult`）可附带 ≤ 200 字符的 `detail`，为稳定码 / 短文本，**不含密钥、原始
   异常正文或 prompt 文本**。
@@ -222,7 +225,8 @@ interactive card**（蓝色标题栏 + `lark_md` 分区 + 灰色 note 页脚；�
 `msg_type:'interactive'` 发到所选私聊或群。`OutboundTarget.card` 走的是同一条 Outbox
 路径（同一 UUID、同一重试与补发），所以卡片推送与文本回复一样幂等；`text` 仅作为
 持久化的兜底表示。失败 / 空回复按 `notify` 发送有界失败通知；若 Host 创建的 Session
-事件被 scope 过滤，兜底通知保证飞书侧至少收到「已触发、结果在 DSH Session」的提示。
+事件被 scope 过滤，兜底通知保证飞书侧至少收到「已触发、但未获取到执行结果」的提示，
+并在台账留下对应记录。
 
 原生投递回执只证明**指令已进入 Session 收件箱并被持久化**（`ctx.sessions.flush`），
 **不证明模型已执行完成**；真实执行结果以 DSH Session / 飞书收到的文本为准。

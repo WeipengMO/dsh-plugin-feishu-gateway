@@ -182,7 +182,12 @@ interface RunState {
 // ---------------------------------------------------------------------------
 
 const UNAVAILABLE_REASON = 'DSH native schedule service is not mounted in this profile'
-const FALLBACK_NOTICE_TEXT = '定时任务已触发；完整结果请到 DSH Session 查看'
+/**
+ * Sent only when a native delivery receipt has no observed run after the grace
+ * period (lost events, host restart mid-turn, or a turn that failed before any
+ * assistant message). It must NOT promise a result that may not exist.
+ */
+const FALLBACK_NOTICE_TEXT = '定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在 DSH Session 查看详情'
 /**
  * A scheduled Agent turn can legitimately take minutes (data-collection scripts,
  * slow models). Wait long enough that a real result is not racing a fallback
@@ -827,9 +832,21 @@ export class ScheduleManager {
           key,
         )
       } catch { /* Outbox is durable; a marker is still written below. */ }
+      // Record the occurrence so the admin run history explains why no result
+      // was delivered instead of showing only the outbound notice card.
+      const record: ScheduleRunRecord = {
+        ts: now,
+        taskId: item.id,
+        messageId,
+        sessionRef: '',
+        status: 'skipped',
+        elapsedMs: 0,
+        delivered: false,
+        error: 'execution result unavailable',
+      }
       await this.runStore.update((current) => ({
         version: 1,
-        runs: current.runs,
+        runs: [...current.runs, record].slice(-MAX_RUNS),
         dedupe: current.dedupe,
         notices: [...current.notices.filter((existing) => existing !== key), key].slice(-MAX_NOTICES),
       }))

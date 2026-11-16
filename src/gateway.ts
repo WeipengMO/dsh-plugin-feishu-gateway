@@ -912,7 +912,7 @@ export class FeishuGateway {
       if (!sessionId || !this.schedules.isTaskSession(sessionId) ||
         this.restoredTaskSessions.has(sessionId)) continue
       try {
-        await this.bridge.resume(sessionId)
+        await this.bridge.resume(sessionId, this.config.agent)
         this.restoredTaskSessions.add(sessionId)
       } catch (error) {
         this.logger.debug('cannot restore scheduled task session %s: %s', sessionId, String(error))
@@ -992,7 +992,7 @@ export class FeishuGateway {
         new Error('legacy Session uses the shared workspace; send /new to start an isolated Feishu Session'))
     }
     try {
-      await this.bridge.resume(existing.sessionId)
+      await this.bridge.resume(existing.sessionId, this.config.agent)
     } catch (error) {
       // Do NOT silently replace a chat's conversation with an empty Session.
       // A closed host, missing factory, or broken persistence needs an explicit
