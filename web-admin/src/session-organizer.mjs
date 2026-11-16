@@ -23,7 +23,7 @@ const ms = value => {
   return Number.isFinite(n) && n >= 0 && n <= 1e13 ? Math.floor(n) : 0
 }
 const emptyConfig = Object.freeze({ enabled: false, revealNames: false, graceHours: 24 })
-const emptyCursor = () => ({ version: 1, bindings: {}, schedule: {}, missing: {}, handled: [], pending: {} })
+const emptyCursor = () => ({ version: 1, bindings: {}, schedule: {}, missing: {}, handled: [], pending: {}, retired: {} })
 
 async function privateJson(dir, name) {
   const base = await fs.lstat(dir).catch(e => {
@@ -222,16 +222,30 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
   const previousBindings = isObj(cursor.bindings) ? cursor.bindings : {}
   const previousSchedule = isObj(cursor.schedule) ? cursor.schedule : {}
   const pending = isObj(cursor.pending) ? { ...cursor.pending } : {}
+  const retired = isObj(cursor.retired) ? { ...cursor.retired } : {}
   const missing = isObj(cursor.missing) ? { ...cursor.missing } : {}
   const handled = new Set(Array.isArray(cursor.handled) ? cursor.handled.filter(x => SAFE_ID.test(x)) : [])
   const currentIds = new Set(data.records.map(r => r.id))
   const boundIds = new Set(Object.values(data.current))
   const archiveCandidates = []
   for (const [chatRef, oldSession] of Object.entries(previousBindings)) {
-    if (SAFE_ID.test(oldSession) && data.current[chatRef] &&
-      data.current[chatRef] !== oldSession && !boundIds.has(oldSession) &&
-      currentIds.has(oldSession) && !handled.has(oldSession)) {
+    if (!SAFE_ID.test(oldSession) || !currentIds.has(oldSession) || handled.has(oldSession)) continue
+    if (!data.current[chatRef]) {
+      // /new temporarily removes the association before the first new prompt;
+      // remember that key until it gets a replacement, not just for one tick.
+      retired[chatRef] = oldSession
+    } else if (data.current[chatRef] !== oldSession && !boundIds.has(oldSession)) {
       pending[oldSession] = 'binding-replaced'
+    }
+  }
+  for (const [chatRef, oldSession] of Object.entries(retired)) {
+    const replacement = data.current[chatRef]
+    if (replacement) {
+      if (replacement !== oldSession && currentIds.has(oldSession) && !boundIds.has(oldSession) &&
+        !handled.has(oldSession)) pending[oldSession] = 'binding-replaced-after-new'
+      delete retired[chatRef]
+    } else if (!SAFE_ID.test(oldSession) || !currentIds.has(oldSession) || handled.has(oldSession)) {
+      delete retired[chatRef]
     }
   }
   for (const [id, reason] of Object.entries(pending)) {
@@ -251,7 +265,7 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
       archiveCandidates.push({ id, reason: 'schedule-orphan-grace-elapsed' })
   }
   const newState = { version: 1, bindings: data.current,
-    schedule: data.activeTasks, missing, pending, handled: [...handled].slice(-10000) }
+    schedule: data.activeTasks, missing, pending, retired, handled: [...handled].slice(-10000) }
   // Do not auto-archive any historical sessions on the very first deployment.
   // An explicit migration preview/confirmation is required for those.
   const attach = data.records.filter(row => !row.legacy &&
