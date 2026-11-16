@@ -59,7 +59,7 @@ test('operations panels display real data and configuration actions', () => {
   assert.match(pages, /function OpsPage\(/)
   assert.match(pages, /Token 用量趋势/)
   assert.match(pages, /审批审计/)
-  assert.match(pages, /Session 绑定/)
+  assert.match(pages, /飞书聊天关联/)
   assert.match(pages, /uncertain/)
   assert.match(built, /function OpsPage\(/)
   assert.match(source, /window\.confirm\(/)
@@ -73,6 +73,22 @@ test('operations panels display real data and configuration actions', () => {
   assert.match(built, /function AgentProfilePanel\(/)
 })
 
+
+test('Session center separates native history, archives, chat routing and cleanup', () => {
+  const native = readFileSync(path.join(root, 'src/native-session-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
+  assert.match(pages, /FeishuSessionCenter/)
+  for (const section of ['对话历史', '已归档', '飞书聊天关联', '整理与清理']) {
+    assert.ok(native.includes(section), section)
+  }
+  assert.match(native, /sessions\\/native\\/restore/)
+  assert.match(native, /report\\?\\.canRestore/)
+  assert.match(native, /不会删除/)
+  assert.match(css, /\\.fgw-session-tabs/)
+  assert.match(css, /\\.fgw-session-center \\.fgw-table tr/)
+  assert.doesNotMatch(native, /unlink\\(.*?delete native session/)
+})
 
 test('Agent profile uses one focused editor instead of three persistent content columns', () => {
   const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
