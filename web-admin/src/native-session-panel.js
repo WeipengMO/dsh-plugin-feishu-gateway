@@ -181,7 +181,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         mode !== 'archive' && h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
           h('select', { className: 'fga-input', value: query.status,
             onChange: e => filter('status', e.target.value) },
-            [['all','全部'],['active','活跃'],['idle','空闲'],['unbound','未关联'],
+            [['all','全部'],['active','正在运行'],['idle','已保存'],['unknown','待确认'],['unbound','未关联'],
               ['archived','已归档']].map(([value,label]) => h('option', {key:value,value},label)))),
         h('label', { className: 'fgw-session-filter' }, h('span', null, '会话来源'),
           h('select', { className: 'fga-input', value: query.type,
@@ -224,8 +224,9 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
               h('div',null,'会话引用：',h('code',null,reveal&&x.sessionId?x.sessionId:x.sessionRef)),
               x.chatRef&&h('div',null,'聊天引用：',h('code',null,x.chatRef)),
               x.botId&&h('div',null,'机器人：',x.botId)))},
-          {key:'lastActiveAt',title:'最近使用',render:x=>formatDate(x.lastActiveAt)},
-          {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unbound:'不再关联',archived:'已归档'})[x.status]||'未知')},
+          {key:'lastActiveAt',title:'活动时间',render:x=>x.lastActiveKnown ? formatDate(x.lastActiveAt) :
+            h('span',{className:'fgw-muted'},'最近活动未记录（创建：'+formatDate(x.createdAt)+'）')},
+          {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unknown:'状态待确认',unbound:'不再关联',archived:'已归档'})[x.status]||'未知')},
           {key:'actions',title:'操作',render:x=>x.status==='archived' ?
             h('button',{type:'button',className:'fgw-refresh',
               disabled:busy||!report?.canRestore,
