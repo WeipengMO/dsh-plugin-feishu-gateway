@@ -170,23 +170,28 @@ describe('appIdLooksValid', () => {
 describe('LarkTransport (SDK mocked)', () => {
 
   it('recovers when WSClient.start resolves but the first onReady never arrives', async () => {
+    const t = transport()
+    const states: string[] = []
     vi.useFakeTimers()
     try {
       sdkState.suppressReady = true
-      const t = transport()
-      const states: string[] = []
       await t.connect({ onMessage: () => {}, onStateChange: state => states.push(state) })
       expect(t.state).toBe('connecting')
       sdkState.suppressReady = false
-      await vi.advanceTimersByTimeAsync(30_000)
-      expect(t.state).toBe('connected')
+      // Let the handshake deadline and jittered reconnect delay elapse.
+      await vi.advanceTimersByTimeAsync(60_000)
+      // Dynamic SDK imports can settle on later microtasks under V8 coverage.
+      // Switch back to real timers before awaiting the eventual onReady signal.
+      vi.useRealTimers()
+      await vi.waitFor(() => expect(t.state).toBe('connected'), { timeout: 3000 })
       expect(sdkState.started.length).toBe(2)
       expect(states).toContain('reconnecting')
       await t.close()
-      await vi.advanceTimersByTimeAsync(60_000)
       expect(sdkState.started.length).toBe(2)
     } finally {
+      sdkState.suppressReady = false
       vi.useRealTimers()
+      await t.close()
     }
   })
 
