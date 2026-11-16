@@ -296,7 +296,7 @@ test('model route helpers aggregate all providers, retain saved routes, and seri
   const { runInNewContext } = await import('node:vm')
   const block = source.split('/*__MODEL_ROUTE_HELPERS_START__*/')[1].split('/*__MODEL_ROUTE_HELPERS_END__*/')[0]
   assert.ok(block && block.length > 500)
-  const api = runInNewContext(block + '\\n({ modelDirectoryView, withRouteOptions, modelsForProvider, ' +
+  const api = runInNewContext(block + '\n({ modelDirectoryView, withRouteOptions, modelsForProvider, ' +
     'flatModelOptions, modelRoutePayload })', {})
   const plain = value => JSON.parse(JSON.stringify(value))
   const empty = api.modelDirectoryView({ config: {} })
