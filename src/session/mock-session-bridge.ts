@@ -24,6 +24,7 @@ export class MockSessionBridge implements SessionBridge {
   readonly cancelled: string[] = []
   readonly disposedSessions: string[] = []
   private readonly live = new Map<string, string>()
+  private readonly modelChoices = new Map<string, { provider: string; model: string }>()
   private readonly scheduleHandlers = new Set<(turn: ObservedScheduleTurn) => void>()
   private pendingFailure: string | undefined
   private disposed = false
@@ -42,6 +43,23 @@ export class MockSessionBridge implements SessionBridge {
     this.assertLive()
     this.resumed.push(sessionId)
     this.live.set(sessionId, 'resumed')
+  }
+
+  async listModels() {
+    return { models: [
+      { provider: 'magpie', model: 'group/deepseek' },
+      { provider: 'magpie', model: 'group/hy4-free' },
+    ], incomplete: false }
+  }
+
+  currentModel(sessionId: string) {
+    return this.modelChoices.get(sessionId) ?? (this.live.has(sessionId)
+      ? { provider: 'magpie', model: 'group/deepseek' } : undefined)
+  }
+
+  selectModel(sessionId: string, provider: string, model: string): void {
+    if (!this.live.has(sessionId)) throw new Error('session not live')
+    this.modelChoices.set(sessionId, { provider, model })
   }
 
   async submit(sessionId: string, text: string, signal: AbortSignal): Promise<void> {

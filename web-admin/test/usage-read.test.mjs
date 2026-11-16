@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
+import { createHash } from 'node:crypto'
 import { dayInZone, parseUsageQuery, queryUsage, usageCsv } from '../src/usage-read.mjs'
 
 async function fixture() {
@@ -78,5 +79,31 @@ test('never manufactures historic zero usage when the ledger does not exist', as
     assert.equal(result.summary.value, null)
     assert.deepEqual(result.daily.map(row => row.value), [null, null])
     assert.equal(result.summary.calls, 0)
+  } finally { await f.close() }
+})
+
+test('historical schedule totals are partial and deduplicate with complete ledger events', async () => {
+  const f = await fixture()
+  try {
+    const ts = Date.parse('2026-11-15T04:00:00Z')
+    await writeFile(path.join(f.dir, 'schedule-runs.json'), JSON.stringify({ version: 1, runs: [
+      { ts, messageId: 'old-message', sessionRef: session, model: 'magpie/group/deepseek',
+        status: 'success', tokens: 1200 },
+      { ts, messageId: 'new-message', sessionRef: session, model: 'magpie/group/hy4-free',
+        status: 'success', tokens: 55 },
+    ] }))
+    const newRef = createHash('sha256').update('schedule:new-message').digest('hex').slice(0, 16)
+    await f.write('2026-11-15', [{ ...base, ts, source: 'schedule', ref: newRef,
+      model: 'magpie/group/hy4-free', inputTokens: 30, outputTokens: 20, cacheReadTokens: 5 }])
+    const result = await queryUsage(f.dir, parseUsageQuery(new URLSearchParams(
+      'from=2026-11-15&to=2026-11-15&tz=UTC')))
+    assert.equal(result.summary.totalTokens, 1255)
+    assert.equal(result.summary.turns, 2)
+    assert.equal(result.summary.calls, 2)
+    assert.equal(result.summary.inputTokens, 30)
+    assert.equal(result.summary.outputTokens, 20)
+    assert.equal(result.summary.unknownTurns, 1)
+    assert.equal(result.daily[0].coverage, 'partial')
+    assert.equal(result.byModel.length, 2)
   } finally { await f.close() }
 })

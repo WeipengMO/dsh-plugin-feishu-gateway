@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
-import type { GatewayLogger, ObservedScheduleTurn } from '../types.js'
+import type { GatewayLogger, ObservedScheduleTurn, ModelTokenUsage } from '../types.js'
 import { JsonStore } from '../storage/json-store.js'
 import {
   MAX_ACTOR_LENGTH, MAX_PROMPT_LENGTH, MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH,
@@ -57,6 +57,11 @@ export interface ScheduleManagerHooks {
   /** Re-check the current allowlist/group policy for a Feishu target. */
   readonly validateFeishuTarget: (target: FeishuDeliveryInput) =>
     Promise<{ ok: true } | { ok: false; reason: string }>
+  /** Record one schedule turn in the shared usage ledger. */
+  readonly recordUsage?: (value: {
+    ref: string; botId: string; session: string; chat?: string; user?: string
+    model?: string; status: 'done' | 'failed' | 'timeout'; source?: 'schedule'; usage?: ModelTokenUsage
+  }) => Promise<void>
   /** Durable, idempotent Outbox send. key must be stable per delivery. */
   readonly sendFeishu: (
     botId: string,
@@ -882,6 +887,20 @@ export class ScheduleManager {
         notices: state.notices,
       }))
       return
+    }
+    if (this.hooks.recordUsage) {
+      try {
+        await this.hooks.recordUsage({
+          ref: 'schedule:' + messageId, botId: config?.botId ?? 'schedule', source: 'schedule',
+          session: turn.sessionId, ...(config?.chatId ? { chat: config.chatId } : {}),
+          ...(config?.senderId ? { user: config.senderId } : {}),
+          ...(turn.model ? { model: turn.model } : {}),
+          status: turn.status === 'failed' ? 'failed' : turn.status === 'timeout' ? 'timeout' : 'done',
+          ...(turn.usage ? { usage: turn.usage } : {}),
+        })
+      } catch {
+        this.log('warn', 'schedule usage recording failed')
+      }
     }
     const record: ScheduleRunRecord = {
       ts: this.hooks.now(),

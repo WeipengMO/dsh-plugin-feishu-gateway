@@ -111,7 +111,7 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
         h('strong', null, tip.day.value === null ? '无历史覆盖' : wbCount(tip.day.value))),
       h('div', { className: 'fgw-heat-tip-row' }, h('span', null, '输入 / 输出'),
         h('strong', null, wbValue(tip.day.inputTokens) + ' / ' + wbValue(tip.day.outputTokens))),
-      h('div', { className: 'fgw-heat-tip-row' }, h('span', null, '有 usage 调用'),
+      h('div', { className: 'fgw-heat-tip-row' }, h('span', null, '有用量任务'),
         h('strong', null, wbCount(tip.day.calls))),
       tip.day.unknownTurns > 0 && h('div', { className: 'fgw-heat-tip-row' },
         h('span', null, '缺失 usage'), h('strong', null, wbCount(tip.day.unknownTurns))),
@@ -395,7 +395,7 @@ function UsagePanel() {
   const metricText = { total: '总 Token', input: '输入 Token', output: '输出 Token' }[metric]
   const cols = [
     { key: 'model', title: '模型' }, { key: 'botId', title: '机器人' },
-    { key: 'calls', title: '有 usage 调用', render: x => wbCount(x.calls) },
+    { key: 'calls', title: '有用量任务', render: x => wbCount(x.calls) },
     { key: 'unknownTurns', title: '缺失 usage', render: x => wbCount(x.unknownTurns) },
     { key: 'value', title: metricText, render: x => wbCount(x.value) }
   ]
@@ -447,7 +447,8 @@ function UsagePanel() {
           onClick: () => setShowFilters(v => !v) },
           showFilters ? '收起高级筛选' : '更多筛选')),
       h('div', { className: 'fgw-usage-facets' + (showFilters ? ' is-open' : '') },
-        h(UsageField, { title: '模型' }, select(model, setModel, facets.models)),
+        h(UsageField, { title: '模型' }, select(model, setModel,
+          [...(facets.models || []), ...(report?.modelCatalog?.models || [])])),
         h(UsageField, { title: '机器人' }, select(botId, setBotId, facets.bots)),
         h(UsageField, { title: '飞书用户（匿名标识）' },
           select(user, setUser, facets.users, x => x.slice(0, 10) + '…')),
@@ -466,7 +467,7 @@ function UsagePanel() {
         h('div', { className: 'fgw-metrics fgw-usage-metrics' },
           h(WbMetric, { title: metricText, value: wbCount(totals.value),
             caption: totals.unknownTurns ? '已知部分 · 存在未上报任务' : '模型已上报用量' }),
-          h(WbMetric, { title: '已上报 usage 调用', value: wbCount(totals.calls),
+          h(WbMetric, { title: '已上报用量任务', value: wbCount(totals.calls),
             caption: '尝试任务 ' + wbCount(totals.turns) }),
           h(WbMetric, { title: '缺失 usage 任务', value: wbCount(totals.unknownTurns),
             caption: '失败 ' + wbCount(totals.failedTurns) + ' · 取消 ' +
@@ -474,9 +475,9 @@ function UsagePanel() {
           h(WbMetric, { title: '日均 Token', value: totals.averagePerDay === null ? '—' :
             wbCount(Math.round(totals.averagePerDay)), caption: '基于已覆盖日期' })),
         h('div', { className: 'fgw-usage-chart-grid' },
-          h(UsageTrendChart, { title: 'API 请求次数',
+          h(UsageTrendChart, { title: '已上报用量任务',
             value: totals.calls, kind: 'calls', unit: '次',
-            description: '有 usage 的调用次数 · 非 HTTP 请求总数',
+            description: '包含用量记录的任务数 · 不等于模型请求次数',
             rows: chartData.rows, granularity: chartData.granularity }),
           h(UsageTrendChart, { title: metricText + ' 趋势',
             value: totals.value, kind: 'tokens', unit: 'Token',
@@ -488,14 +489,25 @@ function UsagePanel() {
           h('span', null, '周均 ' + (totals.averagePerWeek === null ? '—' :
             wbCount(Math.round(totals.averagePerWeek))) + ' Token · 仅供参考')),
         h('div', { className: 'fgw-two-column fgw-usage-breakdowns' },
-          h(WbBlock, { title: '按模型统计' },
+          h(WbBlock, { title: '按模型统计', aside: '仅统计所选时段的已采集记录' },
             h(OpsTable, { rows: report.byModel,
               columns: cols.filter(c => c.key !== 'botId') })),
           h(WbBlock, { title: '按机器人统计' },
             h(OpsTable, { rows: report.byBot,
               columns: cols.filter(c => c.key !== 'model') }))),
+        h(WbBlock, { title: '飞书通道可用模型', aside: '当前 Gateway 模型目录，不代表这些模型已有用量' },
+          report.modelCatalog && Array.isArray(report.modelCatalog.models)
+            ? h('div', { className: 'fgw-model-catalog' },
+              report.modelCatalog.models.map(name => h('div', { key: name, className: 'fgw-data-row' },
+                h('span', null, name),
+                h('span', { className: 'fgw-muted' }, (report.byModel || []).some(row => row.model === name)
+                  ? '所选范围有记录' : '所选范围无记录'))),
+              report.modelCatalog.incomplete && h('p', { className: 'fgw-caution' }, '部分模型目录不可用，列表可能不完整。'),
+              Date.now() - report.modelCatalog.ts > 120000 && h('p', { className: 'fgw-caution' }, '模型目录可能已过期。'))
+            : h('p', { className: 'fgw-muted' }, '模型目录尚未采集或 Gateway 暂不可用。')),
         h(OpsNote, null, '历史用量仅来自 DSH 原生 usage 事件，不额外调用模型。' +
-          ' 未返回 usage 的任务单独计数；采集开始之前的日期不代表零用量。' +
+          ' 定时任务新版记录完整上报用量；历史记录仅能补入已有总数，缺失输入、输出与缓存明细。' +
+          ' 采集开始之前的日期不代表零用量。' +
           ' 按浏览器时区归属自然日，重复任务 ID 去重；不读取或导出消息正文。' +
           ' 未配置模型价格，因此不提供费用估算。')))
 }

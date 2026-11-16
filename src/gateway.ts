@@ -133,6 +133,9 @@ export class FeishuGateway {
   private readonly approvals: FeishuApprovalManager
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
+  private modelCatalog: { ts: number; incomplete: boolean; models: string[] } | undefined
+  private modelCatalogAttempt = 0
+  private modelCatalogLoading = false
   private startedAt = 0
   private processed = 0
   private errors = 0
@@ -183,6 +186,7 @@ export class FeishuGateway {
       ensureTaskSession: (clientRef) => this.ensureTaskSession(clientRef),
       releaseTaskSession: (sessionId) => this.releaseTaskSession(sessionId),
       validateFeishuTarget: (target) => this.validateScheduleTarget(target),
+      recordUsage: (value) => this.ops.recordUsage(value),
       sendFeishu: (botId, target, idempotencyKey) => this.outbox.send(botId, {
         chatId: target.chatId,
         ...(target.chatId.startsWith('ou_') ? { receiveIdType: 'open_id' as const } : {}),
@@ -503,7 +507,8 @@ export class FeishuGateway {
       return
     }
     await this.enqueue(record.botId, record.chatId, () =>
-      command === 'new' ? this.dispatchControl(record, command) : this.dispatch(record), this.scopeKey(record))
+      command === 'new' || command === 'model' || command === 'models'
+        ? this.dispatchControl(record, command) : this.dispatch(record), this.scopeKey(record))
   }
 
   /** Serialize work per chat so two rapid messages cannot interleave turns. */
@@ -562,6 +567,41 @@ export class FeishuGateway {
           `待发送回复：${health.outbox.pending}`,
           `当前已绑定会话：${this.registry.get(key) ? '是' : '否'}`,
         ].join('\n')
+      } else if (command === 'model') {
+        const existing = this.registry.get(key)
+        if (!existing) {
+          reply = '当前聊天尚未建立会话。发送 /models 可查看可用模型。'
+        } else {
+          const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+          const selected = this.bridge.currentModel?.(sessionId)
+          reply = selected ? '当前会话模型：' + selected.provider + '/' + selected.model
+            : '当前会话模型不可用，请检查 DSH 会话状态。'
+        }
+      } else if (command === 'models') {
+        const choice = record.text.trim().replace(/^\/models\s*/i, '').trim()
+        const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+        const catalog = listing && !listing.timedOut ? listing.value : undefined
+        if (!catalog) {
+          reply = '当前 DSH Host 不支持模型目录。'
+        } else if (!choice) {
+          const routes = catalog.models.map(item => item.provider + '/' + item.model)
+          reply = routes.length
+            ? ['飞书通道可用模型：', ...routes.map(route => '• ' + route),
+              catalog.incomplete ? '部分模型提供方查询失败，列表可能不完整。' : '',
+              '使用 /models provider/model 切换当前会话模型。'].filter(Boolean).join('\n')
+            : '飞书通道暂未发现可用模型。' + (catalog.incomplete ? '部分模型目录查询失败。' : '')
+        } else {
+          const found = catalog.models.find(item => item.provider + '/' + item.model === choice)
+          if (!found) {
+            reply = '未找到该模型，请先发送 /models 查看飞书通道可用模型。'
+          } else if (!this.bridge.selectModel) {
+            reply = '当前 DSH Host 不支持会话模型切换。'
+          } else {
+            const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+            this.bridge.selectModel(sessionId, found.provider, found.model)
+            reply = '当前会话已切换模型：' + found.provider + '/' + found.model + '\n下次请求生效；其他聊天和定时任务不受影响。'
+          }
+        }
       } else if (command === 'cancel') {
         const active = this.activeTurns.get(key)
         if (!active || active.senderId !== record.senderId ||
@@ -1068,12 +1108,27 @@ export class FeishuGateway {
 
   private refreshOps(): void {
     if (this.startedAt === 0) return
+    const now = Date.now()
+    if (this.bridge.listModels && !this.modelCatalogLoading && now - this.modelCatalogAttempt >= 60_000) {
+      this.modelCatalogAttempt = now
+      this.modelCatalogLoading = true
+      void withTimeout(this.bridge.listModels(), 10_000).then(result => {
+        if (!result.timedOut && !this.stopped) {
+          this.modelCatalog = { ts: Date.now(), incomplete: result.value.incomplete,
+            models: result.value.models.map(item => item.provider + '/' + item.model)
+              .filter(name => /^[A-Za-z0-9_.:/-]{1,96}$/.test(name)).slice(0, 200) }
+          this.refreshOps()
+        }
+      }).catch(() => this.logger.warn('model catalog unavailable'))
+        .finally(() => { this.modelCatalogLoading = false })
+    }
     const health = this.health()
     const snapshot: OpsSnapshot = {
       version: 1, ts: Date.now(), status: health.status,
       workspace: this.isolatedWorkspace,
       sharedProjectWorkspace: this.config.workspace,
       isolatedAgent: true,
+      ...(this.modelCatalog ? { modelCatalog: this.modelCatalog } : {}),
       tasks: [...this.activeTurns.values()].map(turn => ({
         ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
         botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,

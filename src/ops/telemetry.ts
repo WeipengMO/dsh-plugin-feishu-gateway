@@ -43,6 +43,7 @@ export interface OpsSnapshot {
   /** Former/shared project directory; not the Feishu Session cwd. */
   readonly sharedProjectWorkspace?: string
   readonly isolatedAgent?: boolean
+  readonly modelCatalog?: { readonly ts: number; readonly incomplete: boolean; readonly models: readonly string[] }
   readonly version: 1
   readonly ts: number
   readonly status: string
@@ -149,6 +150,7 @@ export class OpsTelemetry {
   async recordUsage(value: {
     ref: string; botId: string; session?: string; user?: string; chat?: string
     model?: string; status: 'done' | 'failed' | 'cancelled' | 'timeout' | 'uncertain'
+    source?: 'schedule'
     usage?: ModelTokenUsage
   }): Promise<void> {
     const botId = safeBot(value.botId)
@@ -162,6 +164,7 @@ export class OpsTelemetry {
     const event = {
       version: 1 as const, ts: now, ref: opsRef(value.ref), botId,
       status: value.status,
+      ...(value.source === 'schedule' ? { source: 'schedule' as const } : {}),
       ...(value.session ? { session: opsRef(value.session) } : {}),
       ...(value.user ? { user: opsRef(value.user) } : {}),
       ...(value.chat ? { chat: opsRef(value.chat) } : {}),

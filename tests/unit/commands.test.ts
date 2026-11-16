@@ -15,8 +15,15 @@ describe('Feishu slash commands', () => {
     expect(parseControlCommand('/cancelled')).toBeUndefined()
     expect(parseControlCommand('/path/to/file')).toBeUndefined()
   })
+  it('supports model selection and stop while keeping cancel as a compatibility alias', () => {
+    expect(parseControlCommand('/stop')).toBe('cancel')
+    expect(parseControlCommand('/model')).toBe('model')
+    expect(parseControlCommand('/models')).toBe('models')
+    expect(parseControlCommand('/models magpie/group/hy4-free')).toBe('models')
+    expect(parseControlCommand('/model other')).toBeUndefined()
+  })
   it('explains cancellation safety and Session semantics', () => {
-    expect(commandHelp).toContain('/cancel')
+    expect(commandHelp).toContain('/stop')
     expect(commandHelp).toContain('/new')
     expect(commandHelp).toContain('回滚')
   })

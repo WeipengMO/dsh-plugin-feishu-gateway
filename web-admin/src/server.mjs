@@ -755,6 +755,10 @@ export function createAdminHandler(options = {}) {
           route === PREFIX + '/ops/usage/export')) {
         const params = new URL(req.url ?? '', 'http://localhost').searchParams
         const report = await queryUsage(stateDir, parseUsageQuery(params))
+        // Catalog is Gateway's live Host, not the Web Profile. A missing or
+        // stale snapshot means unknown availability, never zero usage.
+        const snapshot = await readOpsSnapshot(stateDir).catch(() => null)
+        report.modelCatalog = snapshot?.modelCatalog ?? null
         if (route.endsWith('/export')) {
           const csv = usageCsv(report)
           res.writeHead(200, {

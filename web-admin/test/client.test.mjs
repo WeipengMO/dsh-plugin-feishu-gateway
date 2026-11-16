@@ -358,7 +358,7 @@ test('usage dashboard prioritizes a 365-day heatmap, a unified range picker and 
     panel.indexOf("className: 'fgw-usage-filters'"))
   assert.doesNotMatch(panel, /title: '时区（IANA）'/)
   assert.doesNotMatch(panel, /title: '按周期聚合'/)
-  assert.match(panel, /title: 'API 请求次数'/)
+  assert.match(panel, /title: '已上报用量任务'/)
   assert.match(panel, /kind: 'calls'/)
   assert.match(panel, /kind: 'tokens'/)
   assert.match(panel, /usageTrendBuckets\(series\)/)

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   AgentRoute,
+  ModelCatalog,
   CordisLike,
   GatewayLogger,
   ModelTokenUsage,
@@ -18,6 +19,7 @@ const LLM_MODULE = '@deepseek-ai/dsh-llm'
 
 interface AgentHandleLike {
   readonly agent: {
+    readonly model?: { current(): { provider?: unknown; model?: unknown } | undefined; select(choice: { provider: string; model: string }): void }
     followup(message: unknown): void
     cancel(cause: { readonly kind: 'user' }, options?: { readonly keepInbox?: boolean }): void
     whenIdle(): Promise<void>
@@ -71,6 +73,7 @@ interface ExternalTurn {
   readonly live: string[]
   events: number
   tokens: number
+  usage?: ModelTokenUsage
   model?: string
 }
 
@@ -149,6 +152,50 @@ export class DshSessionBridge implements SessionBridge {
     } catch {
       return undefined
     }
+  }
+
+  async listModels(): Promise<ModelCatalog> {
+    let llm: { listProviders?: () => unknown; listModels?: (provider: string) => Promise<unknown> } | undefined
+    try { llm = this.ctx.get('llm') as typeof llm } catch { return { models: [], incomplete: true } }
+    if (!llm || typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function')
+      return { models: [], incomplete: true }
+    try {
+      const providers = llm.listProviders()
+      if (!Array.isArray(providers)) return { models: [], incomplete: true }
+      const models: Array<{ provider: string; model: string; name?: string }> = []
+      const seen = new Set<string>()
+      let incomplete = false
+      for (const entry of providers.slice(0, 50)) {
+        const id = entry && typeof entry.id === 'string' ? entry.id : ''
+        if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) continue
+        try {
+          const available = await llm.listModels(id)
+          if (!Array.isArray(available)) { incomplete = true; continue }
+          for (const item of available.slice(0, 200)) {
+            const model = item && typeof item.id === 'string' ? item.id : ''
+            if (!/^[A-Za-z0-9_.:/-]{1,96}$/.test(model)) continue
+            const key = id + '/' + model
+            if (seen.has(key)) continue
+            seen.add(key)
+            const name = typeof item.name === 'string' ? item.name.slice(0, 100) : ''
+            models.push({ provider: id, model, ...(name ? { name } : {}) })
+          }
+        } catch { incomplete = true }
+      }
+      return { models, incomplete }
+    } catch { return { models: [], incomplete: true } }
+  }
+
+  currentModel(sessionId: string): { provider: string; model: string } | undefined {
+    const selected = this.handles.get(sessionId)?.agent.model?.current()
+    return selected && typeof selected.provider === 'string' && typeof selected.model === 'string'
+      ? { provider: selected.provider, model: selected.model } : undefined
+  }
+
+  selectModel(sessionId: string, provider: string, model: string): void {
+    const agent = this.handles.get(sessionId)?.agent
+    if (!agent?.model || typeof agent.model.select !== 'function') throw new Error('model selection unavailable')
+    agent.model.select({ provider, model })
   }
 
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
@@ -414,6 +461,12 @@ export class DshSessionBridge implements SessionBridge {
         if (usage) {
           external.tokens += usage.inputTokens + usage.outputTokens +
             (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+          external.usage = {
+            inputTokens: (external.usage?.inputTokens ?? 0) + usage.inputTokens,
+            outputTokens: (external.usage?.outputTokens ?? 0) + usage.outputTokens,
+            cacheReadTokens: (external.usage?.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0),
+            cacheWriteTokens: (external.usage?.cacheWriteTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
+          }
         }
         if (!external.model && this.sessionModels.has(sessionId)) {
           external.model = this.sessionModels.get(sessionId)
@@ -433,7 +486,7 @@ export class DshSessionBridge implements SessionBridge {
               sessionId, messageId: external.messageId, text, status,
               elapsedMs: Date.now() - external.startedAt,
               ...(external.model ? { model: external.model } : {}),
-              ...(external.tokens > 0 ? { tokens: external.tokens } : {}),
+              ...(external.usage ? { usage: external.usage, tokens: external.tokens } : {}),
             })
           } catch { /* an observer failure must never break native event delivery */ }
         }

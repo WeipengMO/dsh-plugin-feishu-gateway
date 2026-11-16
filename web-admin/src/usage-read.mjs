@@ -4,6 +4,7 @@
  * Query dates are calendar dates in an explicit IANA time zone.
  */
 import { promises as fs } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -72,7 +73,11 @@ function tally(target, row) {
   target.turns++
   if (row.status === 'failed' || row.status === 'timeout' || row.status === 'uncertain') target.failedTurns++
   if (row.status === 'cancelled') target.cancelledTurns++
-  if (row.usage) {
+  if (row.totalOnly) {
+    target.calls++
+    target.unknownTurns++
+    target.totalTokens += row.totalTokens
+  } else if (row.usage) {
     target.calls++
     for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'])
       target[key] += row[key] ?? 0
@@ -90,6 +95,7 @@ function validRecord(x) {
   for (const key of ['session', 'user', 'chat']) {
     if (typeof x[key] === 'string' && REF.test(x[key])) item[key] = x[key]
   }
+  if (x.source === 'schedule') item.source = 'schedule'
   if (typeof x.model === 'string' && MODEL.test(x.model)) item.model = x.model
   if (finite(x.inputTokens) && finite(x.outputTokens)) {
     item.inputTokens = x.inputTokens
@@ -135,9 +141,37 @@ async function firstTrackedDay(stateDir, names, tz) {
   }
   return null
 }
+/** Recover only the bounded totals retained by old Gateway schedule runs.
+ * Older records do not contain component usage, so coverage remains partial.
+ * Full ledger rows always supersede these summaries by the same message ref.
+ */
+async function historicalScheduleRows(stateDir) {
+  const file = path.join(stateDir, 'schedule-runs.json')
+  const st = await fs.lstat(file).catch(e => { if (e.code === 'ENOENT') return null; throw e })
+  if (!st) return []
+  if (!st.isFile() || st.isSymbolicLink() || st.size > 1024 * 1024)
+    throw Error('unsafe schedule usage history')
+  let doc
+  try { doc = JSON.parse(await fs.readFile(file, 'utf8')) } catch { return [] }
+  if (!doc || doc.version !== 1 || !Array.isArray(doc.runs)) return []
+  return doc.runs.slice(-200).flatMap(run => {
+    if (!run || !finite(run.ts) || typeof run.messageId !== 'string' ||
+        !run.messageId || run.messageId.length > 256) return []
+    const ref = createHash('sha256').update('schedule:' + run.messageId).digest('hex').slice(0, 16)
+    const status = run.status === 'failed' ? 'failed' : run.status === 'timeout' ? 'timeout' : 'done'
+    return [{ version: 1, ts: run.ts, ref, source: 'schedule', botId: 'schedule', status,
+      ...(typeof run.model === 'string' && MODEL.test(run.model) ? { model: run.model } : {}),
+      ...(typeof run.sessionRef === 'string' && REF.test(run.sessionRef) ? { session: run.sessionRef } : {}),
+      ...(finite(run.tokens) ? { totalOnly: true, totalTokens: run.tokens } : { usage: false }) }]
+  })
+}
+
 export async function queryUsage(stateDir, query, now = Date.now()) {
   const filenames = await usageFiles(stateDir)
-  const earliest = await firstTrackedDay(stateDir, filenames, query.tz)
+  const ledgerEarliest = await firstTrackedDay(stateDir, filenames, query.tz)
+  const oldSchedule = await historicalScheduleRows(stateDir)
+  const scheduleEarliest = oldSchedule.length ? dayInZone(Math.min(...oldSchedule.map(r => r.ts)), query.tz) : null
+  const earliest = [ledgerEarliest, scheduleEarliest].filter(Boolean).sort()[0] ?? null
   const scanned = new Map()
   const facets = { models: new Set(), bots: new Set(), users: new Set(),
     chats: new Set(), sessions: new Set() }
@@ -156,11 +190,17 @@ export async function queryUsage(stateDir, query, now = Date.now()) {
       row.day = localDay
       // Stable inbound task ID: dedupe duplicate terminal/retry events, even
       // when a task was repeated across a process restart.
-      const key = row.botId + ':' + row.ref
+      const key = row.source === 'schedule' ? 'schedule:' + row.ref : row.botId + ':' + row.ref
       const old = scanned.get(key)
       if (!old || (!old.usage && row.usage) || (old.usage === row.usage && row.ts >= old.ts))
         scanned.set(key, row)
     }
+  }
+  for (const row of oldSchedule) {
+    const localDay = dayInZone(row.ts, query.tz)
+    if (localDay < query.from || localDay > query.to) continue
+    const key = 'schedule:' + row.ref
+    if (!scanned.has(key)) scanned.set(key, { ...row, day: localDay })
   }
   const dailyMap = new Map()
   for (let day = query.from; day <= query.to; day = shiftDay(day, 1)) dailyMap.set(day, blank(day))

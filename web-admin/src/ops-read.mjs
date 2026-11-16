@@ -91,6 +91,12 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
       doc.sharedProjectWorkspace.length <= 4096 && !doc.sharedProjectWorkspace.includes('\0') ?
       { sharedProjectWorkspace: path.normalize(doc.sharedProjectWorkspace) } : {}),
     status: safeLabel(doc.status) ?? 'unknown',
+    ...(doc.modelCatalog && safeNum(doc.modelCatalog.ts) !== undefined &&
+      Array.isArray(doc.modelCatalog.models) ? { modelCatalog: {
+        ts: safeNum(doc.modelCatalog.ts),
+        incomplete: doc.modelCatalog.incomplete === true,
+        models: [...new Set(doc.modelCatalog.models.filter(safeModel))].slice(0, 200),
+      } } : {}),
     tasks, sessions, transport: transports,
     stats: {
       activeTurns: get('activeTurns'), boundSessions: get('boundSessions'),

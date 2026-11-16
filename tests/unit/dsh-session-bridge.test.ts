@@ -117,6 +117,56 @@ describe('extractText', () => {
   })
 })
 
+describe('DshSessionBridge model catalog and scheduled usage', () => {
+  it('uses live Host model providers and switches only the selected Agent', async () => {
+    const { ctx, fake, bridge } = setup()
+    let selected = { provider: 'magpie', model: 'group/deepseek' }
+    fake.agents.create = async () => ({
+      agent: {
+        model: { current: () => selected, select: (value: { provider: string; model: string }) => { selected = value } },
+        followup: () => {}, cancel: () => {}, whenIdle: async () => {},
+      } as any,
+      dispose: async () => {},
+    })
+    ctx.services.set('llm', {
+      listProviders: () => [{ id: 'magpie' }, { id: 'broken' }],
+      listModels: async (provider: string) => {
+        if (provider === 'broken') throw new Error('offline')
+        return [{ id: 'group/deepseek', name: 'DeepSeek' }, { id: 'group/hy4-free', name: 'HY' }]
+      },
+    })
+    expect(await bridge.listModels()).toMatchObject({ incomplete: true, models: [
+      { provider: 'magpie', model: 'group/deepseek' }, { provider: 'magpie', model: 'group/hy4-free' },
+    ] })
+    await bridge.create('s', '/tmp')
+    expect(bridge.currentModel('s')).toEqual({ provider: 'magpie', model: 'group/deepseek' })
+    bridge.selectModel('s', 'magpie', 'group/hy4-free')
+    expect(bridge.currentModel('s')).toEqual({ provider: 'magpie', model: 'group/hy4-free' })
+    expect(() => bridge.selectModel('another', 'magpie', 'group/deepseek')).toThrow()
+    await bridge.dispose()
+  })
+
+  it('carries provider-reported schedule usage components without inventing missing values', async () => {
+    const { ctx, bridge } = setup()
+    const seen: any[] = []
+    bridge.watchScheduleTurns(turn => seen.push(turn))
+    const session = { id: 'schedule-session' }
+    ctx.emit('session/event', session, { type: 'user/message',
+      data: { message: { id: 'msg-1', source: { kind: 'schedule' } } } })
+    ctx.emit('session/event', session, { type: 'request/context',
+      data: { provider: 'magpie', model: 'group/deepseek' } })
+    ctx.emit('session/event', session, { type: 'assistant/message', data: {
+      message: { content: [{ type: 'text', text: 'done' }] },
+      usage: { inputTokens: 20, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2 },
+    } })
+    ctx.emit('session/event', session, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ model: 'magpie/group/deepseek', tokens: 30,
+      usage: { inputTokens: 20, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2 } })
+    await bridge.dispose()
+  })
+})
+
 describe('DshSessionBridge', () => {
   it('is unavailable when the agents service is missing', () => {
     const { bridge } = setup(false)

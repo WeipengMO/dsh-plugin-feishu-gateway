@@ -257,6 +257,7 @@ export interface ObservedScheduleTurn {
   readonly elapsedMs: number
   readonly model?: string
   readonly tokens?: number
+  readonly usage?: ModelTokenUsage
 }
 
 /**
@@ -266,6 +267,16 @@ export interface ObservedScheduleTurn {
  * `ctx.agents` / `session/event` / `agent/assistant-stream` APIs; it never
  * creates its own LLM loop or Session store.
  */
+export interface AvailableModel {
+  readonly provider: string
+  readonly model: string
+  readonly name?: string
+}
+export interface ModelCatalog {
+  readonly models: readonly AvailableModel[]
+  readonly incomplete: boolean
+}
+
 export interface SessionBridge {
   /** False when the required DSH services are not mounted in this profile. */
   readonly available: boolean
@@ -274,6 +285,10 @@ export interface SessionBridge {
   create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void>
   /** Restore a previously persisted native Session into a live Agent. */
   resume(sessionId: string): Promise<void>
+  /** Models advertised by this Gateway Host, not another DSH Profile. */
+  listModels?(): Promise<ModelCatalog>
+  currentModel?(sessionId: string): { provider: string; model: string } | undefined
+  selectModel?(sessionId: string, provider: string, model: string): void
   /** Queue one user turn on a live Session. */
   submit(sessionId: string, text: string, signal: AbortSignal): Promise<void>
   /** Wait for the turn to settle and collect the assistant's reply text. */

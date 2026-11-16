@@ -473,6 +473,25 @@ describe('ScheduleManager — observed turns and fallback', () => {
     status: 'success', elapsedMs: 1200, model: 'deepseek-chat', tokens: 42,
   }
 
+  it('records precise schedule usage once, including silent and missing-usage turns', async () => {
+    const recordUsage = vi.fn(async (_value: Parameters<NonNullable<ScheduleManagerHooks['recordUsage']>>[0]) => {})
+    const { fp, manager } = await boot({ recordUsage })
+    manager.attachNative(fp.port)
+    await manager.execute(createCommand())
+    const usage = { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1 }
+    await manager.onScheduleTurn({ ...successTurn, usage, text: 'NO_REPLY' })
+    await manager.onScheduleTurn({ ...successTurn, usage, text: 'NO_REPLY' })
+    expect(recordUsage).toHaveBeenCalledTimes(1)
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({
+      ref: 'schedule:msg-xyz', botId: 'default', session: 'sess-client-1', usage, status: 'done',
+    }))
+    await manager.onScheduleTurn({ ...successTurn, messageId: 'unknown-usage', status: 'failed' })
+    expect(recordUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      ref: 'schedule:unknown-usage', status: 'failed',
+    }))
+    expect(recordUsage.mock.calls[1]?.[0]).not.toHaveProperty('usage')
+  })
+
   it('onScheduleTurn sends the truncated result, records a run and dedupes', async () => {
     const { dir, spy, fp, manager } = await boot()
     manager.attachNative(fp.port)
