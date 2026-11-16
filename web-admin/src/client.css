@@ -880,3 +880,18 @@
  .fgw-session-center .fgw-session-filters{grid-template-columns:minmax(0,1fr)}
  .fgw-session-center .fgw-session-pages{justify-content:space-between}
 }
+
+.fgw-session-mini-summary{display:flex;align-items:center;justify-content:space-between;gap:10px 20px;flex-wrap:wrap;padding:13px 16px;border:1px solid var(--border,#8884);border-radius:11px;background:var(--card,transparent);font-size:13px}
+.fgw-session-mini-summary strong{font-size:15px;font-weight:660}
+.fgw-session-mini-summary span{font-size:12px;color:var(--muted-foreground,#97a0ad)}
+.fgw-binding-filters[data-expanded="no"] .fgw-binding-extra{display:none}
+.fgw-session-bulk{margin-bottom:16px;background:var(--card,transparent)}
+.fgw-session-bulk .fgw-session-actions{margin-top:12px;gap:9px}
+.fgw-session-storage-details .fgw-session-storage{padding-top:14px}
+.fgw-session-center .fgw-session-tech summary{font-size:11px}
+@media(max-width:740px){
+  .fgw-session-advanced-area .fgw-table td:nth-child(2){grid-column:1/-1}
+  .fgw-session-advanced-area .fgw-table td:first-child:before{display:inline;margin-right:8px}
+  .fgw-session-advanced-area .fgw-table td:first-child{font-size:11px}
+  .fgw-session-center .fgw-session-actions button{white-space:normal}
+}
