@@ -12,7 +12,8 @@ import type { GatewayConfig } from '../../src/types.js'
 import { tempDir } from '../helpers.js'
 import { resolveFeishuWorkspace } from '../../src/agent-workspace.js'
 import { SessionRegistry } from '../../src/session/session-registry.js'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -537,6 +538,50 @@ describe('fail-closed corrupt startup', () => {
     await gateway.stop()
   })
 
+})
+
+describe('owner-serialized Session batch actions', () => {
+  const ref = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 16)
+
+  it('applies safe bindings, detects stale versions and preserves native DSH sessions', async () => {
+    const { gateway, transport, bridge, stateDir } = await harness()
+    await transport.emitMessage(alice({ chatId: 'oc_batch_a', messageId: 'om_batch_a' }))
+    await transport.emitMessage(alice({ chatId: 'oc_batch_b', messageId: 'om_batch_b' }))
+    await gateway.whenIdle()
+    const before = JSON.parse(await readFile(path.join(stateDir, 'sessions.json'), 'utf8'))
+    const keys = ['default:oc_batch_a', 'default:oc_batch_b']
+    const items = keys.map(key => ({
+      ref: ref(before.bindings[key].sessionId),
+      chatRef: ref(key.slice('default:'.length)),
+      botId: 'default', expectedLastActiveAt: before.bindings[key].lastActiveAt,
+    }))
+    const requests = path.join(stateDir, 'ops-control', 'requests')
+    await mkdir(requests, { recursive: true })
+    const submit = async (action: string, list: typeof items) => {
+      const id = randomUUID()
+      await writeFile(path.join(requests, id + '.json'), JSON.stringify({
+        version: 1, id, ts: Date.now(), type: 'batch-sessions',
+        batch: { action, items: list },
+      }))
+      await gateway.pollOperatorCommands()
+      return JSON.parse(await readFile(path.join(stateDir, 'ops-control', 'results', id + '.json'), 'utf8'))
+    }
+    const archived = await submit('archive', items)
+    expect(archived).toMatchObject({ state: 'completed', detail: 'applied=2 skipped=0 total=2' })
+    const marked = JSON.parse(await readFile(path.join(stateDir, 'sessions.json'), 'utf8'))
+    expect(keys.every(key => marked.bindings[key]?.archived === true)).toBe(true)
+
+    // An incoming turn invalidates the old version; no stale bulk unlink allowed.
+    await transport.emitMessage(alice({ chatId: 'oc_batch_a', messageId: 'om_batch_a_again' }))
+    await gateway.whenIdle()
+    const partial = await submit('unlink', items)
+    expect(partial).toMatchObject({ state: 'conflict', detail: 'applied=1 skipped=1 total=2' })
+    const after = JSON.parse(await readFile(path.join(stateDir, 'sessions.json'), 'utf8'))
+    expect(after.bindings['default:oc_batch_a']).toBeDefined()
+    expect(after.bindings['default:oc_batch_b']).toBeUndefined()
+    expect(bridge.created.length).toBe(2) // no native Agent deleted or replaced
+    await gateway.stop()
+  })
 })
 
 describe('group session isolation', () => {
