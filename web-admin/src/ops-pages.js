@@ -27,7 +27,8 @@ function OpsTable({ columns, rows, empty }) {
           h('td', { key: c.key }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
 }
 function OpsPage({ kind, ops, onConfig, onCommand }) {
-  if (kind === 'sessions') return h(FeishuSessionsInventory, {})
+  if (kind === 'sessions') return h(React.Fragment, null,
+    h(FeishuNativeSessionLedger, {}), h(FeishuSessionsInventory, {}))
   // Historical token metrics remain available when the Gateway is offline.
   if (kind === 'usage') return h(UsagePanel, {})
   if (!ops?.telemetryAvailable) return h(OpsUnavailable, {})
