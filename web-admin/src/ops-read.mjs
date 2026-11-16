@@ -11,7 +11,7 @@ const safeNum = n => Number.isFinite(n) && n >= 0 && n <= 1e13 ? Math.floor(n) :
 const safeRef = s => typeof s === 'string' && /^[a-f0-9]{16}$/.test(s) ? s : undefined
 const safeLabel = s => typeof s === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(s) ? s : undefined
 const safeBot = s => typeof s === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(s) ? s : undefined
-const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_.:/-]{1,256}$/.test(s) ? s : undefined
+const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_./:@+-]{1,256}$/.test(s) ? s : undefined
 const safeProvider = s => typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s) ? s : undefined
 const safeEffort = s => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(s) ? s : undefined
 /** Display labels are plain bounded text: no control characters, ever. */
