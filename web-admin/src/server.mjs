@@ -786,16 +786,27 @@ export function createAdminHandler(options = {}) {
       }
       if (req.method === 'GET' && route === PREFIX + '/sessions/ledger') {
         const params = new URL(req.url ?? '', 'http://localhost').searchParams
-        const allowed = new Set(['status', 'type', 'orphan', 'bot', 'search', 'page', 'pageSize', 'reveal'])
+        const allowed = new Set(['status', 'type', 'orphan', 'bot', 'search', 'page', 'pageSize', 'reveal', 'from', 'to'])
         for (const key of params.keys()) {
           if (!allowed.has(key) || params.getAll(key).length !== 1)
             throw httpError(400, 'invalid native Session query')
         }
+        const validDay = value => {
+          if (!value) return true
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+          const ts = Date.parse(value + 'T00:00:00.000Z')
+          return Number.isFinite(ts) && new Date(ts).toISOString().slice(0, 10) === value
+        }
+        const from = params.get('from') || ''
+        const to = params.get('to') || ''
+        const bot = params.get('bot') || ''
         const page = Number(params.get('page') || 1)
         const pageSize = Number(params.get('pageSize') || 25)
         if (!Number.isSafeInteger(page) || page < 1 || page > 100000 ||
           !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
           (params.get('search') || '').length > 128 ||
+          (bot !== '' && !/^[a-z][a-z0-9_-]{0,31}$/.test(bot)) ||
+          !validDay(from) || !validDay(to) || (from && to && from > to) ||
           !['all', 'active', 'idle', 'unbound', 'archived'].includes(params.get('status') || 'all') ||
           !['all', 'p2p', 'group', 'schedule'].includes(params.get('type') || 'all') ||
           !['0', '1'].includes(params.get('reveal') || '0') ||
@@ -803,7 +814,7 @@ export function createAdminHandler(options = {}) {
         const report = await sessionOrganizationInventory(stateDir, sessionServices(), {
           page, pageSize, status: params.get('status') || 'all',
           type: params.get('type') || 'all', search: params.get('search') || '',
-          bot: params.get('bot') || '', orphanOnly: params.get('orphan') === '1',
+          bot, from, to, orphanOnly: params.get('orphan') === '1',
           reveal: params.get('reveal') === '1',
         })
         return json(res, 200, { ok: true, report })
