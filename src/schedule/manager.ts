@@ -187,7 +187,7 @@ const UNAVAILABLE_REASON = 'DSH native schedule service is not mounted in this p
  * period (lost events, host restart mid-turn, or a turn that failed before any
  * assistant message). It must NOT promise a result that may not exist.
  */
-const FALLBACK_NOTICE_TEXT = '定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在 DSH Session 查看详情'
+const FALLBACK_NOTICE_TEXT = '定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在会话中查看详情'
 /**
  * A scheduled Agent turn can legitimately take minutes (data-collection scripts,
  * slow models). Wait long enough that a real result is not racing a fallback
@@ -950,7 +950,7 @@ export class ScheduleManager {
     if (turn.status !== 'success') {
       const label = turn.status === 'failed' ? '执行失败'
         : turn.status === 'timeout' ? '执行超时' : '未产出内容'
-      return `定时任务${label}（${turn.status}）；详情见 DSH Session`
+      return `定时任务${label}（${turn.status}）；详情见会话`
     }
     const text = typeof turn.text === 'string' ? turn.text : ''
     return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').slice(0, CARD_TEXT_MAX)

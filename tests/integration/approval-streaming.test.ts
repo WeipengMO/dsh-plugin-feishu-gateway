@@ -166,7 +166,7 @@ describe('Feishu callback and native DSH approval integration', () => {
     expect(b.t.sent.find(x => x.replyToMessageId === 'om_answer')).toBeUndefined()
     const card = b.t.streamReplacements[0]!.card as any
     expect(card.body.elements[0].content).toBe('final model response')
-    expect(card.header.title.content).toBe('DSH 已完成')
+    expect(card.header.title.content).toBe('已完成')
     expect(card.config.streaming_mode).toBe(false)
     expect(JSON.stringify(card)).not.toContain('取消当前任务')
     expect(b.gateway.health().processed).toBe(1)

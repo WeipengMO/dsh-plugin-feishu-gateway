@@ -70,7 +70,7 @@ export function buildScheduleCard(
   }
   elements.push({
     tag: 'note',
-    elements: [{ tag: 'plain_text', content: options.footer ?? 'DSH 原生定时任务 · 自动推送' }],
+    elements: [{ tag: 'plain_text', content: options.footer ?? '原生定时任务 · 自动推送' }],
   })
 
   const template = options.template && TEMPLATES.has(options.template) ? options.template : 'blue'

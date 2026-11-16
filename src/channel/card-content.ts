@@ -31,7 +31,7 @@ export function approvalCard(toolName: string, nonce: string, command?: string, 
   const commandBlock = command === undefined ? undefined
     : '    ' + command.replace(/\n/g, '\n    ')
   return {
-    ...header('DSH 工具执行审批', 'orange'),
+    ...header('工具执行审批', 'orange'),
     body: { elements: [
       { tag: 'markdown', content: '**工具：** ' + safeName +
         (toolName === 'bash' && command === undefined ? '\n\n⚠️ 无法可靠获取或完整展示命令，请谨慎决定。' : '') },
@@ -65,7 +65,7 @@ export function approvalResultCard(outcome: 'allowed-once' | 'rejected' | 'cance
 
 export function progressCard(nonce: string): Record<string, unknown> {
   return {
-    ...header('DSH 正在执行', 'blue'),
+    ...header('正在执行', 'blue'),
     config: { update_multi: true, streaming_mode: true },
     body: { elements: [
       { tag: 'markdown', element_id: PROGRESS_ELEMENT_ID,
@@ -118,9 +118,9 @@ export function completedProgressCard(
   stats?: CardCompletionStats,
 ): Record<string, unknown> {
   const labels = {
-    done: ['DSH 已完成', 'green'],
-    cancelled: ['DSH 已取消', 'grey'],
-    failed: ['DSH 执行异常', 'grey'],
+    done: ['已完成', 'green'],
+    cancelled: ['已取消', 'grey'],
+    failed: ['执行异常', 'grey'],
   } as const
   const [title, template] = labels[status]
   const footer = statsFooter(stats)
