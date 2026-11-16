@@ -168,6 +168,7 @@ export class DshSessionBridge implements SessionBridge {
     try {
       const providers = llm.listProviders()
       if (!Array.isArray(providers)) return { models: [], incomplete: true }
+      const source = llm
       const models: AvailableModel[] = []
       const directory: AvailableProvider[] = []
       const seen = new Set<string>()
@@ -183,7 +184,7 @@ export class DshSessionBridge implements SessionBridge {
       for (let offset = 0; offset < availableProviders.length; offset += 6) {
         const batch = await Promise.all(availableProviders.slice(offset, offset + 6).map(async provider => {
           try {
-            return { provider, result: await llm.listModels!(provider.id) }
+            return { provider, result: await source.listModels!(provider.id) }
           } catch {
             return { provider, result: undefined }
           }
