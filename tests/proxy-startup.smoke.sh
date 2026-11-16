@@ -21,6 +21,7 @@ cat > "$TMP/bin/dsh" <<'EOF'
 EOF
 cat > "$TMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+if [ -n "${MOCK_CURL_CAPTURE:-}" ]; then printf '%s\n' "$*" >> "$MOCK_CURL_CAPTURE"; fi
 [ "${MOCK_PROXY_BROKEN:-0}" != "1" ]
 EOF
 chmod +x "$TMP/bin/dsh" "$TMP/bin/curl"
@@ -60,4 +61,13 @@ fi
 [ ! -e "$TMP/captured" ]
 grep -q 'direct fallback disabled' "$TMP/strict"
 
-echo "PASS: proxy, direct fallback and fail-closed startup"
+# The launcher must probe the matching Feishu/Lark domain, not a hard-coded
+# China Feishu endpoint for an international-only bot.
+cat > "$TMP/state/admin-config.json" <<'EOF'
+{"version":1,"config":{"bots":[{"id":"default","enabled":true,"domain":"lark"}],"networkProxy":{"enabled":true,"urlEnv":"FEISHU_CHANNEL_PROXY_URL","fallbackDirect":true}}}
+EOF
+MOCK_PROXY_BROKEN=0 MOCK_CURL_CAPTURE="$TMP/curl-targets" run_case > "$TMP/lark"
+grep -q 'open.larksuite.com/open-apis' "$TMP/curl-targets"
+! grep -q 'open.feishu.cn/open-apis' "$TMP/curl-targets"
+
+echo "PASS: proxy, direct fallback, Lark target and fail-closed startup"
