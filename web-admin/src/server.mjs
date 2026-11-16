@@ -19,6 +19,8 @@ import { validateSpec, previewOccurrences, specSummary, SCHEDULE_ACTIONS,
   SCHEDULE_NOTIFY, SCHEDULE_ACTOR, SCHEDULE_TASK_ID_RE, SCHEDULE_UUID_RE,
   TITLE_MAX, PROMPT_MAX, PREVIEW_MAX } from './schedule-spec.mjs'
 import { parseSessionQuery, querySessions } from './session-read.mjs'
+import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession,
+  organizationSettings, saveOrganizationSettings } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
@@ -764,6 +766,19 @@ export function createAdminHandler(options = {}) {
   const execOverlay = path.join(stateDir, EXEC_OVERLAY_FILE)
   // Short-lived, one-time confirmation tokens live only in authenticated Web.
   const sessionPreviews = new Map()
+  const nativePreviews = new Map()
+  // Raw native ids may embed Feishu chat identifiers. Organizer previews only
+  // need counts and stable references; reveal full ids via the explicit ledger
+  // toggle rather than a second unredacted endpoint.
+  const nativeRef = id => createHash('sha256').update(id).digest('hex').slice(0, 16)
+  const publicPlan = report => !report?.available ? report : ({
+    ...report,
+    attach: report.attach.map(nativeRef),
+    archive: report.archive.map(row => ({ sessionRef: nativeRef(row.id), reason: row.reason })),
+    legacy: report.legacy.map(nativeRef),
+    skipped: report.skipped.map(row => ({ sessionRef: nativeRef(row.id), reason: row.reason })),
+  })
+  const sessionServices = () => typeof options.sessionServices === 'function' ? options.sessionServices() : (options.sessionServices || {})
   // Save/credential/restart commands are serialized within this Web Host.
   // A stale ETag check must not race another accepted config write.
   let mutationQueue = Promise.resolve()
@@ -818,6 +833,95 @@ export function createAdminHandler(options = {}) {
         const commands = canViewSchedule ? allCommands : allCommands.filter(c => c.type !== 'schedule')
         return json(res, 200, { ok: true, snapshot, events, commands,
           summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/sessions/ledger') {
+        const params = new URL(req.url ?? '', 'http://localhost').searchParams
+        const allowed = new Set(['status', 'type', 'orphan', 'bot', 'search', 'page', 'pageSize', 'reveal', 'from', 'to'])
+        for (const key of params.keys()) {
+          if (!allowed.has(key) || params.getAll(key).length !== 1)
+            throw httpError(400, 'invalid native Session query')
+        }
+        const validDay = value => {
+          if (!value) return true
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+          const ts = Date.parse(value + 'T00:00:00.000Z')
+          return Number.isFinite(ts) && new Date(ts).toISOString().slice(0, 10) === value
+        }
+        const from = params.get('from') || ''
+        const to = params.get('to') || ''
+        const bot = params.get('bot') || ''
+        const page = Number(params.get('page') || 1)
+        const pageSize = Number(params.get('pageSize') || 25)
+        if (!Number.isSafeInteger(page) || page < 1 || page > 100000 ||
+          !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
+          (params.get('search') || '').length > 128 ||
+          (bot !== '' && !/^[a-z][a-z0-9_-]{0,31}$/.test(bot)) ||
+          !validDay(from) || !validDay(to) || (from && to && from > to) ||
+          !['all', 'active', 'idle', 'unbound', 'archived'].includes(params.get('status') || 'all') ||
+          !['all', 'p2p', 'group', 'schedule'].includes(params.get('type') || 'all') ||
+          !['0', '1'].includes(params.get('reveal') || '0') ||
+          !['0', '1'].includes(params.get('orphan') || '0')) throw httpError(400, 'invalid native Session query')
+        const report = await sessionOrganizationInventory(stateDir, sessionServices(), {
+          page, pageSize, status: params.get('status') || 'all',
+          type: params.get('type') || 'all', search: params.get('search') || '',
+          bot, from, to, orphanOnly: params.get('orphan') === '1',
+          reveal: params.get('reveal') === '1',
+        })
+        return json(res, 200, { ok: true, report })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/sessions/organizer') {
+        const report = await reconcileSessionOrganization(stateDir, sessionServices(), { dryRun: true })
+        const settings = await organizationSettings(stateDir)
+        // Session ids already appear in authenticated DSH Web. This is a
+        // header-only preview, not a filesystem walk or a write operation.
+        return json(res, 200, { ok: true, report: publicPlan(report), settings })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/sessions/organizer/settings') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          const settings = await saveOrganizationSettings(stateDir, body)
+          return json(res, 200, { ok: true, settings })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/organizer/run') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, [])
+          const report = await reconcileSessionOrganization(stateDir, sessionServices(), { dryRun: false })
+          return json(res, 200, { ok: true, report: publicPlan(report) })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/preview') {
+        const body = await readBody(req)
+        exactKeys(body, ['sessionId'])
+        if (typeof body.sessionId !== 'string' || body.sessionId.length > 256)
+          throw httpError(400, 'invalid native Session id')
+        const report = await sessionOrganizationInventory(stateDir, sessionServices(),
+          { status: 'unbound', reveal: true, search: body.sessionId, pageSize: 100 })
+        const row = report.items.find(item => item.sessionId === body.sessionId && item.orphan)
+        if (!row || row.status !== 'unbound') throw httpError(409, 'native Session is no longer an orphan; refresh')
+        const token = randomUUID()
+        for (const [key, value] of nativePreviews) {
+          if (value.expiresAt <= Date.now()) nativePreviews.delete(key)
+        }
+        if (nativePreviews.size > 100) nativePreviews.clear()
+        nativePreviews.set(token, { sessionId: row.sessionId, expiresAt: Date.now() + 30_000 })
+        return json(res, 200, { ok: true, preview: { token, expiresAt: Date.now() + 30_000,
+          sessionRef: row.sessionRef, sessionTitle: row.sessionTitle,
+          legacy: row.legacy, nativeHistoryPreserved: true } })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/archive') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['token'])
+          if (typeof body.token !== 'string' || !/^[0-9a-f-]{36}$/.test(body.token))
+            throw httpError(400, 'invalid confirmation token')
+          const pending = nativePreviews.get(body.token)
+          nativePreviews.delete(body.token)
+          if (!pending || pending.expiresAt <= Date.now()) throw httpError(409, 'confirmation expired')
+          const result = await archiveNativeSession(stateDir, sessionServices(), pending.sessionId)
+          return json(res, 200, { ok: true, result })
+        })
       }
       if (req.method === 'GET' && route === PREFIX + '/sessions') {
         const params = new URL(req.url ?? '', 'http://localhost').searchParams
@@ -1156,10 +1260,27 @@ export function apply(ctx, config = {}) {
   }
   ctx.effect(() => {
     const unregister = webServer.register({ kind: 'prefix', path: PREFIX,
-      handler: createAdminHandler({ ...config, requestRejection: req => connection.requestRejection(req),
+      handler: createAdminHandler({ ...config,
+        sessionServices: () => ({ registry: ctx.get('workspaceRegistry'),
+          persistence: ctx.get('sessionPersistence'), query: ctx.get('sessionQuery') }),
+        requestRejection: req => connection.requestRejection(req),
         requestAdmission: typeof connection.admit === 'function' ? req => connection.admit(req) : undefined }) })
     ctx.logger.info('feishu-admin: management API registered on authenticated DSH Web')
-    return () => unregister?.()
+    let running = false
+    const interval = setInterval(() => {
+      if (running) return
+      running = true
+      void organizationSettings(config.stateDir || path.join(config.home || os.homedir(),
+        '.dsh', 'feishu-channel-state')).then(settings =>
+        settings.enabled ? reconcileSessionOrganization(
+          config.stateDir || path.join(config.home || os.homedir(), '.dsh', 'feishu-channel-state'),
+          { registry: ctx.get('workspaceRegistry'), persistence: ctx.get('sessionPersistence'),
+            query: ctx.get('sessionQuery') }, { dryRun: false }) : undefined)
+        .catch(() => ctx.logger.warn('Feishu session organization unavailable; Gateway left unaffected'))
+        .finally(() => { running = false })
+    }, 15000)
+    interval.unref?.()
+    return () => { clearInterval(interval); unregister?.() }
   }, 'feishu-admin.http')
 }
 export default { name, inject, apply }

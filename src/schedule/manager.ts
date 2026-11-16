@@ -51,7 +51,7 @@ export interface ScheduleManagerHooks {
   readonly now: () => number
   readonly isStopped: () => boolean
   /** Create/reserve one Gateway-owned native DSH Session for a task. */
-  readonly ensureTaskSession: (clientRef: string) => Promise<string>
+  readonly ensureTaskSession: (clientRef: string, title?: string) => Promise<string>
   /** Retire a task Session after deletion (best effort). */
   readonly releaseTaskSession: (sessionId: string) => Promise<void>
   /** Re-check the current allowlist/group policy for a Feishu target. */
@@ -580,7 +580,7 @@ export class ScheduleManager {
     }
     let sessionId: string
     try {
-      sessionId = await this.hooks.ensureTaskSession(cmd.clientRef as string)
+      sessionId = await this.hooks.ensureTaskSession(cmd.clientRef as string, cmd.title)
     } catch (cause) {
       this.log('warn', 'session reservation failed')
       void cause
@@ -631,7 +631,7 @@ export class ScheduleManager {
     // Target stays unchanged unless a task with no reserved Session is adopted.
     if (cmd.delivery && !existingSession && cmd.clientRef) {
       try {
-        const sid = await this.hooks.ensureTaskSession(cmd.clientRef)
+        const sid = await this.hooks.ensureTaskSession(cmd.clientRef, cmd.title)
         if (typeof sid === 'string' && sid) {
           newSessionId = sid
           this.taskSessionIds.add(sid)

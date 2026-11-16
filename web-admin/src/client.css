@@ -783,3 +783,16 @@
   .fgw-hero{padding:17px}
   .fgw-hero h2{font-size:18px}
 }
+
+/* Native Feishu Session ledger: settings stay usable on small screens. */
+.fgw-native-options { align-items: center; flex-wrap: wrap; gap: 12px; }
+.fgw-native-options .fga-check { min-width: 175px; }
+.fgw-native-options .fgw-session-filter { min-width: 180px; }
+.fgw-native-options .fgw-session-filter .fga-input { min-width: 0; }
+.fgw-table td code { overflow-wrap: anywhere; word-break: break-all; }
+@media (max-width: 640px) {
+  .fgw-native-options { flex-direction: column; align-items: stretch; }
+  .fgw-native-options > * { width: 100%; }
+  .fgw-native-options .fga-check { min-width: 0; }
+  .fgw-table { min-width: 690px; }
+}

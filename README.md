@@ -60,6 +60,12 @@
 条目的估计，不是实际回收磁盘大小。历史 Inbox/日志压缩及自动保留策略尚未实现，
 Issue #16 继续保持 Open。参见 [Session 生命周期管理](docs/SESSION-LIFECYCLE.md)。
 
+## Issue #34：飞书原生会话命名与工作区归位（开发分支）
+
+开发分支 `feat/issue-34-feishu-session-organization`、[PR #35](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/35) 提供 Gateway 原生 Session 语义化标题、Web「飞书会话」工作区自动归位、历史/孤儿台账、原生归档预览与二次确认。整理默认关闭；启用后仅自动归位当前绑定和仍被活动任务引用的 Session，历史孤儿需逐条确认，不删除或续接 DSH 原生历史。管理端可按机器人、会话类型、状态、孤儿和 UTC 日期筛选，原生 ID 默认脱敏。
+
+**此功能尚未发布，也未完成真实双 Profile 的端到端验收。** 请先核对干运行预览，再决定是否开启；升级顺序为 Gateway → Web Admin。详见 [飞书原生 Session 归位、迁移与回滚](docs/FEISHU-SESSION-ORGANIZATION.md)。
+
 ## 构建、验收与安装
 
 ```bash
