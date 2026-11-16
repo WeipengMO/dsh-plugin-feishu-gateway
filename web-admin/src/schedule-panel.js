@@ -288,7 +288,11 @@ function SchedulePanel({ state, onChanged }) {
     setFormOpen(false); setEditing(null); setForm(schedDefaultForm()); setPreview(null)
   }
 
-  const tasks = model && Array.isArray(model.tasks) ? model.tasks : []
+  // Tabs are constructed eagerly, before the `content` branch below.
+  // A null model (first render or a failed /schedule read) must therefore
+  // never be dereferenced; otherwise React throws and the whole panel is blank.
+  const safeModel = model || {}
+  const tasks = Array.isArray(safeModel.tasks) ? safeModel.tasks : []
   const visibleTasks = tasks.filter(task => {
     if (statusFilter !== 'all' && task.status !== statusFilter) return false
     if (search.trim() && !(task.title || '').includes(search.trim()) &&
@@ -296,12 +300,12 @@ function SchedulePanel({ state, onChanged }) {
     return true
   })
   const runRows = [
-    ...(model && Array.isArray(model.runs) ? model.runs : []).map(run => ({
+    ...(Array.isArray(safeModel.runs) ? safeModel.runs : []).map(run => ({
       kind: 'run', taskId: run.taskId, ts: run.ts, status: run.status,
       elapsedMs: run.elapsedMs, tokens: run.tokens, model: run.model,
       sessionRef: run.sessionRef, delivered: run.delivered, error: run.error,
     })),
-    ...Object.entries(model && model.deliveries && typeof model.deliveries === 'object' ? model.deliveries : {})
+    ...Object.entries(safeModel.deliveries && typeof safeModel.deliveries === 'object' ? safeModel.deliveries : {})
       .flatMap(([taskId, list]) => (Array.isArray(list) ? list : []).map(delivery => ({
         kind: 'native', taskId, ts: Date.parse(delivery.deliveredAt || delivery.scheduledAt) || 0,
         status: 'native', sessionRef: delivery.targetSessionId, delivered: true,
@@ -451,8 +455,8 @@ function SchedulePanel({ state, onChanged }) {
         h('strong', { className: 'fgw-row-value' }, schedBound(task.target && task.target.sessionId, 128) || '—')),
       h('div', { className: 'fgw-data-row' }, h('span', { className: 'fgw-muted' }, '原生投递记录数'),
         h('strong', { className: 'fgw-row-value' }, String(
-          model && model.deliveries && Array.isArray(model.deliveries[task.id])
-            ? model.deliveries[task.id].length : 0))),
+          Array.isArray(safeModel.deliveries && safeModel.deliveries[task.id])
+            ? safeModel.deliveries[task.id].length : 0))),
       h('div', { className: 'fgw-data-row' }, h('span', { className: 'fgw-muted' }, '飞书投递配置'),
         h('strong', { className: 'fgw-row-value' }, task.delivery ? schedDeliveryConfigText(task.delivery) : '未配置')),
       h('h4', { className: 'fgw-sched-prompt-title' }, '执行提示词'),
@@ -483,8 +487,8 @@ function SchedulePanel({ state, onChanged }) {
           void submit({ action: 'delete-inactive' })
       }, busy || Boolean(pendingId), true),
       h('span', { className: 'fgw-muted' },
-        '新建会话间隔：', String(model.limits && model.limits.newSessionIntervalSeconds !== undefined
-          ? model.limits.newSessionIntervalSeconds : 60), ' 秒')))
+        '新建会话间隔：', String(safeModel.limits && safeModel.limits.newSessionIntervalSeconds !== undefined
+          ? safeModel.limits.newSessionIntervalSeconds : 60), ' 秒')))
 
   const runsTab = h(React.Fragment, null,
     h('div', { className: 'fgw-sched-filters' },
@@ -512,7 +516,7 @@ function SchedulePanel({ state, onChanged }) {
       ] })))
 
   const auditTab = h(WbBlock, { title: '操作审计', aside: '仅记录操作摘要，不保存提示词' },
-    h(OpsTable, { rows: model && Array.isArray(model.audit) ? model.audit : [],
+    h(OpsTable, { rows: Array.isArray(safeModel.audit) ? safeModel.audit : [],
       empty: '暂无审计记录', columns: [
         { key: 'ts', title: '时间', render: row => schedDate(row.ts) },
         { key: 'action', title: '操作', render: row => schedBound(row.action, 32) || '—' },
@@ -527,10 +531,10 @@ function SchedulePanel({ state, onChanged }) {
   if (!model && loading) content = h('div', { className: 'fgw-caution' }, '正在读取定时任务读模型…')
   else if (!model) content = h(WbEmpty, { headline: '尚无定时任务读模型',
     description: 'Gateway 尚未发布 ops-schedule.json。请确认独立飞书通道已启动并装载 DSH 原生 schedule 服务后刷新；管理后台不会显示伪造任务。' })
-  else if (model.available === false) content = h('div', { className: 'fgw-sched-unavailable' },
+  else if (safeModel.available === false) content = h('div', { className: 'fgw-sched-unavailable' },
     h('div', { className: 'fgw-empty-icon', 'aria-hidden': true }, '⏱'),
     h('strong', null, '原生定时任务服务不可用'),
-    h('p', null, schedBound(model.reason, 200) || 'DSH native schedule service is not mounted in this profile'),
+    h('p', null, schedBound(safeModel.reason, 200) || 'DSH native schedule service is not mounted in this profile'),
     h('p', { className: 'fgw-muted' },
       '管理后台不会创建替代调度器，也不会显示伪造的任务。请确认该 Profile 已装载 DSH 原生 schedule 服务后刷新。'))
   else content = h(React.Fragment, null,
@@ -543,12 +547,12 @@ function SchedulePanel({ state, onChanged }) {
           'aria-current': tab === id ? 'page' : undefined, onClick: () => setTab(id) }, label))),
       h('div', { className: 'fga-inline-actions' },
         action(loading ? '刷新中…' : '↻ 刷新', () => void loadModel(), loading || busy, true),
-        model && model.available !== false && action('+ 新建任务', openCreate, busy))),
+        model && safeModel.available !== false && action('+ 新建任务', openCreate, busy))),
     error && h('div', { className: 'fgw-alert', role: 'alert' }, schedBound(error, 200)),
     notice && h('div', { className: 'fgw-caution', role: 'status' }, schedBound(notice, 260)),
     pendingId && h('div', { className: 'fgw-caution' },
       '命令已入队（', schedBound(pendingId, 8), '），正在轮询执行结果…'),
-    model && model.stale && h('div', { className: 'fgw-caution' }, '读模型可能已过期，请点击「↻ 刷新」。'),
+    safeModel.stale && h('div', { className: 'fgw-caution' }, '读模型可能已过期，请点击「↻ 刷新」。'),
     content,
     h('p', { className: 'fgw-footnote' },
       '定时任务由 DSH 原生 schedule 服务持有；此页面通过已认证的跨 Profile 命令队列提交操作，结果以 /schedule/results 为准。'))
