@@ -423,8 +423,10 @@ function extractTextContent(content: string | undefined): string {
 
 function unwrap(result: LarkMessageApiResult, context: string): SendReceipt {
   if (result?.code !== undefined && result.code !== 0) {
-    const error = new Error(`Feishu ${context} failed: code=${result.code} msg=${result.msg ?? ''}`) as Error & { code?: number }
-    error.code = result.code
+    // Do not conflate Feishu business codes with numeric HTTP status codes.
+    // Also avoid echoing server-provided msg text into operation logs.
+    const error = new Error(`Feishu ${context} failed: code=${result.code}`) as Error & { feishuCode?: number }
+    error.feishuCode = result.code
     throw error
   }
   return { messageId: result?.data?.message_id ?? '' }

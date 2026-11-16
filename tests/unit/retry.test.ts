@@ -8,6 +8,9 @@ describe('isRetryable', () => {
     expect(isRetryable(Object.assign(new Error('rate'), { code: 429 }))).toBe(true)
     expect(isRetryable(Object.assign(new Error('down'), { code: 503 }))).toBe(true)
     expect(isRetryable(new Error('socket hang up'))).toBe(true)
+    expect(isRetryable(Object.assign(new Error('feishu denied'), { feishuCode: 230035 }))).toBe(false)
+    expect(isRetryable(Object.assign(new Error('feishu rate limited'), { feishuCode: 99991400 }))).toBe(true)
+    expect(isRetryable(Object.assign(new Error('feishu unknown'), { feishuCode: 99999 }))).toBe(false)
   })
 })
 

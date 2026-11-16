@@ -14,7 +14,6 @@ import path from 'node:path'
 
 export const EXEC_MODES = ['read-only', 'workspace-write', 'danger-full-access']
 export const APPROVAL_POLICIES = ['ask', 'never']
-export const DEFAULT_WORKSPACE_ROOT = '/home/ubuntu/dsh-workspace'
 export const EXEC_POLICY_JSON = 'exec-policy.json'
 export const EXEC_OVERLAY_FILE = 'exec-policy.patch.yml'
 
@@ -68,7 +67,9 @@ export async function assertRootsUsable(roots) {
  * the permission preset default so newly created sessions adopt the same
  * sandbox mode + approval (new sessions are pinned from `defaultPreset`).
  */
-export function renderOverlayYaml(policy, workspaceRoot = DEFAULT_WORKSPACE_ROOT) {
+export function renderOverlayYaml(policy, workspaceRoot) {
+  if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot))
+    throw fail(409, 'workspaceRoot could not be resolved from the active DSH profile')
   const lines = [
     '# Managed by DSH Feishu Admin (执行权限). Applied via `--patch` after the profile layer.',
     '# Edit through 飞书管理 → 执行权限; do not hand-edit unless you also fix the admin copy.',
@@ -198,15 +199,30 @@ export async function readExecPolicy({ stateDir, profilePath, home }) {
 /** Persist the policy: JSON mirror for the form + overlay patch applied on boot. */
 export async function writeExecPolicy({ stateDir, profilePath, home }, policy) {
   if (policy.mode === 'workspace-write') await assertRootsUsable(policy.additionalWritableRoots)
-  let workspaceRoot = DEFAULT_WORKSPACE_ROOT
+  let workspaceRoot
   const profile = profilePath || defaultProfilePath(home || '')
   try {
     const parsed = parseProfileExecPolicy(await fs.readFile(profile, 'utf8'))
     if (parsed.workspaceRoot) workspaceRoot = parsed.workspaceRoot
-  } catch { /* keep default */ }
-  await atomicWrite(path.join(stateDir, EXEC_POLICY_JSON),
-    JSON.stringify(policy, null, 2) + '\n', 0o600)
-  await atomicWrite(path.join(stateDir, EXEC_OVERLAY_FILE),
-    renderOverlayYaml(policy, workspaceRoot), 0o600)
+  } catch { /* validation below rejects unknown active workspace */ }
+  if (!workspaceRoot || !path.isAbsolute(workspaceRoot))
+    throw fail(409, 'active DSH profile workspaceRoot not found; configure it before editing permissions')
+  const jsonPath = path.join(stateDir, EXEC_POLICY_JSON)
+  const overlayPath = path.join(stateDir, EXEC_OVERLAY_FILE)
+  // Stage the policy mirror first; rollback on overlay write failure so the UI
+  // does not report a policy that was never applied to the next process.
+  let previous
+  try { previous = await fs.readFile(jsonPath, 'utf8') }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  await atomicWrite(jsonPath, JSON.stringify(policy, null, 2) + '\n', 0o600)
+  try {
+    await atomicWrite(overlayPath, renderOverlayYaml(policy, workspaceRoot), 0o600)
+  } catch (error) {
+    try {
+      if (previous === undefined) await fs.rm(jsonPath, { force: true })
+      else await atomicWrite(jsonPath, previous, 0o600)
+    } catch { throw fail(503, 'execution permission update failed and policy mirror needs manual recovery') }
+    throw error
+  }
   return { workspaceRoot }
 }

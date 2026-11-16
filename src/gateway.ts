@@ -932,8 +932,10 @@ export class FeishuGateway {
     let config: GatewayConfig
     try {
       config = loadManagedConfig(resolveConfig(this.config))
-    } catch {
-      config = this.config
+    } catch (error) {
+      this.logger.warn('scheduled delivery authorization unavailable: managed config could not be read (%s)',
+        error instanceof Error ? error.name : 'unknown')
+      return fail('authorization configuration unavailable')
     }
     if (!/^[a-z][a-z0-9_-]{0,31}$/.test(target.botId)) return fail('invalid bot id')
     if (!config.bots.some((bot) => bot.id === target.botId && bot.enabled !== false)) {
@@ -955,7 +957,14 @@ export class FeishuGateway {
         group.chatId === target.chatId && group.enabled !== false)
       if (!rule) return fail('group is not authorized')
       if (config.groupSenderAllowlist.length === 0) return fail('no group senders allowed')
-      if (rule.senderAllowlist &&
+      // A sender-scoped scheduled delivery must remain authorized after the
+      // creator is revoked. Owner-managed group broadcasts may omit senderId.
+      if (target.senderId) {
+        if (!config.groupSenderAllowlist.includes(target.senderId) ||
+            (rule.senderAllowlist && !rule.senderAllowlist.includes(target.senderId))) {
+          return fail('scheduled task sender was revoked')
+        }
+      } else if (rule.senderAllowlist &&
         !rule.senderAllowlist.some((id) => config.groupSenderAllowlist.includes(id))) {
         return fail('no allowed group senders')
       }
