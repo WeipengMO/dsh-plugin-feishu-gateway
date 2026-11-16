@@ -600,7 +600,7 @@ export class FeishuGateway {
           const fallbacks = this.fallbackRoutes()
           const fallbackLine = fallbacks.length
             ? '备用模型（按顺序尝试，仅在未执行工具时重试）：' +
-              fallbacks.map((item, index) => '\\n' + (index + 1) + '. ' + item.provider + '/' + item.model).join('')
+              fallbacks.map((item, index) => '\n' + (index + 1) + '. ' + item.provider + '/' + item.model).join('')
             : ''
           const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
@@ -661,13 +661,13 @@ export class FeishuGateway {
       if (command === 'models' && reply.length > 3000) {
         let part = ''
         let index = 0
-        for (const line of reply.split('\\n')) {
+        for (const line of reply.split('\n')) {
           if (part && part.length + line.length + 1 > 3000) {
             await this.replyDiagnostic(record, part, `models:${record.messageId}:${index++}`)
             part = ''
           }
           // Individual names are short and validated by the DSH directory.
-          part += (part ? '\\n' : '') + line
+          part += (part ? '\n' : '') + line
         }
         if (part) await this.replyDiagnostic(record, part, `models:${record.messageId}:${index}`)
       } else {
@@ -1380,7 +1380,7 @@ export class FeishuGateway {
     return candidates.filter(item => {
       if (!item.provider || !item.model ||
         (route?.provider === item.provider && route?.model === item.model)) return false
-      const key = item.provider + '\\0' + item.model
+      const key = item.provider + '\0' + item.model
       if (seen.has(key)) return false
       seen.add(key)
       return true
