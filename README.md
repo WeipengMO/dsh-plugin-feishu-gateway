@@ -6,6 +6,8 @@
 
 > **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
+> **开发中的会话管理 UI（PR #38）**：新增「对话历史 / 已归档 / 飞书聊天关联 / 整理与清理」视图，支持 DSH 提供能力时恢复原生归档；技术 ID 默认隐藏、移动端列表使用卡片。**归档与解除关联都不等于删除**。真正的回收站、永久删除和定期历史清理由 [Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37) 追踪，目前尚未实现，不要把它们用于磁盘清理。详见 [会话管理 UI 与生命周期说明](docs/SESSION-CENTER-UX.md)。
+
 ## 部署架构与隔离
 
 | DSH Profile | 只安装 | 作用 |
