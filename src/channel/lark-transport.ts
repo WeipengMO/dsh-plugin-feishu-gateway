@@ -107,6 +107,38 @@ export class LarkTransport implements FeishuTransport {
   private ws: LarkWsLike | undefined
   private handlers: FeishuEventHandlers | undefined
   private botOpenId: string | undefined
+  private stopped = false
+  private wsGeneration = 0
+  private initialFailures = 0
+  private everConnected = false
+  private handshakeTimer: ReturnType<typeof setTimeout> | undefined
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
+
+  private clearStartupTimers(): void {
+    if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.handshakeTimer = undefined
+    this.retryTimer = undefined
+  }
+
+  /** SDK autoReconnect does not guarantee recovery before the first onReady. */
+  private retryInitial(generation: number): void {
+    if (this.stopped || this.everConnected || generation !== this.wsGeneration || this.retryTimer) return
+    if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
+    this.handshakeTimer = undefined
+    try { this.ws?.close({ force: true }) } catch { /* a broken handshake is expected */ }
+    this.ws = undefined
+    this.transition('reconnecting')
+    this.initialFailures += 1
+    const backoff = Math.min(30_000, 1000 * 2 ** Math.min(this.initialFailures - 1, 5))
+    const delay = Math.round(backoff * (0.8 + Math.random() * 0.4))
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined
+      if (this.stopped || !this.handlers) return
+      void this.connect(this.handlers).catch(() => this.logger.warn('Feishu initial connection retry failed'))
+    }, delay)
+    this.retryTimer.unref?.()
+  }
 
   constructor(
     readonly botId: string,
@@ -120,6 +152,9 @@ export class LarkTransport implements FeishuTransport {
   }
 
   async connect(handlers: FeishuEventHandlers): Promise<void> {
+    this.stopped = false
+    this.clearStartupTimers()
+    const generation = ++this.wsGeneration
     this.handlers = handlers
     this.stateValue = 'connecting'
     handlers.onStateChange('connecting')
@@ -131,6 +166,7 @@ export class LarkTransport implements FeishuTransport {
       )
     }
     const mod = (await import(LARK_MODULE)) as unknown as LarkModuleLike
+    if (this.stopped || generation !== this.wsGeneration) return
     const domain = this.credentials.domain === 'lark' ? mod.Domain.Lark : mod.Domain.Feishu
     const common = {
       appId: this.credentials.appId,
@@ -204,12 +240,28 @@ export class LarkTransport implements FeishuTransport {
       ...common,
       ...(wsAgent ? { agent: wsAgent } : {}),
       autoReconnect: true,
-      onReady: () => this.transition('connected'),
-      onReconnecting: () => this.transition('reconnecting'),
-      onReconnected: () => this.transition('connected'),
+      onReady: () => {
+        if (this.stopped || generation !== this.wsGeneration) return
+        this.everConnected = true
+        this.initialFailures = 0
+        this.clearStartupTimers()
+        this.transition('connected')
+      },
+      onReconnecting: () => {
+        if (!this.stopped && generation === this.wsGeneration) this.transition('reconnecting')
+      },
+      onReconnected: () => {
+        if (this.stopped || generation !== this.wsGeneration) return
+        this.everConnected = true
+        this.initialFailures = 0
+        this.clearStartupTimers()
+        this.transition('connected')
+      },
       onError: (error: Error) => {
-        this.logger.error('websocket error for bot %s: %s', this.botId, error.message)
+        if (this.stopped || generation !== this.wsGeneration) return
+        this.logger.warn('websocket error for bot %s (details redacted)', this.botId)
         this.transition('failed', error)
+        if (!this.everConnected) this.retryInitial(generation)
       },
     })
 
@@ -219,13 +271,26 @@ export class LarkTransport implements FeishuTransport {
       // connection, so do NOT report `connected` here: a misconfigured bot
       // must stay `connecting`/`failed` instead of being marked healthy.
       await this.ws.start({ eventDispatcher: dispatcher })
-    } catch (error) {
-      this.transition('failed', error instanceof Error ? error : new Error(String(error)))
-      throw error
+      if (!this.stopped && generation === this.wsGeneration && !this.everConnected) {
+        this.handshakeTimer = setTimeout(() => {
+          if (generation !== this.wsGeneration || this.stopped || this.everConnected) return
+          this.logger.warn('bot %s initial handshake deadline exceeded; reconnecting', this.botId)
+          this.retryInitial(generation)
+        }, 20_000)
+        this.handshakeTimer.unref?.()
+      }
+    } catch {
+      if (!this.stopped && generation === this.wsGeneration) {
+        this.transition('failed')
+        this.retryInitial(generation)
+      }
     }
   }
 
   async close(): Promise<void> {
+    this.stopped = true
+    ++this.wsGeneration
+    this.clearStartupTimers()
     this.stateValue = 'closing'
     this.handlers?.onStateChange('closing')
     try {
