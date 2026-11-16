@@ -596,6 +596,10 @@ describe('ScheduleManager — observed turns and fallback', () => {
     expect(spy.sent[0]!.target.card).toHaveProperty('header.template', 'orange')
     await manager.refresh()
     expect(spy.sent).toHaveLength(1) // marker persisted, no duplicate
+    // The admin run history must explain the missing result instead of
+    // showing only the outbound notice card.
+    expect(manager.snapshot().runs.find((run) => run.messageId === 'm-fallback'))
+      .toMatchObject({ status: 'skipped', delivered: false, error: 'execution result unavailable' })
   })
 
   it('does not send a fallback notice when a run already covers the delivery', async () => {
