@@ -47,6 +47,7 @@ function FeishuSessionCenter() {
 function FeishuNativeSessionLedger({ mode = 'history' }) {
   const [query, setQuery] = useState({ status: mode === 'archive' ? 'archived' : 'all', type: 'all', bot: '', from: '', to: '', search: '', orphan: false, page: 1 })
   const [reveal, setReveal] = useState(false)
+  const [showAdvanced,setShowAdvanced] = useState(false)
   const [report, setReport] = useState(null)
   const [plan, setPlan] = useState(null)
   const [settings, setSettings] = useState(null)
@@ -160,11 +161,12 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         wbCount(plan.archive?.length) + '；旧工作区会话 ' + wbCount(plan.legacy?.length) +
         '。首次对账不会自动清理未知历史。归档活动检查失败将跳过。'),
       h(OpsNote, null, '原生旧工作区会话的 cwd 不能更改，不能强制 attach；仅通过下面的独立预览逐条归档。手动取消归档后不会再次自动归档已处理记录。')),
-    mode !== 'maintenance' && h(WbBlock, { title: '会话历史',
+    mode !== 'maintenance' && h('div',{className:'fgw-session-list', 'data-expanded':showAdvanced?'yes':'no'},
+      h(WbBlock, { title: '会话历史',
       aside: '查看飞书相关的 DSH 对话历史（含定时任务）' },
-      h('form', { className: 'fgw-session-filters',
+      h('form', { className: 'fgw-session-filters fgw-session-filters-native',
         onSubmit: e => { e.preventDefault(); void refresh() } },
-        h('label', { className: 'fgw-session-filter' }, h('span', null, '会话状态'),
+        mode !== 'archive' && h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
           h('select', { className: 'fga-input', value: query.status,
             onChange: e => filter('status', e.target.value) },
             [['all','全部'],['active','活跃'],['idle','空闲'],['unbound','未关联'],
@@ -174,25 +176,27 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             onChange: e => filter('type', e.target.value) },
             [['all','全部'],['p2p','私聊'],['group','群聊'],['schedule','定时']].map(([value,label]) =>
               h('option', {key:value,value},label)))),
-        h('label', { className: 'fgw-session-filter' }, h('span', null, '机器人 ID'),
+        h('label', { className: 'fgw-session-filter fgw-session-filter-extra' }, h('span', null, '机器人 ID'),
           h('input', { className: 'fga-input', value: query.bot, maxLength: 32,
             onChange: e => filter('bot', e.target.value), placeholder: '所有机器人' })),
-        h('label', { className: 'fgw-session-filter' }, h('span', null, '开始日期 (UTC)'),
+        h('label', { className: 'fgw-session-filter fgw-session-filter-extra' }, h('span', null, '开始日期'),
           h('input', { className: 'fga-input', type: 'date', value: query.from,
             onChange: e => filter('from', e.target.value) })),
-        h('label', { className: 'fgw-session-filter' }, h('span', null, '结束日期 (UTC)'),
+        h('label', { className: 'fgw-session-filter fgw-session-filter-extra' }, h('span', null, '结束日期'),
           h('input', { className: 'fga-input', type: 'date', value: query.to,
             onChange: e => filter('to', e.target.value) })),
         h('label', { className: 'fgw-session-filter' }, h('span', null, '搜索对话或定时任务'),
           h('input', { className: 'fga-input', value: query.search, maxLength:128,
             onChange: e => filter('search',e.target.value), placeholder: '会话名称、任务名称或引用' })),
-        h('label', { className: 'fga-check' },
+        h('label', { className: 'fga-check fgw-session-filter-extra' },
           h('input', { type: 'checkbox', checked: query.orphan,
             onChange: e => filter('orphan', e.target.checked) }), '仅看不再关联的历史'),
-        h('label', { className: 'fga-check' },
+        h('label', { className: 'fga-check fgw-session-filter-extra' },
           h('input', { type: 'checkbox', checked: reveal,
             onChange: e => setReveal(e.target.checked) }), '显示完整技术标识（仅排查问题时使用）'),
         h('button', { type: 'submit', className:'fgw-refresh', disabled:busy }, busy?'加载中…':'刷新')),
+      h('button', { type:'button', className:'fgw-session-extra-toggle', onClick:()=>setShowAdvanced(x=>!x),
+        'aria-expanded':showAdvanced }, showAdvanced?'收起筛选条件':'更多筛选条件'),
       error && h('div',{className:'fgw-caution',role:'alert'},error),
       notice && h('div',{className:'fgw-caution',role:'status'},notice),
       !report?.available ? h(WbEmpty, {headline:'等待原生 Session 服务',description:report?.reason || '请确认 DSH Web 具备持久化和工作区服务。'}) :
@@ -202,13 +206,12 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             h('strong',null,x.sessionTitle || x.scheduleTitle || '未命名'),
             h('div',{className:'fgw-muted'},x.type==='schedule'?'定时':
               x.type==='group'?'群聊':'私聊',x.legacy?' · 旧工作区':'',
-              x.orphan?' · 不再关联':''))},
-          {key:'sessionRef',title:'技术引用',render:x=>h('div',null,
-            h('code',{title:reveal?x.sessionId:x.sessionRef},reveal?x.sessionId:x.sessionRef),
-            reveal && x.sessionId && h('button',{type:'button',className:'fgw-refresh',
-              onClick:()=>navigator.clipboard?.writeText(x.sessionId)},'复制'))},
-          {key:'chatRef',title:'聊天',render:x=>x.chatName || (x.chatRef?h('code',null,x.chatRef):'—')},
-          {key:'botId',title:'机器人'},
+              x.orphan?' · 不再关联':''),
+            h('details',{className:'fgw-session-tech'},
+              h('summary',null,'查看技术信息'),
+              h('div',null,'会话引用：',h('code',null,reveal&&x.sessionId?x.sessionId:x.sessionRef)),
+              x.chatRef&&h('div',null,'聊天引用：',h('code',null,x.chatRef)),
+              x.botId&&h('div',null,'机器人：',x.botId)))},
           {key:'lastActiveAt',title:'最近使用',render:x=>formatDate(x.lastActiveAt)},
           {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unbound:'不再关联',archived:'已归档'})[x.status]||'未知')},
           {key:'actions',title:'操作',render:x=>
@@ -222,6 +225,6 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           onClick:()=>setQuery(x=>({...x,page:x.page-1}))},'上一页'),
         h('button',{className:'fgw-refresh',type:'button',
           disabled:busy||query.page>=Math.ceil(report.total/25),
-          onClick:()=>setQuery(x=>({...x,page:x.page+1}))},'下一页'))),
+          onClick:()=>setQuery(x=>({...x,page:x.page+1}))},'下一页')))),
     mode === 'maintenance' && h(OpsNote,null,'这些设置只调整工作区显示方式，不会删除原生聊天历史。'))
 }
