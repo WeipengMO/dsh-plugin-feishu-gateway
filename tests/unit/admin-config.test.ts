@@ -83,6 +83,43 @@ describe('managed Feishu channel overlay', () => {
     })
   })
 
+  it('persists ordered multi-fallbacks and clears legacy routes with an empty list', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    const routes = [
+      { provider: 'openai', model: 'a' },
+      { provider: 'magpie', model: 'group/hy4-free' },
+    ]
+    const managed = validateManagedConfig({ agent: {
+      provider: 'magpie', model: 'group/deepseek', fallbacks: routes,
+    } })
+    expect(managed.agent?.fallbacks).toEqual(routes)
+    expect(() => validateManagedConfig({ agent: {
+      provider: 'magpie', model: 'p',
+      fallbacks: [{ provider: 'magpie', model: 'p' }],
+    } })).toThrow(/differ/)
+    expect(() => validateManagedConfig({ agent: {
+      fallbacks: [routes[0], routes[0]],
+    } })).toThrow(/duplicate/)
+    expect(() => validateManagedConfig({ agent: { fallbacks: Array(9).fill(routes[0]) } }))
+      .toThrow(/max 8/)
+    const base = resolveConfig({ stateDir: d.dir, agent: {
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'openai', model: 'legacy' },
+    } })
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
+      agent: { fallbacks: routes },
+    } }))
+    expect(loadManagedConfig(base).agent?.fallbacks).toEqual(routes)
+    expect(loadManagedConfig(base).agent?.fallback).toBeUndefined()
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
+      agent: { fallbacks: [] },
+    } }))
+    expect(loadManagedConfig(base).agent).toEqual({
+      provider: 'magpie', model: 'group/deepseek', fallbacks: [],
+    })
+  })
+
   it('rejects secrets, unknown fields, invalid ids, and env collisions', () => {
     expect(() => validateManagedConfig({ appSecret: 'top-secret' })).toThrow(/unsupported/)
     expect(() => validateManagedConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'lark' }] })).toThrow(/colliding/)
