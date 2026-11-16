@@ -174,6 +174,8 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     total: 0, page: 1, pageSize: 25, items: [] }
   const reveal = query.reveal === true
   const search = String(query.search || '').slice(0, 128).toLowerCase()
+  const from = query.from ? Date.parse(query.from + 'T00:00:00.000Z') : 0
+  const to = query.to ? Date.parse(query.to + 'T23:59:59.999Z') : Infinity
   const status = ['all', 'active', 'idle', 'unbound', 'archived'].includes(query.status)
     ? query.status : 'all'
   const type = ['all', 'schedule', 'group', 'p2p'].includes(query.type) ? query.type : 'all'
@@ -185,6 +187,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     (type === 'all' || row.type === type) &&
     (!query.orphanOnly || row.orphan) &&
     (!query.bot || row.botId === query.bot) &&
+    row.lastActiveAt >= from && row.lastActiveAt <= to &&
     (!search || [row.idRef, row.botId, row.chatRef, row.scheduleTitle,
       settings.revealNames && reveal ? row.chatName : null,
       reveal ? row.id : null].some(v => String(v || '').toLowerCase().includes(search))))
