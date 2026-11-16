@@ -268,7 +268,11 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
     schedule: data.activeTasks, missing, pending, retired, handled: [...handled].slice(-10000) }
   // Do not auto-archive any historical sessions on the very first deployment.
   // An explicit migration preview/confirmation is required for those.
+  // First-time migration requires human review. Automatic reconciliation
+  // adopts only sessions still referenced by a chat binding or active task;
+  // otherwise orphaned history would flood the new Web sidebar.
   const attach = data.records.filter(row => !row.legacy &&
+    (boundIds.has(row.id) || data.activeTasks[row.id]) &&
     !data.workspace?.sessionIds?.includes(row.id) && !row.archived).map(row => row.id)
   const result = { available: true, enabled: settings.enabled, dryRun,
     workspace: data.workspace?.title || '飞书会话',
