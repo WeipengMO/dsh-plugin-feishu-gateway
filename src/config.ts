@@ -214,7 +214,7 @@ export function normalizeAgentRoute(value: unknown): AgentRoute {
     for (const item of value.fallbacks.slice(0, 8)) {
       const choice = parseFallback(item)
       if (!choice) continue
-      const key = choice.provider + '\\0' + choice.model
+      const key = choice.provider + '\0' + choice.model
       if (seen.has(key)) continue
       seen.add(key)
       route.fallbacks.push(choice)
