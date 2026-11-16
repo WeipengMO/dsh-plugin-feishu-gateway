@@ -172,7 +172,7 @@ export class DshSessionBridge implements SessionBridge {
       const directory: AvailableProvider[] = []
       const seen = new Set<string>()
       let incomplete = false
-      for (const entry of providers.slice(0, 50)) {
+      for (const entry of providers) {
         const id = entry && typeof entry.id === 'string' ? entry.id : ''
         if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) continue
         const providerName = typeof entry?.name === 'string' && entry.name.trim()
@@ -181,7 +181,7 @@ export class DshSessionBridge implements SessionBridge {
         try {
           const available = await llm.listModels(id)
           if (!Array.isArray(available)) { incomplete = true; continue }
-          for (const item of available.slice(0, 200)) {
+          for (const item of available) {
             const model = item && typeof item.id === 'string' ? item.id : ''
             if (!/^[A-Za-z0-9_.:/-]{1,96}$/.test(model)) continue
             const key = id + '/' + model
