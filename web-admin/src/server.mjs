@@ -160,7 +160,7 @@ export function validateConfig(input) {
             throw httpError(400, 'invalid fallback model route ' + key)
           }
         }
-        const id = choice.provider + '\\0' + choice.model
+        const id = choice.provider + '\0' + choice.model
         if (seen.has(id)) throw httpError(400, 'duplicate fallback route')
         if (agent.provider === choice.provider && agent.model === choice.model) {
           throw httpError(400, 'fallback route must differ from the primary route')
