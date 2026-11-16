@@ -23,3 +23,17 @@ The existing Usage view now reads a separate protected, append-only per-task usa
 ## Current constraints
 
 The admin service and channel service must run as the same Unix user on the same host, or share access to the configured state and credentials paths. The channel host must expose its pre-existing loopback `/health` and `/diagnostics` endpoints on port 18095. The admin API does not parse or rewrite the user's Profile YAML; settings omitted in the managed overlay continue to inherit from it.
+
+## 统一工作台导航（Gateway 管理）
+
+Web Admin 按真实网关能力而不是接口数量组织导航：
+
+- **会话与消息**：实时任务、Inbox/Outbox 消息状态、Session 绑定及批量管理
+- **定时任务**：原生 DSH Schedule、运行结果与飞书通知
+- **接入与权限**：机器人设置、群聊规则、私聊白名单、沙箱及审批策略
+- **Agent 档案**：独立工作区、身份、指令文件及历史
+- **用量与审计**：Token 趋势与工具审批审计
+- **运维与诊断**：健康告警、WebSocket 状态及结构化日志
+- **模型与连接**：模型、网络代理、消息卡片、超时及重试参数
+
+同类功能在分组内通过次级标签切换，移动端主导航和次级标签支持横向滚动。凭据独立保存在 DSH 设置，不在监控界面回显。配置变更需要按提示重启 Gateway。

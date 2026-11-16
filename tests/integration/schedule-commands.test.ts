@@ -258,3 +258,31 @@ describe('native schedule command bridge', () => {
     expect((await resultFor(dir, id)).state).toBe('error')
   })
 })
+
+describe('scheduled Feishu delivery authorization', () => {
+  it('fails closed on an unreadable managed configuration instead of using stale startup permissions', async () => {
+    const { gateway, dir } = await setup()
+    const target = { botId: 'default', chatId: 'ou_allowed123', chatType: 'p2p', senderId: 'ou_allowed123' }
+    expect(await (gateway as any).validateScheduleTarget(target)).toEqual({ ok: true })
+    await writeFile(path.join(dir, 'admin-config.json'), '{invalid', 'utf8')
+    expect(await (gateway as any).validateScheduleTarget(target)).toEqual({
+      ok: false, reason: 'authorization configuration unavailable',
+    })
+  })
+
+  it('revokes a sender-scoped group delivery even when another group sender remains permitted', async () => {
+    const { gateway, dir } = await setup()
+    const group = { chatId: 'oc_group123', enabled: true, requireMention: true,
+      senderAllowlist: ['ou_owner123', 'ou_other123'], sessionScope: 'group_sender' }
+    const config = (senders: string[]) => JSON.stringify({ version: 1, config: {
+      groupPolicy: 'allowlist', groupSenderAllowlist: senders, groups: [group],
+    } })
+    const target = { botId: 'default', chatId: 'oc_group123', chatType: 'group', senderId: 'ou_owner123' }
+    await writeFile(path.join(dir, 'admin-config.json'), config(['ou_owner123', 'ou_other123']))
+    expect(await (gateway as any).validateScheduleTarget(target)).toEqual({ ok: true })
+    await writeFile(path.join(dir, 'admin-config.json'), config(['ou_other123']))
+    expect(await (gateway as any).validateScheduleTarget(target)).toEqual({
+      ok: false, reason: 'scheduled task sender was revoked',
+    })
+  })
+})

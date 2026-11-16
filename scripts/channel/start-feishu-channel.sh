@@ -37,7 +37,7 @@ die() { echo "error: $*" >&2; exit 1; }
 configure_proxy() {
   local cfg_file="$STATE_DIR/admin-config.json"
   local secret_file="$STATE_DIR/network-proxy.json"
-  local settings enabled env_name fallback source proxy_url
+  local settings enabled env_name fallback source proxy_url proxy_targets
   settings="$(node -e '
     const fs = require("node:fs");
     const [cfgFile, secretFile, defaultEnv] = process.argv.slice(1);
@@ -80,6 +80,9 @@ configure_proxy() {
     console.log(p.fallbackDirect === false ? "0" : "1");
     console.log(source);
     console.log(url || "");
+    const active = (cfg.config?.bots || [{domain:"feishu",enabled:true}]).filter(b => b.enabled !== false);
+    const domains = new Set(active.map(b => b.domain === "lark" ? "lark" : "feishu"));
+    console.log([...domains].map(d => d === "lark" ? "https://open.larksuite.com/open-apis/" : "https://open.feishu.cn/open-apis/").join(" ") || "https://open.feishu.cn/open-apis/");
   ' "$cfg_file" "$secret_file" "FEISHU_CHANNEL_PROXY_URL")" || die "invalid managed proxy configuration"
   local -a fields=()
   mapfile -t fields <<< "$settings"
@@ -88,6 +91,7 @@ configure_proxy() {
   fallback="${fields[2]:-1}"
   source="${fields[3]:-none}"
   proxy_url="${fields[4]:-}"
+  proxy_targets="${fields[5]:-https://open.feishu.cn/open-apis/}"
   [ "$enabled" = 1 ] || return 0
 
   if [ -z "$proxy_url" ]; then
@@ -101,10 +105,15 @@ configure_proxy() {
     die "proxy enabled but no proxy URL configured; set it in DSH Web -> Feishu Admin -> Network Proxy"
   fi
 
-  if command -v curl >/dev/null 2>&1 &&
-    curl --silent --show-error --output /dev/null --noproxy "" \
-      --proxy "$proxy_url" --connect-timeout 3 --max-time 8 \
-      "https://open.feishu.cn/open-apis/" 2>/dev/null; then
+  local probe_ok=1 target
+  if ! command -v curl >/dev/null 2>&1; then probe_ok=0; fi
+  for target in $proxy_targets; do
+    if [ "$probe_ok" = 1 ] && ! curl --silent --show-error --output /dev/null --noproxy "" \
+      --proxy "$proxy_url" --connect-timeout 3 --max-time 8 "$target" 2>/dev/null; then
+      probe_ok=0
+    fi
+  done
+  if [ "$probe_ok" = 1 ]; then
     export http_proxy="$proxy_url" https_proxy="$proxy_url"
     export HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url"
     export no_proxy="${no_proxy:-${NO_PROXY:-localhost,127.0.0.1,::1}}"

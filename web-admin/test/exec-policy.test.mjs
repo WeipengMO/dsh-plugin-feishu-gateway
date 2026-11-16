@@ -42,7 +42,7 @@ test('normalizeExecPolicy rejects bad input', () => {
 
 test('renderOverlayYaml emits sandbox, approval and a matching managed preset', () => {
   const yaml = renderOverlayYaml({ mode: 'danger-full-access', approvalPolicy: 'never',
-    additionalWritableRoots: ['/home/ubuntu/.lark-cli'] })
+    additionalWritableRoots: ['/home/ubuntu/.lark-cli'] }, '/home/ubuntu/dsh-workspace')
   assert.match(yaml, /- id: sandbox-policy/)
   assert.match(yaml, /mode: danger-full-access/)
   assert.match(yaml, /- \/home\/ubuntu\/\.lark-cli/)
@@ -53,7 +53,7 @@ test('renderOverlayYaml emits sandbox, approval and a matching managed preset', 
 })
 
 test('renderOverlayYaml writes an empty list when no roots', () => {
-  const yaml = renderOverlayYaml({ mode: 'read-only', approvalPolicy: 'ask', additionalWritableRoots: [] })
+  const yaml = renderOverlayYaml({ mode: 'read-only', approvalPolicy: 'ask', additionalWritableRoots: [] }, '/tmp/feishu-workspace')
   assert.match(yaml, /additionalWritableRoots: \[\]/)
 })
 
@@ -96,4 +96,11 @@ test('writeExecPolicy rejects a workspace-write root that is not a real dir', as
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'execpol-'))
   await assert.rejects(() => writeExecPolicy({ stateDir: dir },
     { mode: 'workspace-write', approvalPolicy: 'ask', additionalWritableRoots: ['/no/such/dir/xyz'] }), /does not exist/)
+})
+
+test('writeExecPolicy refuses an unknown workspace rather than silently granting a hardcoded directory', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'execpol-missing-'))
+  await assert.rejects(() => writeExecPolicy({ stateDir: dir, profilePath: path.join(dir, 'missing.yml') },
+    { mode: 'workspace-write', approvalPolicy: 'ask', additionalWritableRoots: [] }), /workspaceRoot/)
+  assert.equal(await fs.stat(path.join(dir, EXEC_POLICY_JSON)).then(() => true, () => false), false)
 })

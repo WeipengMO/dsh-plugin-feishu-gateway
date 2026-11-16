@@ -25,6 +25,7 @@ export interface ManagedChannelConfig {
   groupSenderAllowlist?: string[]
   groups?: GroupRule[]
   workspace?: string
+  agentWorkspace?: string
   agent?: { provider?: string; model?: string }
   replyTimeoutMs?: number
   networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean }
@@ -62,7 +63,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect',
     'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
@@ -137,6 +138,13 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
       throw new Error('workspace must be an absolute path')
     }
     result.workspace = path.normalize(value.workspace)
+  }
+  if (value.agentWorkspace !== undefined) {
+    if (typeof value.agentWorkspace !== 'string' || value.agentWorkspace.length > 4096 ||
+        !path.isAbsolute(value.agentWorkspace) || value.agentWorkspace.includes('\0')) {
+      throw new Error('agentWorkspace must be an absolute path')
+    }
+    result.agentWorkspace = path.normalize(value.agentWorkspace)
   }
   if (value.agent !== undefined) {
     if (!dictionary(value.agent)) throw new Error('agent must be an object')

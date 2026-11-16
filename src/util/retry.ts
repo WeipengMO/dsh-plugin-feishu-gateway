@@ -10,8 +10,14 @@ export interface RetryOptions {
 /** True for errors that are worth retrying (transport / 5xx / rate limit). */
 export function isRetryable(error: unknown): boolean {
   if (error instanceof Error && error.name === 'AbortError') return false
-  const code = (error as { code?: number })?.code
-  if (typeof code === 'number' && code >= 400 && code < 500 && code !== 429) return false
+  const e = error as { code?: number | string; status?: number; httpStatus?: number; feishuCode?: number } | null
+  // Feishu business codes are NOT HTTP statuses. Only documented transient
+  // rate-limiting codes are retried; unknown business errors are parked.
+  if (typeof e?.feishuCode === 'number') {
+    return new Set([230020, 230049, 11232, 11233, 1000004, 1000005, 99991400]).has(e.feishuCode)
+  }
+  const status = e?.httpStatus ?? e?.status ?? (typeof e?.code === 'number' ? e.code : undefined)
+  if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return false
   return true
 }
 

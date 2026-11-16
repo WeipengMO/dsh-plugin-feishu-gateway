@@ -29,7 +29,7 @@ describe('managed Feishu channel overlay', () => {
       agent: { provider: 'magpie', model: 'group/deepseek' } })
     await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
       allowlist: ['ou_managed'], replyTimeoutMs: 300000,
-      agent: { model: 'group/new' },
+      agent: { model: 'group/new' }, agentWorkspace: '/tmp/feishu-independent',
       bots: [{ id: 'default', domain: 'feishu', enabled: false }],
     } }))
     const result = loadManagedConfig(base)
@@ -38,6 +38,7 @@ describe('managed Feishu channel overlay', () => {
     expect(result.bots[0]?.enabled).toBe(false)
     expect(result.bots[0]?.appSecretEnv).toBe('FEISHU_GATEWAY_DEFAULT_APP_SECRET')
     expect(result.workspace).toBe('/tmp')
+    expect(result.agentWorkspace).toBe('/tmp/feishu-independent')
     expect(result.stateDir).toBe(d.dir)
   })
   it('rejects secrets, unknown fields, invalid ids, and env collisions', () => {
@@ -45,6 +46,7 @@ describe('managed Feishu channel overlay', () => {
     expect(() => validateManagedConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'lark' }] })).toThrow(/colliding/)
     expect(() => validateManagedConfig({ allowlist: ['not-an-open-id'] })).toThrow(/allowlist/)
     expect(() => validateManagedConfig({ workspace: '../somewhere' })).toThrow(/absolute/)
+    expect(() => validateManagedConfig({ agentWorkspace: '../somewhere' })).toThrow(/absolute/)
   })
   it('accepts explicitly managed Markdown reply format', () => {
     expect(validateManagedConfig({ replyFormat: 'markdown' }).replyFormat).toBe('markdown')

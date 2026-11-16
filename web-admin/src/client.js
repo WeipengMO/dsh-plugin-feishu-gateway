@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'fga-status ' + (online ? 'fga-online' : '') },
           online ? '网关正常' : '未确认在线', ' · systemd: ', service || '未知'))
     }
-    function Panel({ initialTab = 'settings', onChanged } = {}) {
+    function Panel({ initialTab = 'settings', onChanged, hideTabs = false } = {}) {
       const [state, setState] = useState(null)
       const [health, setHealth] = useState(null)
       const [tab, setTab] = useState(initialTab)
@@ -298,8 +298,8 @@ window.__ModuleLoader__.load({
         h(Header, { health, service: state?.service }),
         error && h('div', { className: 'fga-error', role: 'alert' }, error),
         notice && h('div', { className: 'fga-notice', role: 'status' }, notice),
-        h('div', { className: 'fga-tabs' },
-          ...[['settings','模型与配置'],['permissions','访问权限'],['bots','机器人设置']]
+        !hideTabs && h('div', { className: 'fga-tabs' },
+          ...[['settings','模型与连接'],['permissions','私聊白名单'],['bots','机器人管理']]
             .map(([id,label]) => h('button', { type: 'button', key: id, className: tab === id ? 'fga-tab fga-selected' : 'fga-tab',
               onClick: () => setTab(id) }, label))),
         tab === 'overview' && h('div', { className: 'fga-section' },
@@ -318,20 +318,20 @@ window.__ModuleLoader__.load({
             action('重启飞书通道', restart, loading || busy))),
         tab === 'settings' && h('div', { className: 'fga-section' },
           h('p', { className: 'fga-hint' }, '留空代表继承原 Profile 配置。设置仅在飞书通道重启后生效。'),
-          field('模型 Provider', textInput(provider, setProvider, '继承 Profile，例如 magpie')),
+          field('模型提供方 Provider', textInput(provider, setProvider, '继承 Profile，例如 magpie')),
           field('模型 Model', textInput(model, setModel, '继承 Profile，例如 group/deepseek')),
           field('AI 回复格式', h('select', { className: 'fga-input', value: replyFormat,
             onChange: e => setReplyFormat(e.target.value) },
             h('option', { value: 'inherit' }, '继承 Profile（默认普通文本）'),
             h('option', { value: 'text' }, '普通文本（最兼容）'),
             h('option', { value: 'markdown' }, 'Markdown 富文本（post/md）'))),
-          field('旧工作目录（兼容）', textInput(workspace, setWorkspace, '原 DSH 项目目录，仅用于迁移/配置对照'),
+          field('原 DSH 工作目录（仅兼容）', textInput(workspace, setWorkspace, '原 DSH 项目目录，仅用于迁移/配置对照'),
             '新飞书 Agent 不再从此目录启动；不会复制这里的 SOUL / MEMORY。'),
           field('飞书 Agent 独立工作目录', textInput(agentWorkspace, setAgentWorkspace,
-            '留空自动选择独立目录；或填写 /home/ubuntu/.dsh/feishu-agent'),
+            '留空自动创建隔离目录；或输入服务器上的绝对路径'),
             '新飞书 Session 的原生 cwd。不可与普通 DSH 项目目录相同或存在父子关系；修改后需重启通道，并在飞书发送 /new。'),
           h('div', { className: 'fga-divider' }),
-          h('h3', null, '交互卡片（需要飞书卡片权限与真实租户验收）'),
+          h('h3', null, '消息与工具交互卡片'),
           h('label', { className: 'fga-check' },
             h('input', { type: 'checkbox', checked: approvalCards,
               onChange: e => setApprovalCards(e.target.checked) }),

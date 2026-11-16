@@ -53,7 +53,9 @@ test('operations panels display real data and configuration actions', () => {
   }
   assert.match(workbench, /root 'main'/)
   assert.match(workbench, /onConfig/)
-  assert.match(workbench, /h\(Panel, \{ key: configTab, initialTab: configTab, onChanged: load \}\)/)
+  assert.match(workbench, /WORKBENCH_TABS/)
+  assert.match(workbench, /hideTabs: true/)
+  assert.match(workbench, /fgw-section-tabs/)
   assert.match(pages, /function OpsPage\(/)
   assert.match(pages, /Token 用量趋势/)
   assert.match(pages, /审批审计/)
@@ -476,4 +478,20 @@ test('usage chart buckets maintain partial and unavailable coverage', () => {
   })))
   assert.equal(months.granularity, 'month')
   assert.equal(months.rows.reduce((sum, row) => sum + row.calls, 0), 120)
+})
+
+test('gateway workbench groups overlapping features instead of repeating nav entries', () => {
+  const nav = workbench.slice(workbench.indexOf('const WORKBENCH_NAV = ['), workbench.indexOf('const WORKBENCH_TABS'))
+  assert.match(nav, /'conversations', '会话与消息'/)
+  assert.match(nav, /'channels', '接入与权限'/)
+  assert.match(nav, /'analytics', '用量与审计'/)
+  assert.doesNotMatch(nav, /\['bots',|\['security',|\['messages',|\['approvals',/)
+  const tabs = workbench.slice(workbench.indexOf('const WORKBENCH_TABS'), workbench.indexOf('const WORKBENCH_DESCRIPTIONS'))
+  for (const section of ['conversations', 'channels', 'analytics', 'operations']) {
+    assert.match(tabs, new RegExp(section + ':'))
+  }
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /fgw-section-switcher/)
+  assert.match(css, /fgw-shortcuts/)
+  assert.match(css, /@media\(max-width:600px\)/)
 })
