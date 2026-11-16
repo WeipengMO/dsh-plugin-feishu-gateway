@@ -37,6 +37,7 @@ export interface ManagedChannelConfig {
     provider?: string
     model?: string
     fallback?: AgentFallbackRoute | null
+    fallbacks?: AgentFallbackRoute[]
   }
   replyTimeoutMs?: number
   networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean }
@@ -159,7 +160,7 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   }
   if (value.agent !== undefined) {
     if (!dictionary(value.agent)) throw new Error('agent must be an object')
-    assertFields(value.agent, ['provider', 'model', 'fallback'])
+    assertFields(value.agent, ['provider', 'model', 'fallback', 'fallbacks'])
     const agent: ManagedChannelConfig['agent'] = {}
     for (const field of ['provider', 'model'] as const) {
       const v = value.agent[field]
@@ -169,6 +170,32 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
         }
         agent[field] = v
       }
+    }
+    if (value.agent.fallback !== undefined && value.agent.fallbacks !== undefined) {
+      throw new Error('use either legacy fallback or fallbacks, not both')
+    }
+    if (value.agent.fallbacks !== undefined) {
+      const candidates = value.agent.fallbacks
+      if (!Array.isArray(candidates) || candidates.length > 8) {
+        throw new Error('agent fallbacks must be an array (max 8)')
+      }
+      const seen = new Set<string>()
+      agent.fallbacks = candidates.map(candidate => {
+        if (!dictionary(candidate)) throw new Error('agent fallback must be an object')
+        assertFields(candidate, ['provider', 'model'])
+        const { provider, model } = candidate
+        if (typeof provider !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(provider) ||
+          typeof model !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(model)) {
+          throw new Error('invalid agent fallback model route')
+        }
+        const key = provider + '\\0' + model
+        if (seen.has(key)) throw new Error('duplicate agent fallback route')
+        if (agent.provider === provider && agent.model === model) {
+          throw new Error('agent fallback must differ from the primary route')
+        }
+        seen.add(key)
+        return { provider, model }
+      })
     }
     const fallback = value.agent.fallback
     if (fallback === null) {
@@ -277,11 +304,20 @@ function mergeAgentRoute(
     provider?: string
     model?: string
     reasoningEffort?: string
-    fallback?: { provider: string; model: string }
+    fallback?: AgentFallbackRoute
+    fallbacks?: readonly AgentFallbackRoute[]
   } = { ...base }
   if (managed.provider !== undefined) merged.provider = managed.provider
   if (managed.model !== undefined) merged.model = managed.model
-  if (managed.fallback === null) delete merged.fallback
-  else if (managed.fallback) merged.fallback = managed.fallback
+  if (managed.fallbacks !== undefined) {
+    delete merged.fallback
+    merged.fallbacks = managed.fallbacks
+  } else if (managed.fallback === null) {
+    delete merged.fallback
+    delete merged.fallbacks
+  } else if (managed.fallback) {
+    delete merged.fallbacks
+    merged.fallback = managed.fallback
+  }
   return merged
 }
