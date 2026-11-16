@@ -124,3 +124,46 @@ test('manual archive rejects current binding and is not repeated after user rest
   const preview = await reconcileSessionOrganization(f.stateDir, f.native)
   assert.equal(preview.archive.some(row => row.id === ORPHAN), false)
 })
+
+
+test('schedule orphan is archived only after configured grace period', async t => {
+  const f = await fixture(t)
+  await saveOrganizationSettings(f.stateDir, { enabled: true, graceHours: 1 })
+  await json(f.stateDir, 'ops-session-organization.json', {
+    version: 1, bindings: {}, schedule: { [SCHEDULE]: 1 },
+    missing: {}, pending: {}, retired: {}, handled: [],
+  })
+  const now = Date.now()
+  const first = await reconcileSessionOrganization(f.stateDir, f.native,
+    { dryRun: false, now })
+  assert.equal(first.archive.some(row => row.id === SCHEDULE), false)
+  const second = await reconcileSessionOrganization(f.stateDir, f.native,
+    { dryRun: false, now: now + 3600001 })
+  assert.equal(second.archive.some(row => row.id === SCHEDULE), true)
+  assert.equal(f.archived.includes(SCHEDULE), true)
+})
+
+test('stale Gateway snapshot keeps header inventory visible but prevents mutation', async t => {
+  const f = await fixture(t)
+  await saveOrganizationSettings(f.stateDir, { enabled: true })
+  await json(f.stateDir, 'ops-runtime.json', {
+    version: 1, ts: Date.now() - 60000, workspace: f.cwd,
+    isolatedAgent: true, tasks: [], status: 'ok', stats: {}, transport: {},
+  })
+  const list = await sessionOrganizationInventory(f.stateDir, f.native)
+  assert.equal(list.available, true)
+  assert.equal(list.nativeCount, 4)
+  const result = await reconcileSessionOrganization(f.stateDir, f.native, { dryRun: false })
+  assert.equal(result.available, false)
+  assert.deepEqual(f.attached, [])
+  assert.deepEqual(f.archived, [])
+})
+
+test('native ledger filters bot and last activity UTC date interval', async t => {
+  const f = await fixture(t)
+  const report = await sessionOrganizationInventory(f.stateDir, f.native, { bot: 'default' })
+  assert.equal(report.total, 1)
+  const future = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+  const filtered = await sessionOrganizationInventory(f.stateDir, f.native, { from: future })
+  assert.equal(filtered.total, 0)
+})
