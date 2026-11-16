@@ -2,7 +2,7 @@
 
 将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
 
-**当前 Gateway：`0.2.0-rc.7` · Admin：`0.2.0-rc.7`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
+**当前代码 Gateway：`0.2.0-rc.16` · Admin：`0.2.0-rc.16`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
 
 > **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
 
@@ -47,6 +47,18 @@
 
 操作说明：[审批与流式卡片](docs/APPROVAL-STREAMING.md) · [Web Admin](docs/WEB-ADMIN.md) · [飞书通道](docs/FEISHU-CHANNEL.md)。
 
+## Issue #16：飞书 Session 批量管理（rc.16 候选）
+
+在「飞书管理 → Session 管理」可以从当前页面选择最多 20 条未运行的绑定，
+预览并二次确认**批量归档 / 飞书解绑**。Web Admin 使用 30 秒内有效的一次性
+确认令牌；真正执行由独占 Gateway 在对应 Session 队列中重新核对版本、
+未完成消息、待发 Outbox、审批和运行状态。可能出现部分成功与跳过，需要查看
+「告警中心」中的操作结果。
+
+**该操作不删除 DSH 原生 Session/消息正文**。受影响绑定大小只是 JSON
+条目的估计，不是实际回收磁盘大小。历史 Inbox/日志压缩及自动保留策略尚未实现，
+Issue #16 继续保持 Open。参见 [Session 生命周期管理](docs/SESSION-LIFECYCLE.md)。
+
 ## 构建、验收与安装
 
 ```bash
@@ -58,14 +70,14 @@ pnpm run pack
 
 当前发布版的两个安装包：
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.15.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.15.tgz`
+- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.16.tgz`
+- `dist/dsh-plugin-feishu-admin-0.2.0-rc.16.tgz`
 
 首次安装时分别安装到各自 Profile；已装旧版 Gateway 的用户需要**同时升级 Gateway 与 Web Admin**（rc.10 的管理端 API 依赖新的管理服务端）。不要把 Gateway 安装到 Web：
 
 ```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.15.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.15.tgz"
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.16.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.16.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```

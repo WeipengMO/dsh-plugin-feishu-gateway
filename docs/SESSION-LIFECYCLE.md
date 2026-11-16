@@ -45,6 +45,31 @@ creates a new DSH Session. DSH-native history survives both.
 Do not manually delete a live stateDir or interpret a hashed reference as
 an authorization credential.
 
+## Phase 2 extension — bounded batch management (development, pending E2E)
+
+The Session inventory supports selecting at most **20 rows from the current
+page**, then previewing and confirming a bulk archive or Feishu-only unlink.
+
+1. POST `/sessions/batch/preview`: strict hashed Session/chat references,
+   expected last-activity timestamps and a single action. Requires a fresh
+   runtime snapshot, no unresolved work and no active selected binding.
+2. Returns a **30-second, single-use** confirmation token and the estimated
+   total size of affected JSON binding entries. This is NOT a prediction of
+   reclaimed disk bytes and does not delete conversation content.
+3. POST `/sessions/commands` consumes the token and queues one bounded
+   `batch-sessions` operation in the existing cross-profile mailbox.
+4. The owner Gateway independently validates the command, resolves each
+   reference to exactly one binding, serializes against the matching chat scope,
+   then checks unchanged activity version, active turns, Inbox, approvals and
+   Outbox before each archive/unlink.
+5. The result is **not all-or-nothing**: in-flight changes become skipped
+   entries with a `conflict` result, while other safe entries may succeed.
+   A crash after partial completion is never automatically replayed. The
+   operator must inspect the results and preview a new batch.
+
+This feature does not provide Inbox/Outbox log compaction, retention automation,
+measured reclaim size, native Session deletion, or production acceptance.
+
 ## Still pending — Phase 3
 
 - Bulk selection, historical Inbox content scrubbing, audit-log cleanup and

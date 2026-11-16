@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -907,6 +908,58 @@ test('Session action preview requires fresh idle state and a single-use confirma
       ] }))
     const active = await f.request('/sessions/preview', 'POST', body, mutating)
     assert.equal(active.status, 409)
+  } finally { await f.close() }
+})
+
+test('Session batch preview is authenticated, single-use, and queues hashed references only', async () => {
+  const f = await fixture()
+  try {
+    await mkdir(f.stateDir, { recursive: true })
+    const ref = v => createHash('sha256').update(v).digest('hex').slice(0, 16)
+    const now = Date.now()
+    const bindings = {
+      'default:oc_private_1': { sessionId: 'native-private-1', createdAt: now - 400000,
+        lastActiveAt: now - 300000, persisted: true },
+      'default:oc_private_2': { sessionId: 'native-private-2', createdAt: now - 400000,
+        lastActiveAt: now - 200000, persisted: true },
+    }
+    await writeFile(path.join(f.stateDir, 'sessions.json'), JSON.stringify({ bindings }))
+    const snapshot = { version: 1, ts: now, status: 'ok', tasks: [],
+      sessions: [], transport: {}, stats: {} }
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'), JSON.stringify(snapshot))
+    const items = Object.entries(bindings).map(([key, value]) => ({
+      ref: ref(value.sessionId), chatRef: ref(key.split(':')[1]),
+      botId: 'default', expectedLastActiveAt: value.lastActiveAt,
+    }))
+    const batch = { action: 'unlink', items }
+    assert.equal((await f.request('/sessions/batch/preview', 'POST', batch, {})).status, 401)
+    const preview = await f.request('/sessions/batch/preview', 'POST', batch, mutating)
+    assert.equal(preview.status, 200)
+    assert.equal(preview.json.preview.count, 2)
+    assert.equal(preview.json.preview.nativeSessionPreserved, true)
+    assert.ok(preview.json.preview.estimatedBindingBytes > 0)
+    assert.doesNotMatch(JSON.stringify(preview.json), /oc_private_|native-private-/)
+    const queued = await f.request('/sessions/commands', 'POST',
+      { token: preview.json.preview.token }, mutating)
+    assert.equal(queued.status, 202)
+    assert.equal(queued.json.command.type, 'batch-sessions')
+    assert.equal((await f.request('/sessions/commands', 'POST',
+      { token: preview.json.preview.token }, mutating)).status, 409)
+    const files = await (await import('node:fs/promises')).readdir(
+      path.join(f.stateDir, 'ops-control', 'requests'))
+    assert.equal(files.length, 1)
+    const payload = JSON.parse(await readFile(path.join(f.stateDir, 'ops-control', 'requests', files[0]), 'utf8'))
+    assert.deepEqual(payload.batch, batch)
+    assert.doesNotMatch(JSON.stringify(payload), /oc_private_|native-private-/)
+    const duplicate = await f.request('/sessions/batch/preview', 'POST',
+      { action: 'unlink', items: [items[0], items[0]] }, mutating)
+    assert.equal(duplicate.status, 400)
+    const invalid = await f.request('/sessions/batch/preview', 'POST',
+      { action: 'unlink', items: [{ ...items[0], expectedLastActiveAt: -1 }] }, mutating)
+    assert.equal(invalid.status, 400)
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'),
+      JSON.stringify({ ...snapshot, ts: now - 60000 }))
+    assert.equal((await f.request('/sessions/batch/preview', 'POST', batch, mutating)).status, 409)
   } finally { await f.close() }
 })
 
