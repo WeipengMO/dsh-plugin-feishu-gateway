@@ -85,7 +85,7 @@ export async function saveOrganizationSettings(stateDir, next) {
 }
 async function sourceData(stateDir, persistence, registry) {
   const runtime = await readOpsSnapshot(stateDir)
-  if (!runtime || runtime.stale || runtime.isolatedAgent !== true ||
+  if (!runtime || runtime.isolatedAgent !== true ||
     typeof runtime.workspace !== 'string' || !path.isAbsolute(runtime.workspace)) {
     return { available: false, reason: 'Gateway runtime workspace unavailable' }
   }
@@ -131,7 +131,10 @@ async function sourceData(stateDir, persistence, registry) {
     }
   }
   const archived = new Set(registry.archivedSessionIds || [])
-  const active = new Set((runtime.tasks || []).map(task => task.session).filter(Boolean))
+  // A stale snapshot is sufficient for offline history inventory but never
+  // proof that a Session is currently executing.
+  const active = new Set((runtime.stale ? [] : runtime.tasks || [])
+    .map(task => task.session).filter(Boolean))
   const records = []
   for (const snapshot of snapshots) {
     const header = snapshot?.header
@@ -217,6 +220,11 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
   const data = await sourceData(stateDir, services.persistence, services.registry)
   if (!data.available) return { available: false, reason: data.reason, dryRun }
   const settings = await organizationSettings(stateDir)
+  // When the Gateway is offline, its bindings/schedule snapshot may no longer
+  // be current. Keep the ledger readable, but prohibit automatic mutations.
+  if (!dryRun && data.runtime.stale) return {
+    available: false, reason: 'Gateway snapshot stale; native inventory remains read-only', dryRun,
+  }
   const old = await privateJson(stateDir, CURSOR_FILE)
   const cursor = isObj(old) && old.version === 1 ? old : emptyCursor()
   const previousBindings = isObj(cursor.bindings) ? cursor.bindings : {}
