@@ -95,3 +95,16 @@ Run from the repository root:
 Update both Gateway and Web Admin packages in an isolated test profile before
 exercising manual lifecycle actions; a newer UI talking to an older Gateway
 will not process the new command types.
+
+## Issue #34 — DSH-native organization (separate from Gateway binding cleanup)
+
+The native Session ledger and workspace reconciliation in Web Admin are a
+separate, reversible DSH sidebar operation. They **never** delete native
+history and **never** resume Gateway-owned Sessions. First deployment is
+opt-in, with a header-only preview; unconfirmed historical orphans must not be
+automatically attached to the new workspace. Native archive requires its own
+one-time confirmation, distinct from Issue #16's Gateway binding archive.
+
+See [FEISHU-SESSION-ORGANIZATION.md](FEISHU-SESSION-ORGANIZATION.md) for
+the upgrade order, manual historical migration, live-Host acceptance list,
+safety rules and rollback procedure.
