@@ -1283,7 +1283,7 @@ export class FeishuGateway {
       void withTimeout(this.bridge.listModels(), 30_000).then(result => {
         if (!result.timedOut && !this.stopped) {
           const routes = result.value.models.map(item => item.provider + '/' + item.model)
-            .filter(name => /^[A-Za-z0-9_.:/-]{1,256}$/.test(name))
+            .filter(name => /^[A-Za-z0-9_./:@+-]{1,256}$/.test(name))
           // Provider display names and model labels come from DSH, never from
           // the admin side: the Web Profile may mount a different provider set.
           const providers = (result.value.providers ?? []).map(provider => ({
