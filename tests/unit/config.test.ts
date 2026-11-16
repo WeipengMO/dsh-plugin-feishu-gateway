@@ -46,6 +46,24 @@ describe('resolveConfig', () => {
     expect(normalizeAgentRoute(undefined)).toEqual({})
   })
 
+  it('normalizes ordered fallback arrays and ignores duplicates or primary route', () => {
+    const config = resolveConfig({ agent: {
+      provider: 'magpie', model: 'primary',
+      fallbacks: [
+        { provider: 'openai', model: 'a' },
+        { provider: 'magpie', model: 'primary' },
+        { provider: 'openai', model: 'a' },
+        { provider: 'openai', model: 'b' },
+      ],
+    } })
+    expect(config.agent?.fallbacks).toEqual([
+      { provider: 'openai', model: 'a' },
+      { provider: 'openai', model: 'b' },
+    ])
+    expect(normalizeAgentRoute({ fallback: { provider: 'openai', model: 'a' },
+      fallbacks: [] })).toEqual({ fallbacks: [] })
+  })
+
   it('supports opt-in Markdown without changing the default', () => {
     expect(resolveConfig({ replyFormat: 'markdown' }).replyFormat).toBe('markdown')
     expect(resolveConfig(undefined).replyFormat).toBe('text')

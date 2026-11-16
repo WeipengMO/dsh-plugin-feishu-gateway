@@ -63,6 +63,7 @@ export interface OpsSnapshot {
     readonly model?: string
     readonly reasoningEffort?: string
     readonly fallback?: { readonly provider: string; readonly model: string }
+    readonly fallbacks?: readonly { readonly provider: string; readonly model: string }[]
   }
   /** The Host Profile's own `agent-default-model` selection (read-only fact). */
   readonly profileDefaultRoute?: {

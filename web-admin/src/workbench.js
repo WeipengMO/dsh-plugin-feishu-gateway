@@ -255,7 +255,7 @@ function Workbench() {
   } else if (selected === 'advanced') {
     body = h('div', { className: 'fgw-advanced' },
       h('p', { className: 'fgw-muted' },
-        '此页面可修改模型、机器人、白名单、卡片、重试策略和连接设置。凭据仍在 DSH 设置 → 飞书 Gateway。重启前确认没有在途任务。'),
+        '配置仅用于飞书通道。保存后重启生效；重启会中断正在执行的任务。'),
       h(Panel, { key: 'settings', initialTab: 'settings', hideTabs: true, onChanged: load }))
   } else if (selected === 'automation') {
     // SchedulePanel fetches /schedule, /schedule/preview, /schedule/commands and

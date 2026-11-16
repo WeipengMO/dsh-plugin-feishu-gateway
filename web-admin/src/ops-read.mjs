@@ -11,7 +11,7 @@ const safeNum = n => Number.isFinite(n) && n >= 0 && n <= 1e13 ? Math.floor(n) :
 const safeRef = s => typeof s === 'string' && /^[a-f0-9]{16}$/.test(s) ? s : undefined
 const safeLabel = s => typeof s === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(s) ? s : undefined
 const safeBot = s => typeof s === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(s) ? s : undefined
-const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_.:/-]{1,96}$/.test(s) ? s : undefined
+const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_./:@+-]{1,256}$/.test(s) ? s : undefined
 const safeProvider = s => typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s) ? s : undefined
 const safeEffort = s => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(s) ? s : undefined
 /** Display labels are plain bounded text: no control characters, ever. */
@@ -26,12 +26,22 @@ function safeRoute(value, includeFallback = false) {
   const model = safeModel(value.model)
   if (provider) route.provider = provider
   if (model) route.model = model
-  if (includeFallback && value.fallback && typeof value.fallback === 'object' && !Array.isArray(value.fallback)) {
+  if (includeFallback && Array.isArray(value.fallbacks)) {
+    // Preserve an explicit [] so an old running route is not resurrected.
+    const seen = new Set()
+    route.fallbacks = value.fallbacks.slice(0, 8).flatMap(choice => {
+      const provider = safeProvider(choice?.provider)
+      const model = safeModel(choice?.model)
+      if (!provider || !model || (provider === route.provider && model === route.model)) return []
+      const key = provider + '/' + model
+      if (seen.has(key)) return []
+      seen.add(key)
+      return [{ provider, model }]
+    })
+  } else if (includeFallback && value.fallback && typeof value.fallback === 'object' && !Array.isArray(value.fallback)) {
     const fallbackProvider = safeProvider(value.fallback.provider)
     const fallbackModel = safeModel(value.fallback.model)
-    if (fallbackProvider && fallbackModel) {
-      route.fallback = { provider: fallbackProvider, model: fallbackModel }
-    }
+    if (fallbackProvider && fallbackModel) route.fallback = { provider: fallbackProvider, model: fallbackModel }
   }
   const effort = safeEffort(value.reasoningEffort)
   if (effort) route.reasoningEffort = effort
@@ -42,12 +52,12 @@ function safeModelCatalog(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   if (safeNum(value.ts) === undefined) return undefined
   const models = Array.isArray(value.models)
-    ? [...new Set(value.models.filter(safeModel))].slice(0, 200) : []
-  const providers = (Array.isArray(value.providers) ? value.providers : []).slice(0, 50).flatMap(entry => {
+    ? [...new Set(value.models.filter(safeModel))] : []
+  const providers = (Array.isArray(value.providers) ? value.providers : []).flatMap(entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
     const id = safeProvider(entry.id)
     if (!id) return []
-    const providerModels = (Array.isArray(entry.models) ? entry.models : []).slice(0, 200).flatMap(model => {
+    const providerModels = (Array.isArray(entry.models) ? entry.models : []).flatMap(model => {
       const modelId = safeModel(model?.id)
       if (!modelId) return []
       const name = safeDisplayName(model?.name)

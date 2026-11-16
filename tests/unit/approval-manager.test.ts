@@ -298,7 +298,12 @@ describe('FeishuApprovalManager permanent authorizations and countdown', () => {
       }
       expect(manager.size).toBe(1)
     }
-    const cleanup = () => rm(dir, { recursive: true, force: true })
+    const cleanup = async () => {
+      // A settled approval can still be writing its audit asynchronously.
+      // Wait for the store queue; retry ENOTEMPTY if another timer raced close.
+      await store.flush()
+      await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 })
+    }
     return { manager, transport, store, changed: () => changed, pendingEvent, untilPending, cleanup }
   }
 

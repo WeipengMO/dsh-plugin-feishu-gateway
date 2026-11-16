@@ -191,7 +191,10 @@ export interface AgentRoute {
   readonly provider?: string
   readonly model?: string
   readonly reasoningEffort?: string
+  /** Legacy single fallback (still accepted from existing Profiles). */
   readonly fallback?: AgentFallbackRoute
+  /** Ordered rescue routes; empty array explicitly disables fallback. */
+  readonly fallbacks?: readonly AgentFallbackRoute[]
 }
 
 /** Fully resolved plugin configuration (after schema defaults). */

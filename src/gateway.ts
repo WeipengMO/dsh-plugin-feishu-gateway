@@ -597,12 +597,12 @@ export class FeishuGateway {
           }
           const currentLine = current ? '当前会话模型：' + current
             : existing ? '当前会话模型暂不可用。' : '当前聊天尚未建立会话，暂没有当前会话模型。'
-          const fallback = this.fallbackRoute()
-          const fallbackLine = fallback
-            ? 'Fallback 模型：' + fallback.provider + '/' + fallback.model +
-              '（主模型请求失败且未执行工具时自动切换一次）'
+          const fallbacks = this.fallbackRoutes()
+          const fallbackLine = fallbacks.length
+            ? '备用模型（按顺序尝试，仅在未执行工具时重试）：' +
+              fallbacks.map((item, index) => '\n' + (index + 1) + '. ' + item.provider + '/' + item.model).join('')
             : ''
-          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 30_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
           if (!catalog) {
             reply = [currentLine, fallbackLine, '模型目录暂不可用，请稍后重试。'].filter(Boolean).join('\n')
@@ -620,7 +620,7 @@ export class FeishuGateway {
         if (!choice) {
           reply = '请发送 /model provider/model 切换当前会话模型；发送 /models 查看可用模型。'
         } else {
-          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 30_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
           if (!catalog) {
             reply = '模型目录暂不可用，请稍后重试。'
@@ -658,7 +658,21 @@ export class FeishuGateway {
         }
         reply = '已开启新会话。下一条消息将使用全新的 DSH Session；原会话历史仍由 DSH 保存。'
       }
-      await this.replyDiagnostic(record, reply)
+      if (command === 'models' && reply.length > 3000) {
+        let part = ''
+        let index = 0
+        for (const line of reply.split('\n')) {
+          if (part && part.length + line.length + 1 > 3000) {
+            await this.replyDiagnostic(record, part, `models:${record.messageId}:${index++}`)
+            part = ''
+          }
+          // Individual names are short and validated by the DSH directory.
+          part += (part ? '\n' : '') + line
+        }
+        if (part) await this.replyDiagnostic(record, part, `models:${record.messageId}:${index}`)
+      } else {
+        await this.replyDiagnostic(record, reply)
+      }
       await this.inbox.markProcessed(record.messageId)
       this.processed += 1
     } catch (error) {
@@ -735,9 +749,9 @@ export class FeishuGateway {
         ref: record.messageId, session: sessionId })
       if (signal.aborted) throw new Error('turn aborted before submit')
       attempted = true
-      // One turn may be retried exactly once on the configured fallback route,
-      // and only when the native failure happened before any tool call ran.
-      let fallbackAttempted = false
+      // Ordered fallback chain: never replay after tools ran, and attempt each
+      // configured route at most once. Legacy single-fallback is one-item chain.
+      const pendingFallbacks = this.fallbackRoutes()
       const attachProgress = () => {
         if (!turn.stream) return
         const card = turn.stream
@@ -773,10 +787,13 @@ export class FeishuGateway {
           })
           break
         } catch (error) {
-          if (fallbackAttempted || !this.canRetryWithFallback(error, sessionId)) throw error
-          const fallback = this.fallbackRoute()
+          if (!this.canRetryWithFallback(error)) throw error
+          const current = this.bridge.currentModel?.(sessionId)
+          let fallback = pendingFallbacks.shift()
+          while (fallback && current?.provider === fallback.provider && current?.model === fallback.model) {
+            fallback = pendingFallbacks.shift()
+          }
           if (!fallback) throw error
-          fallbackAttempted = true
           // The failed native turn already settled, so these observers belong
           // to the discarded attempt; the next iteration re-attaches them.
           unsubscribeProgress?.()
@@ -784,7 +801,7 @@ export class FeishuGateway {
           unsubscribeTools?.()
           unsubscribeTools = undefined
           this.logger.warn(
-            'model request failed before any tool call; retrying once on fallback route %s/%s',
+            'model request failed before any tool call; trying next fallback route %s/%s',
             fallback.provider, fallback.model)
           this.audit({ kind: 'task', state: 'fallback-retry', botId: record.botId,
             ref: record.messageId, session: sessionId,
@@ -1302,16 +1319,16 @@ export class FeishuGateway {
     if (this.bridge.listModels && !this.modelCatalogLoading && now - this.modelCatalogAttempt >= 60_000) {
       this.modelCatalogAttempt = now
       this.modelCatalogLoading = true
-      void withTimeout(this.bridge.listModels(), 10_000).then(result => {
+      void withTimeout(this.bridge.listModels(), 30_000).then(result => {
         if (!result.timedOut && !this.stopped) {
           const routes = result.value.models.map(item => item.provider + '/' + item.model)
-            .filter(name => /^[A-Za-z0-9_.:/-]{1,96}$/.test(name)).slice(0, 200)
+            .filter(name => /^[A-Za-z0-9_./:@+-]{1,256}$/.test(name))
           // Provider display names and model labels come from DSH, never from
           // the admin side: the Web Profile may mount a different provider set.
-          const providers = (result.value.providers ?? []).slice(0, 50).map(provider => ({
+          const providers = (result.value.providers ?? []).map(provider => ({
             id: provider.id,
             ...(provider.name ? { name: provider.name.slice(0, 100) } : {}),
-            models: provider.models.slice(0, 200).map(model => ({
+            models: provider.models.map(model => ({
               id: model.model.slice(0, 96),
               ...(model.name ? { name: model.name.slice(0, 100) } : {}),
             })),
@@ -1360,6 +1377,7 @@ export class FeishuGateway {
     model?: string
     reasoningEffort?: string
     fallback?: { provider: string; model: string }
+    fallbacks?: readonly { provider: string; model: string }[]
   } | undefined {
     const route = this.config.agent
     if (!route) return undefined
@@ -1368,11 +1386,13 @@ export class FeishuGateway {
       model?: string
       reasoningEffort?: string
       fallback?: { provider: string; model: string }
+      fallbacks?: readonly { provider: string; model: string }[]
     } = {}
     if (route.provider) snapshot.provider = route.provider
     if (route.model) snapshot.model = route.model
     if (route.reasoningEffort) snapshot.reasoningEffort = route.reasoningEffort
-    if (route.fallback) snapshot.fallback = { provider: route.fallback.provider, model: route.fallback.model }
+    if (route.fallbacks) snapshot.fallbacks = route.fallbacks.map(item => ({ provider: item.provider, model: item.model }))
+    else if (route.fallback) snapshot.fallback = { provider: route.fallback.provider, model: route.fallback.model }
     return Object.keys(snapshot).length > 0 ? snapshot : undefined
   }
 
@@ -1391,13 +1411,19 @@ export class FeishuGateway {
     }
   }
 
-  /** The configured rescue route, if it can actually differ from the primary. */
-  private fallbackRoute(): { provider: string; model: string } | undefined {
+  /** Ordered unique rescue routes. Legacy Profile fallback remains supported. */
+  private fallbackRoutes(): Array<{ provider: string; model: string }> {
     const route = this.config.agent
-    const fallback = route?.fallback
-    if (!fallback) return undefined
-    if (route?.provider === fallback.provider && route?.model === fallback.model) return undefined
-    return fallback
+    const candidates = route?.fallbacks ?? (route?.fallback ? [route.fallback] : [])
+    const seen = new Set<string>()
+    return candidates.filter(item => {
+      if (!item.provider || !item.model ||
+        (route?.provider === item.provider && route?.model === item.model)) return false
+      const key = item.provider + '\0' + item.model
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }).map(item => ({ provider: item.provider, model: item.model }))
   }
 
   /**
@@ -1405,13 +1431,10 @@ export class FeishuGateway {
    * tool ran. Once a tool executed, replaying the turn could duplicate side
    * effects, so the existing fail-closed path is kept unchanged.
    */
-  private canRetryWithFallback(error: unknown, sessionId: string): boolean {
-    const fallback = this.fallbackRoute()
-    if (!fallback || this.stopped || !this.bridge.selectModel) return false
+  private canRetryWithFallback(error: unknown): boolean {
+    if (this.stopped || !this.bridge.selectModel) return false
     if (!(error instanceof SessionTurnFailure)) return false
     if (error.toolCalls > 0 || error.toolFailures > 0) return false
-    const current = this.bridge.currentModel?.(sessionId)
-    if (current && current.provider === fallback.provider && current.model === fallback.model) return false
     return true
   }
 

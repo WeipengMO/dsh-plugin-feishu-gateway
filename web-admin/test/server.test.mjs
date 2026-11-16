@@ -56,6 +56,22 @@ test('strict config validation rejects secrets, forged paths, and env name colli
   assert.throws(() => validateConfig({ agent: { provider: 'magpie', model: 'm',
     fallback: { provider: 'magpie', model: 'm' } } }), /differ/)
   assert.deepEqual(validateConfig({ agent: { fallback: null } }).agent, { fallback: null })
+  const choices = [{ provider: 'magpie', model: 'hy4-free' },
+    { provider: 'openai', model: 'gpt-6' }]
+  const multi = validateConfig({ agent: {
+    provider: 'magpie', model: 'group/deepseek', fallbacks: choices,
+  } })
+  assert.deepEqual(multi.agent.fallbacks, choices)
+  assert.deepEqual(validateConfig({ agent: { fallbacks: [] } }).agent, { fallbacks: [] })
+  assert.throws(() => validateConfig({ agent: { fallbacks: 'invalid' } }), /array/)
+  assert.throws(() => validateConfig({ agent: { fallbacks: Array(9).fill(choices[0]) } }), /max 8/)
+  assert.throws(() => validateConfig({ agent: {
+    provider: 'magpie', model: 'hy4-free', fallbacks: [choices[0]],
+  } }), /differ/)
+  assert.throws(() => validateConfig({ agent: { fallbacks: [choices[0], choices[0]] } }), /duplicate/)
+  assert.throws(() => validateConfig({ agent: {
+    fallback: choices[0], fallbacks: choices,
+  } }), /either/)
   const proxy = validateConfig({ networkProxy: {
     enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true,
   } })

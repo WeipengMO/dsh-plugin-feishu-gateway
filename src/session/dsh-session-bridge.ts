@@ -168,34 +168,47 @@ export class DshSessionBridge implements SessionBridge {
     try {
       const providers = llm.listProviders()
       if (!Array.isArray(providers)) return { models: [], incomplete: true }
+      const source = llm
       const models: AvailableModel[] = []
       const directory: AvailableProvider[] = []
       const seen = new Set<string>()
       let incomplete = false
-      for (const entry of providers.slice(0, 50)) {
+      // Query every advertised provider, but limit concurrent requests so a
+      // large catalog does not overload the native DSH LLM service.
+      const availableProviders = providers.flatMap(entry => {
         const id = entry && typeof entry.id === 'string' ? entry.id : ''
-        if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) continue
-        const providerName = typeof entry?.name === 'string' && entry.name.trim()
-          ? entry.name.trim().slice(0, 100) : ''
-        const providerModels: AvailableModel[] = []
-        try {
-          const available = await llm.listModels(id)
-          if (!Array.isArray(available)) { incomplete = true; continue }
-          for (const item of available.slice(0, 200)) {
+        if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) return []
+        const name = typeof entry?.name === 'string' ? entry.name.trim().slice(0, 100) : ''
+        return [{ id, name }]
+      })
+      for (let offset = 0; offset < availableProviders.length; offset += 6) {
+        const batch = await Promise.all(availableProviders.slice(offset, offset + 6).map(async provider => {
+          try {
+            return { provider, result: await source.listModels!(provider.id) }
+          } catch {
+            return { provider, result: undefined }
+          }
+        }))
+        for (const { provider, result } of batch) {
+          if (!Array.isArray(result)) { incomplete = true; continue }
+          const providerModels: AvailableModel[] = []
+          for (const item of result) {
             const model = item && typeof item.id === 'string' ? item.id : ''
-            if (!/^[A-Za-z0-9_.:/-]{1,96}$/.test(model)) continue
-            const key = id + '/' + model
+            if (!/^[A-Za-z0-9_./:@+-]{1,160}$/.test(model)) continue
+            const key = provider.id + '/' + model
             if (seen.has(key)) continue
             seen.add(key)
             const name = typeof item.name === 'string' ? item.name.slice(0, 100) : ''
-            const availableModel: AvailableModel = { provider: id, model, ...(name ? { name } : {}) }
+            const availableModel: AvailableModel = {
+              provider: provider.id, model, ...(name ? { name } : {}),
+            }
             models.push(availableModel)
             providerModels.push(availableModel)
           }
-        } catch { incomplete = true; continue }
-        // Empty groups are omitted: a selector must never show a dead route.
-        if (providerModels.length > 0) {
-          directory.push({ id, ...(providerName ? { name: providerName } : {}), models: providerModels })
+          if (providerModels.length > 0) {
+            directory.push({ id: provider.id, ...(provider.name ? { name: provider.name } : {}),
+              models: providerModels })
+          }
         }
       }
       return { models, providers: directory, incomplete }

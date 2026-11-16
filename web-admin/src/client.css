@@ -37,6 +37,40 @@
 .fga-bots { display:flex; flex-direction:column; gap:10px; }
 .fga-bot { display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end; border:1px solid var(--border,#8884); border-radius:12px; padding:13px; }
 .fga-bot .fga-button { grid-column:1 / -1; }
+.fga-settings-group{font-size:14px;font-weight:630;letter-spacing:-.01em;margin:1px 0 -4px}
+.fgw-advanced>.fgw-muted{font-size:12px;line-height:1.55}
+/* Model routing — quiet native controls, legible on desktop and small screens. */
+.fga-model-heading{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px 20px;margin-bottom:-3px}
+.fga-model-heading h3{font-size:15px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+.fga-model-heading p{margin:0}
+.fga-model-count{flex:none;font-size:12px;color:var(--muted-foreground,#9399a3);padding-top:3px}
+.fga-model-card{display:flex;flex-direction:column;gap:11px;padding:17px 18px;border:1px solid var(--border,#8884);border-radius:12px;background:var(--card,transparent);min-width:0}
+.fga-model-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:14px}
+.fga-model-card-head strong{font-weight:630}
+.fga-model-card>.fga-hint{margin:0}
+.fga-model-search,.fga-model-select{width:100%;min-width:0}
+.fga-model-search{min-height:38px}
+.fga-model-select{min-height:42px}
+.fga-model-note{margin:0;color:var(--muted-foreground,#9399a3);font-size:12px;line-height:1.55}
+.fga-model-multiselect{display:flex;flex-wrap:wrap;align-items:center;gap:7px;min-height:46px;padding:7px;border:1px solid var(--border,#8888);border-radius:10px;background:var(--background,transparent);min-width:0}
+.fga-model-multiselect:focus-within{outline:2px solid var(--ring,#6b9cee);outline-offset:1px}
+.fga-model-tag{display:inline-flex;align-items:center;gap:7px;max-width:100%;min-height:29px;border:1px solid var(--border,#8885);background:var(--muted,#8882);padding:3px 5px 3px 8px;border-radius:7px;font-size:12px}
+.fga-model-tag-index{font-size:10px;font-variant-numeric:tabular-nums;opacity:.6}
+.fga-model-tag-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
+.fga-model-tag-remove{appearance:none;display:inline-grid;place-items:center;width:22px;height:22px;border:0;border-radius:5px;background:transparent;color:inherit;opacity:.67;font-size:17px;cursor:pointer;line-height:1}
+.fga-model-tag-remove:hover,.fga-model-tag-remove:focus-visible{background:var(--background,#8882);opacity:1}
+.fga-model-inline-search{flex:1 1 120px;min-width:95px;padding:6px 5px;border:0;outline:none;background:transparent;color:inherit;font:inherit;font-size:12px}
+.fga-model-add{flex:0 1 175px;min-width:105px;max-width:100%;padding:7px 5px;border:0;background:transparent;color:var(--foreground,inherit);font:inherit;font-size:12px;cursor:pointer}
+.fga-model-add:disabled{cursor:default;opacity:.55}
+.fga-model-card select option{background:var(--background,#161616);color:var(--foreground,#f4f4f4)}
+@media(max-width:660px){
+  .fga-model-card{padding:14px 12px}
+  .fga-model-heading{gap:6px}
+  .fga-model-count{width:100%;padding:0}
+  .fga-model-tag-label{max-width:min(42vw,180px)}
+  .fga-model-inline-search{flex-basis:100%;min-width:0}
+  .fga-model-add{flex:1 1 100%;max-width:none;text-align:left;min-height:34px}
+}
 /* Network proxy: source/effective-address line and inline actions. */
 .fga-proxy-status { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; border:1px solid var(--border,#8884); border-radius:10px; padding:10px 13px; background:var(--muted,#8881); }
 .fga-proxy-source { font-size:12px; font-weight:620; }

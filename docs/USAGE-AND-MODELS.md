@@ -28,21 +28,39 @@ Web 中配置的模型不一定安装到飞书 Profile。模型目录不产生 L
 模型筛选包含 Gateway 当前目录及历史中出现过的模型，但目录中的模型不代表
 已完成凭据或真实调用验证。飞书内使用 /models 查看目录和当前会话模型。
 
-## 管理后台的模型与 Fallback 选择
+## 管理后台的模型路由
 
-「飞书管理 → 模型与连接」不再使用“留空代表继承原 Profile”的空值约定：Provider 与模型
-选项直接来自**运行飞书通道的 DSH Profile**，不是 DSH Web Profile。
+在「飞书管理 → 模型与连接」中，主模型只需从**所有可读取的模型**中选择，
+无需单独选择 Provider。可以按模型 ID、名称或提供方搜索。
 
-- Gateway 通过 `ctx.get('llm')` 的 `listProviders()` / `listModels()` 生成 provider 分组目录，
-  写入脱敏的 `stateDir/ops-runtime.json`（`modelCatalog.providers`、`agentRoute`、
-  `profileDefaultRoute`）。Web Admin 只读这份白名单快照，不查询自己的模型。
-- 表单优先级：Host 当前生效路由（`agentRoute`）→ DSH Profile 默认模型
-  （`profileDefaultRoute`）→ 已保存的托管值。目录不可用或通道离线时保留上次快照并标注；
-  从未保存过路由时表单为空且不会伪造默认值。已保存但目录中已不存在的路由会以
-  “（不在 DSH 目录）”保留为可选项，避免选择框空白。
-- 保存时显式写入 `agent: { provider, model, fallback }`。`fallback: null` 表示清除；
-  主模型与 Fallback 必须是两个不同且完整的 `provider/model` 路由，否则 API 拒绝保存。
-- Fallback 不是 DSH 原生能力：如果主模型请求在**该轮尚未执行任何工具**（无副作用）时失败，
-  Gateway 会把该 Session 切换到 Fallback 模型并重试一次；一旦执行过工具，失败按原失败路径
-  处理，绝不重放。切换会写入运维事件 `task/fallback-retry`。
-- 修改保存后需重启独立飞书通道生效；飞书内 `/models` 会同时显示当前生效的 Fallback 路由。
+备用模型在同一个输入框中作为标签显示：选择一个模型会追加到最后，
+点击对应标签的 × 可移除。标签上的数字是尝试顺序，最多 8 个；清空标签即可关闭备用模型。
+主模型变更后，与主模型重复的备用项会自动移除。保存后需重启独立飞书通道。
+
+- 模型目录来源于运行中的 Feishu Gateway Host，通过 DSH `llm.listProviders()` 与
+  `llm.listModels(provider)` 获取，Web Admin 只读取脱敏的 Gateway 遥测快照。
+  DSH Web 自身配置的模型不代表 Gateway Host 一定可用。
+- 主模型来源优先级：**已保存托管路由** → **当前运行路由** → **DSH Profile 默认路由**；
+  即使通道尚未重启，界面仍优先显示待生效的保存值。已经不在目录中的已保存路由
+  会保留并标明，避免覆盖尚未确认的配置。
+- 新保存结构为 `agent: { provider, model, fallbacks: [{ provider, model }, ...] }`；
+  `fallbacks: []` 表示清空。旧单 Fallback `fallback: { provider, model }`
+  仍会读取；旧 `fallback: null` 继续表示显式清空。
+- 备用模型按配置顺序依次尝试，每个最多一次。只有原生模型请求明确在**执行工具之前**
+  失败时才自动重试；一旦有工具调用发生，该轮不会自动重放，避免重复副作用。
+  切换记录为运维事件 `task/fallback-retry`。
+- 飞书 `/models` 从相同的 Gateway Host 查询完整可发现目录并标出当前会话模型，
+  不受后台模型选择的过滤限制；长名单会拆成数条消息展示。如果任何提供方
+  查询失败，会显式提示目录可能不完整。发现模型不等于凭据已验证或真实调用成功。
+
+### 验收要点
+
+1. 管理后台搜索不同 Provider 的模型，选择一个主模型；添加两个不同提供方的备用模型，
+   查看标签顺序，移除、重新添加并保存。
+2. 重启飞书通道，刷新页面确认列表与次序仍在；在飞书发送 `/models`，
+   核对提供方数量与当前生效路由，长列表不应被截断。
+3. 用 Mock SessionBridge 模拟连续两个无工具错误，确认依次切换；
+   模拟已经执行工具的错误，确认不再重试。
+4. 保存空备用列表，确认重启后旧 Fallback 不会再次出现；
+   检查既有旧格式配置仍能显示并正常调用。
+5. 在手机宽度检查模型文本不溢出，标签 × 可操作、搜索和下拉框可用。
