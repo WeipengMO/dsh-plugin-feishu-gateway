@@ -1,110 +1,41 @@
-# Session lifecycle management — Issue #16
+# Session 生命周期与数据归属（技术说明）
 
-## Ownership boundary
+面向开发与管理员。普通用户建议先看 [会话管理说明](SESSION-CENTER-UX.md)。
 
-Feishu Gateway owns the Feishu bot/chat → DSH native Session binding only.
-The original native DSH conversation, history and model state remain DSH-owned.
-No operation here deletes a native DSH Session.
+## 两种记录，不是同一回事
 
-## Phase 1 — inventory and storage (implemented)
+| 数据 | 由谁拥有 | 操作影响 |
+| --- | --- | --- |
+| **DSH 原生 Session** | DSH Session 持久化与 Workspace 服务 | 真正的聊天历史、上下文、侧栏归档与恢复 |
+| **飞书聊天关联** | Gateway 的 `sessions.json` 关联索引 | 哪段飞书聊天继续使用哪个 DSH Session |
+| **飞书消息投递** | Gateway Inbox/Outbox 及审计 | 已接收、待处理、已发送、失败记录 |
+| **飞书工作区显示** | DSH WorkspaceRegistry | 哪些历史会话显示在飞书工作区 |
 
-In **飞书管理 → Session 管理**, filter history by UTC last-activity date
-range, bot ID, chat ID / hashed reference, Session ID / hashed reference,
-status, or creation/last-active sort; use pagination.
+一段会话即使“未关联飞书聊天”，**也可能是有价值的历史**；“孤儿”不是删除资格。归档会话不会减少 DSH 真实历史占用。
 
-Authenticated GET /api/feishu-admin/sessions accepts from, to, bot, chat,
-session, status, sort, direction, page and pageSize (1–100).
-The response exposes only SHA-256-shortened Session and chat references,
-not their original identifiers or message text.
+## 已有操作及安全边界
 
-The disk panel totals only whitelisted Gateway-owned files: Inbox, Outbox,
-bindings, events, runtime snapshot, dedup, Token usage and operator mailbox.
-Do not read it as the total size of native DSH history.
+**DSH 原生归档**：Web 端基于只读 Header 枚举，预览后才调用 DSH WorkspaceRegistry 的归档能力。当前限制为未关联、未运行且未被活动定时任务引用的会话。仅移动侧栏可见性，**不删原始文件**。
 
-## Phase 2 — safe manual archive/unlink (implemented)
+**恢复归档**：若当前 DSH WorkspaceRegistry 暴露 `unarchiveSession`，Web Admin 提供恢复操作；旧运行时无该能力时禁用按钮并提示。不复制数据、不自动重建已解除的飞书绑定。
 
-For a non-active row, click 归档 or 解除绑定. The browser:
-1. Posts to /sessions/preview, which checks DSH authentication, fresh Gateway
-   telemetry, last-activity version and pending work, and returns a one-time
-   30-second confirmation token.
-2. Displays the affected hashed references, estimated binding bytes and
-   explicit native-DSH-history-preserved statement for confirmation.
-3. Posts the token once to /sessions/commands; the response is QUEUED,
-   not proof of completion.
+**飞书关联隐藏 / 解除关联**：管理端发起预览后使用 30 秒一次性令牌，由唯一 Gateway owner 串行处理，重新验证活动任务、Inbox、审批、Outbox 和绑定状态。解除关联意味着下次飞书消息新建 Session，而**非删除旧 Session**。批量操作每次最多 20 条，部分记录变更时可能被跳过，不承诺全有或全无。
 
-The exclusively owning Gateway process claims the durable mailbox request
-at most once, serializes it behind work in the same chat and rechecks
-active turns, unresolved Inbox, pending approvals, unsent Outbox, request age
-and binding version before applying the change. Results appear in
-告警中心 → 最近后台操作结果.
+**自动整理飞书工作区**：默认关闭；仅自动处理明确关联的现有聊天和活动任务，不会擅自搬迁首次部署前的全部旧历史。定时任务移除后使用等待宽限期；手动取消归档后不重复自动隐藏已处理记录。仅更改显示归属，不接管 Agent writer。
 
-Archive marks a Gateway-local binding as archived; a future successful turn
-unarchives it. Unlink removes only the Feishu association; a later message
-creates a new DSH Session. DSH-native history survives both.
+## 仍未实现：回收站 / 删除 / 自动清理
 
-Do not manually delete a live stateDir or interpret a hashed reference as
-an authorization credential.
+真正的回收站应允许恢复被删除候选，永久删除必须处理 DSH 原生数据及其它引用，不可用删除 Gateway `sessions.json` 映射替代。自动规则应基于可靠的**最近活动时间**；若原生 Header 只有创建时间，必须标注活动时间未知，**不能猜测为最后使用日期**。
 
-## Phase 2 extension — bounded batch management (development, pending E2E)
+详细的功能约束与验收见 [Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)。
 
-The Session inventory supports selecting at most **20 rows from the current
-page**, then previewing and confirming a bulk archive or Feishu-only unlink.
+## 验证
 
-1. POST `/sessions/batch/preview`: strict hashed Session/chat references,
-   expected last-activity timestamps and a single action. Requires a fresh
-   runtime snapshot, no unresolved work and no active selected binding.
-2. Returns a **30-second, single-use** confirmation token and the estimated
-   total size of affected JSON binding entries. This is NOT a prediction of
-   reclaimed disk bytes and does not delete conversation content.
-3. POST `/sessions/commands` consumes the token and queues one bounded
-   `batch-sessions` operation in the existing cross-profile mailbox.
-4. The owner Gateway independently validates the command, resolves each
-   reference to exactly one binding, serializes against the matching chat scope,
-   then checks unchanged activity version, active turns, Inbox, approvals and
-   Outbox before each archive/unlink.
-5. The result is **not all-or-nothing**: in-flight changes become skipped
-   entries with a `conflict` result, while other safe entries may succeed.
-   A crash after partial completion is never automatically replayed. The
-   operator must inspect the results and preview a new batch.
+```bash
+pnpm run verify
+pnpm --dir web-admin test
+```
 
-This feature does not provide Inbox/Outbox log compaction, retention automation,
-measured reclaim size, native Session deletion, or production acceptance.
+还需在真实 DSH 版本验证归档→恢复保持原 sessionId/标题/历史完整；验证正在运行、已绑定、定时任务引用的会话被拒绝；验证旧版无原生恢复 API 时 UI 只读降级。CI 自动测试和真实会话清理**不是一回事**。
 
-## Still pending — Phase 3
-
-- Bulk selection, historical Inbox content scrubbing, audit-log cleanup and
-  actual measured space reclamation.
-- Configurable automatic retention, scheduled dry-run and execution, quota
-  threshold enforcement, cleanup recovery and retention audit history.
-- Per-Session message/task counts and more precise reclaim estimates.
-- Live-tenant, real-Host restart and large-scale cleanup acceptance tests.
-
-These require a separate owner-serialized compaction/retention implementation.
-They are NOT silently performed by Archive or Unlink.
-
-## Local verification
-
-Run from the repository root:
-
-    pnpm install --frozen-lockfile
-    pnpm run typecheck
-    pnpm run build
-    pnpm run test
-    cd web-admin && node --test test/*.test.mjs
-
-Update both Gateway and Web Admin packages in an isolated test profile before
-exercising manual lifecycle actions; a newer UI talking to an older Gateway
-will not process the new command types.
-
-## Issue #34 — DSH-native organization (separate from Gateway binding cleanup)
-
-The native Session ledger and workspace reconciliation in Web Admin are a
-separate, reversible DSH sidebar operation. They **never** delete native
-history and **never** resume Gateway-owned Sessions. First deployment is
-opt-in, with a header-only preview; unconfirmed historical orphans must not be
-automatically attached to the new workspace. Native archive requires its own
-one-time confirmation, distinct from Issue #16's Gateway binding archive.
-
-See [FEISHU-SESSION-ORGANIZATION.md](FEISHU-SESSION-ORGANIZATION.md) for
-the upgrade order, manual historical migration, live-Host acceptance list,
-safety rules and rollback procedure.
+更多：[Session 管理 UI](SESSION-CENTER-UX.md)、[工作区整理](FEISHU-SESSION-ORGANIZATION.md)、[开发与测试](DEVELOPMENT.md)。
