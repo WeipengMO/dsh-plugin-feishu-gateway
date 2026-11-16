@@ -161,6 +161,7 @@ async function sourceData(stateDir, persistence, registry) {
     const scheduleTitle = tasks.get(id)
     const isScheduled = id.startsWith('feishu-schedule-')
     const status = archived.has(id) ? 'archived' :
+      runtime.stale && (binding || scheduleTitle) ? 'unknown' :
       active.has(hash(id)) ? 'active' : binding || scheduleTitle ? 'idle' : 'unbound'
     const chatName = binding?.chatId ? nameMap.get(binding.chatId) : undefined
     records.push({
@@ -174,6 +175,7 @@ async function sourceData(stateDir, persistence, registry) {
       status, archived: archived.has(id), orphan: !binding && !scheduleTitle,
       createdAt: binding?.createdAt || ms(header?.createdAt),
       lastActiveAt: binding?.lastActiveAt || ms(header?.createdAt),
+      lastActiveKnown: Boolean(binding?.lastActiveAt),
     })
   }
   return { available: true, root, runtime, records, current, activeTasks, archived, tasks,
@@ -188,7 +190,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
   const search = String(query.search || '').slice(0, 128).toLowerCase()
   const from = query.from ? Date.parse(query.from + 'T00:00:00.000Z') : 0
   const to = query.to ? Date.parse(query.to + 'T23:59:59.999Z') : Infinity
-  const status = ['all', 'active', 'idle', 'unbound', 'archived'].includes(query.status)
+  const status = ['all', 'active', 'idle', 'unknown', 'unbound', 'archived'].includes(query.status)
     ? query.status : 'all'
   const type = ['all', 'schedule', 'group', 'p2p'].includes(query.type) ? query.type : 'all'
   const page = Number.isInteger(query.page) && query.page > 0 && query.page < 100000 ? query.page : 1
@@ -222,7 +224,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
       type: row.type, scheduleTitle: row.scheduleTitle,
       sessionTitle, status: row.status, orphan: row.orphan,
       legacy: row.legacy, bindingArchived: row.bindingArchived,
-      createdAt: row.createdAt, lastActiveAt: row.lastActiveAt,
+      createdAt: row.createdAt, lastActiveAt: row.lastActiveAt, lastActiveKnown: row.lastActiveKnown,
     })
   }
   return { available: true, workspaceTitle: data.workspace?.title || null,
