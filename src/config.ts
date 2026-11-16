@@ -53,6 +53,10 @@ export const Config: ConfigValidator = Schema.object({
       provider: Schema.string(),
       model: Schema.string(),
     }),
+    fallbacks: Schema.array(Schema.object({
+      provider: Schema.string(),
+      model: Schema.string(),
+    })),
   }).default({}).description('Optional model route override plus a Gateway-owned fallback rescue route.'),
   stateDir: Schema.string().default('')
     .description('Durable state directory. Empty resolves to $DSH_HOME/feishu-gateway.'),
@@ -188,6 +192,7 @@ export function normalizeAgentRoute(value: unknown): AgentRoute {
     model?: string
     reasoningEffort?: string
     fallback?: { provider: string; model: string }
+    fallbacks?: { provider: string; model: string }[]
   } = {}
   for (const key of ['provider', 'model', 'reasoningEffort'] as const) {
     const raw = value[key]
@@ -195,14 +200,29 @@ export function normalizeAgentRoute(value: unknown): AgentRoute {
     const text = raw.trim()
     if (text && ROUTE_VALUE.test(text)) route[key] = text
   }
-  const fallback = value.fallback
-  if (isRecord(fallback)) {
-    const provider = typeof fallback.provider === 'string' ? fallback.provider.trim() : ''
-    const model = typeof fallback.model === 'string' ? fallback.model.trim() : ''
-    if (provider && model && ROUTE_VALUE.test(provider) && ROUTE_VALUE.test(model) &&
-      !(route.provider === provider && route.model === model)) {
-      route.fallback = { provider, model }
+  const parseFallback = (item: unknown): { provider: string; model: string } | undefined => {
+    if (!isRecord(item)) return undefined
+    const provider = typeof item.provider === 'string' ? item.provider.trim() : ''
+    const model = typeof item.model === 'string' ? item.model.trim() : ''
+    if (!provider || !model || !ROUTE_VALUE.test(provider) || !ROUTE_VALUE.test(model) ||
+      (route.provider === provider && route.model === model)) return undefined
+    return { provider, model }
+  }
+  if (Array.isArray(value.fallbacks)) {
+    const seen = new Set<string>()
+    route.fallbacks = []
+    for (const item of value.fallbacks.slice(0, 8)) {
+      const choice = parseFallback(item)
+      if (!choice) continue
+      const key = choice.provider + '\\0' + choice.model
+      if (seen.has(key)) continue
+      seen.add(key)
+      route.fallbacks.push(choice)
     }
+  } else {
+    // Keep existing Profiles on the one-fallback format until explicitly edited.
+    const fallback = parseFallback(value.fallback)
+    if (fallback) route.fallback = fallback
   }
   return route
 }
