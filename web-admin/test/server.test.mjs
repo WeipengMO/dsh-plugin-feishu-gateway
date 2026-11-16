@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -914,7 +915,7 @@ test('Session batch preview is authenticated, single-use, and queues hashed refe
   const f = await fixture()
   try {
     await mkdir(f.stateDir, { recursive: true })
-    const ref = v => (await import('node:crypto')).createHash('sha256').update(v).digest('hex').slice(0, 16)
+    const ref = v => createHash('sha256').update(v).digest('hex').slice(0, 16)
     const now = Date.now()
     const bindings = {
       'default:oc_private_1': { sessionId: 'native-private-1', createdAt: now - 400000,
