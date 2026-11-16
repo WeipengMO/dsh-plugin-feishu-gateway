@@ -188,7 +188,7 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
           typeof model !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(model)) {
           throw new Error('invalid agent fallback model route')
         }
-        const key = provider + '\\0' + model
+        const key = provider + '\0' + model
         if (seen.has(key)) throw new Error('duplicate agent fallback route')
         if (agent.provider === provider && agent.model === model) {
           throw new Error('agent fallback must differ from the primary route')
