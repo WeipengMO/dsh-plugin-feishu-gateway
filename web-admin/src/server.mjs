@@ -135,13 +135,39 @@ export function validateConfig(input) {
   }
   if (input.agent !== undefined) {
     if (!object(input.agent)) throw httpError(400, 'agent must be an object')
-    exactKeys(input.agent, ['provider', 'model', 'fallback'])
+    exactKeys(input.agent, ['provider', 'model', 'fallback', 'fallbacks'])
     const agent = {}
     for (const key of ['provider', 'model']) if (input.agent[key] !== undefined) {
       if (typeof input.agent[key] !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(input.agent[key])) {
         throw httpError(400, 'invalid model route ' + key)
       }
       agent[key] = input.agent[key]
+    }
+    if (input.agent.fallback !== undefined && input.agent.fallbacks !== undefined) {
+      throw httpError(400, 'use either fallback or fallbacks')
+    }
+    if (input.agent.fallbacks !== undefined) {
+      const candidates = input.agent.fallbacks
+      if (!Array.isArray(candidates) || candidates.length > 8) {
+        throw httpError(400, 'fallbacks must be an array (max 8)')
+      }
+      const seen = new Set()
+      agent.fallbacks = candidates.map(choice => {
+        if (!object(choice)) throw httpError(400, 'fallback route must be an object')
+        exactKeys(choice, ['provider', 'model'])
+        for (const key of ['provider', 'model']) {
+          if (typeof choice[key] !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(choice[key])) {
+            throw httpError(400, 'invalid fallback model route ' + key)
+          }
+        }
+        const id = choice.provider + '\\0' + choice.model
+        if (seen.has(id)) throw httpError(400, 'duplicate fallback route')
+        if (agent.provider === choice.provider && agent.model === choice.model) {
+          throw httpError(400, 'fallback route must differ from the primary route')
+        }
+        seen.add(id)
+        return { provider: choice.provider, model: choice.model }
+      })
     }
     const fallback = input.agent.fallback
     if (fallback === null) {
