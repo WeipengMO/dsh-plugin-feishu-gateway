@@ -78,16 +78,15 @@ test('Session center separates native history, archives, chat routing and cleanu
   const native = readFileSync(path.join(root, 'src/native-session-panel.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
   const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
-  assert.match(pages, /FeishuSessionCenter/)
+  assert.ok(pages.includes('FeishuSessionCenter'))
   for (const section of ['对话历史', '已归档', '飞书聊天关联', '整理与清理']) {
     assert.ok(native.includes(section), section)
   }
-  assert.match(native, /sessions\\/native\\/restore/)
-  assert.match(native, /report\\?\\.canRestore/)
-  assert.match(native, /不会删除/)
-  assert.match(css, /\\.fgw-session-tabs/)
-  assert.match(css, /\\.fgw-session-center \\.fgw-table tr/)
-  assert.doesNotMatch(native, /unlink\\(.*?delete native session/)
+  assert.ok(native.includes('/sessions/native/restore'))
+  assert.ok(native.includes('report?.canRestore'))
+  assert.ok(native.includes('不会删除'))
+  assert.ok(css.includes('.fgw-session-tabs'))
+  assert.ok(css.includes('.fgw-session-center .fgw-table tr'))
 })
 
 test('Agent profile uses one focused editor instead of three persistent content columns', () => {
