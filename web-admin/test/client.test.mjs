@@ -110,6 +110,31 @@ test('Agent profile keeps draft safeguards and native backend contracts', () => 
   assert.match(profile, /AGENTS\.local\.md/)
 })
 
+test('every workbench view shares one page-frame spec (no Agent 档案 margin drift)', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  // One source of truth: gutters, column width and header spacing are tokens on .fgw-content.
+  assert.match(css, /\.fgw-content \{[^}]*--fgw-gutter-x:clamp\(18px,4vw,54px\)/)
+  assert.match(css, /\.fgw-content \{[^}]*--fgw-page-max:1280px/)
+  assert.match(css, /\.fgw-content \{[^}]*--fgw-header-gap:26px/)
+  assert.match(css, /padding:var\(--fgw-gutter-top\) var\(--fgw-gutter-x\) var\(--fgw-gutter-bottom\)/)
+  assert.match(css, /\.fgw-content > \* \{ max-width:var\(--fgw-page-max,1280px\)/)
+  assert.match(css, /margin-bottom:var\(--fgw-header-gap,26px\)/)
+  // Responsive frames adjust the tokens only; no duplicated raw padding values.
+  assert.ok(css.includes('--fgw-gutter-x:20px'))
+  assert.ok(css.includes('--fgw-gutter-x:15px'))
+  assert.doesNotMatch(css, /\.fgw-content \{[^}]*padding:\d/)
+  // Agent 档案 no longer declares its own gutters, column width or header spacing,
+  // neither in source nor in the built client bundle.
+  for (const text of [css, built]) {
+    assert.doesNotMatch(text, /\.fgw-content-profile\s*\{[^}]*padding:/)
+    assert.doesNotMatch(text, /\.fgw-content-profile>\*\{max-width:/)
+    assert.doesNotMatch(text, /\.fgw-content-profile \.fgw-topbar\{margin-bottom:/)
+    assert.doesNotMatch(text, /1580px|clamp\(16px,2\.6vw,34px\)/)
+  }
+  // The semantic hook is still applied to the profile view.
+  assert.match(workbench, /fgw-content-profile/)
+})
+
 
 test('network proxy panel uses the new admin endpoints and never echoes a saved URL', () => {
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')

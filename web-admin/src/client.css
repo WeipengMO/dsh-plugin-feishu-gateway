@@ -61,9 +61,11 @@
 .fgw-nav-item.is-active .fgw-nav-symbol { color:var(--primary,#467cf4); }
 .fgw-subnav-foot { margin-top:auto; padding:14px 9px 0; border-top:1px solid var(--border,#9993); }
 .fgw-subnav-foot p { font-size:11px; color:var(--muted-foreground,#8e98a5); line-height:1.5; margin:10px 0 0; }
-.fgw-content { min-width:0; min-height:0; overflow-y:auto; padding:34px clamp(18px,4vw,54px) 38px; }
-.fgw-content > * { max-width:1280px; margin-left:auto; margin-right:auto; }
-.fgw-topbar { display:flex; justify-content:space-between; align-items:center; gap:15px; margin-bottom:26px; }
+/* Shared page frame — one layout spec for every workbench view (including Agent 档案).
+ * Override these tokens, never the raw padding/max-width, so all pages stay aligned. */
+.fgw-content { --fgw-gutter-x:clamp(18px,4vw,54px); --fgw-gutter-top:34px; --fgw-gutter-bottom:38px; --fgw-page-max:1280px; --fgw-header-gap:26px; min-width:0; min-height:0; overflow-y:auto; padding:var(--fgw-gutter-top) var(--fgw-gutter-x) var(--fgw-gutter-bottom); }
+.fgw-content > * { max-width:var(--fgw-page-max,1280px); margin-left:auto; margin-right:auto; }
+.fgw-topbar { display:flex; justify-content:space-between; align-items:center; gap:15px; margin-bottom:var(--fgw-header-gap,26px); }
 .fgw-eyebrow { font-size:10px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted-foreground,#8a95a5); font-weight:700; margin-bottom:6px; }
 .fgw-topbar h1 { margin:0; font-size:25px; line-height:1.25; font-weight:710; letter-spacing:-.025em; }
 .fgw-top-actions { display:flex; align-items:center; gap:15px; }
@@ -131,7 +133,7 @@
 .fgw-credential-indicator { font-size:12px; color:var(--muted-foreground,#8e98a5); }
 @media(max-width:1100px) {
  .fgw-root { grid-template-columns:180px minmax(0,1fr); }
- .fgw-content { padding:25px 20px; }
+ .fgw-content { --fgw-gutter-top:25px; --fgw-gutter-bottom:25px; --fgw-gutter-x:20px; }
  .fgw-subnav { padding-left:9px; padding-right:9px; }
 }
 @media(max-width:830px) {
@@ -140,7 +142,7 @@
  .fgw-subnav-brand,.fgw-subnav-foot { display:none; }
  .fgw-subnav-list { flex-direction:row; overflow-x:auto; white-space:nowrap; gap:6px; }
  .fgw-nav-item { width:auto; flex:none; padding:8px 11px; }
- .fgw-content { padding:22px 15px 30px; }
+ .fgw-content { --fgw-gutter-top:22px; --fgw-gutter-bottom:30px; --fgw-gutter-x:15px; }
  .fgw-two-column { grid-template-columns:minmax(0,1fr); }
 }
 @media(max-width:550px) {
@@ -192,10 +194,9 @@
 }
 
 
-/* Agent profile workspace: one file rail, one focused editor; no duplicate page header. */
-.fgw-content-profile{padding:25px clamp(16px,2.6vw,34px) 28px;}
-.fgw-content-profile>*{max-width:1580px;}
-.fgw-content-profile .fgw-topbar{margin-bottom:18px;}
+/* Agent profile workspace: one file rail, one focused editor; no duplicate page header.
+ * It deliberately inherits the shared .fgw-content page frame (gutters, column width,
+ * header spacing) so it lines up with every other view; only inner editor styling differs. */
 .fgw-agent-profile{min-width:0;display:flex;flex-direction:column;gap:12px;}
 .fgw-profile-summary{display:flex;align-items:center;justify-content:space-between;min-height:58px;padding:10px 15px;gap:16px;border:1px solid var(--border,#8884);border-radius:12px;background:var(--card,transparent);}
 .fgw-profile-path{min-width:0;display:flex;flex-direction:column;gap:4px;flex:1;}
@@ -320,7 +321,6 @@
  .fgw-profile-document-identity h2{font-size:18px;}
 }
 @media(max-width:690px){
- .fgw-content-profile{padding:14px 12px 26px;}
  .fgw-profile-shell{display:flex;flex-direction:column;height:auto;min-height:630px;overflow:visible;}
  .fgw-profile-mobile-files{display:block;padding:11px 12px;border-bottom:1px solid var(--border,#8884);}
  .fgw-profile-mobile-files .fgw-refresh{max-width:100%;overflow:hidden;text-overflow:ellipsis;}
