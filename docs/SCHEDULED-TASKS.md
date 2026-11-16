@@ -161,7 +161,7 @@ wall-clock 转 UTC（DST 安全、时区显式，不用固定数值偏移），�
 - **兜底通知**：`refresh()` 若发现新的原生 `lastDelivery` 在 5 分钟宽限期内没有匹配的
   Gateway run（Host 创建的 Session 事件被 scope 过滤掉、Host 重启打断 turn、或 turn 在
   产出任何 assistant 消息前就失败时会发生），发送一条有界提示
-  「定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在 DSH Session 查看详情」，
+  「定时任务已触发，但未获取到执行结果（可能仍在运行或已失败）；请在会话中查看详情」，
   并在执行台账补一条 `skipped` 记录（`error=execution result unavailable`），
   避免「只看到已触发卡片、却没有任何结果或失败说明」。
 - **失败 / 空回复**：`notify` 含 `failure` 时发送有界失败通知。命令结果
