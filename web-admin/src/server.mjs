@@ -726,6 +726,17 @@ export function createAdminHandler(options = {}) {
   // Short-lived, one-time confirmation tokens live only in authenticated Web.
   const sessionPreviews = new Map()
   const nativePreviews = new Map()
+  // Raw native ids may embed Feishu chat identifiers. Organizer previews only
+  // need counts and stable references; reveal full ids via the explicit ledger
+  // toggle rather than a second unredacted endpoint.
+  const nativeRef = id => createHash('sha256').update(id).digest('hex').slice(0, 16)
+  const publicPlan = report => !report?.available ? report : ({
+    ...report,
+    attach: report.attach.map(nativeRef),
+    archive: report.archive.map(row => ({ sessionRef: nativeRef(row.id), reason: row.reason })),
+    legacy: report.legacy.map(nativeRef),
+    skipped: report.skipped.map(row => ({ sessionRef: nativeRef(row.id), reason: row.reason })),
+  })
   const sessionServices = () => typeof options.sessionServices === 'function' ? options.sessionServices() : (options.sessionServices || {})
   // Save/credential/restart commands are serialized within this Web Host.
   // A stale ETag check must not race another accepted config write.
@@ -802,7 +813,7 @@ export function createAdminHandler(options = {}) {
         const settings = await organizationSettings(stateDir)
         // Session ids already appear in authenticated DSH Web. This is a
         // header-only preview, not a filesystem walk or a write operation.
-        return json(res, 200, { ok: true, report, settings })
+        return json(res, 200, { ok: true, report: publicPlan(report), settings })
       }
       if (req.method === 'PUT' && route === PREFIX + '/sessions/organizer/settings') {
         return await serializeMutation(async () => {
@@ -816,7 +827,7 @@ export function createAdminHandler(options = {}) {
           const body = await readBody(req)
           exactKeys(body, [])
           const report = await reconcileSessionOrganization(stateDir, sessionServices(), { dryRun: false })
-          return json(res, 200, { ok: true, report })
+          return json(res, 200, { ok: true, report: publicPlan(report) })
         })
       }
       if (req.method === 'POST' && route === PREFIX + '/sessions/native/preview') {
