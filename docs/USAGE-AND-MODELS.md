@@ -4,7 +4,7 @@
 
 - `/models` 列出当前飞书 Gateway Host 已注册、可发现的模型，并标出当前会话模型。
 - `/model provider/model` 切换当前聊天绑定的 DSH 原生 Session 模型；
-  例如 `/model magpie/group/hy4-free`。其他聊天、定时任务和 DSH 默认模型
+  例如 `/model magpie/group/deepseek`。其他聊天、定时任务和 DSH 默认模型
   不会因此修改。模型目录可能因提供方不可用而不完整。
 - `/stop` 请求停止当前聊天任务；已经执行的副作用不会回滚。旧 `/cancel`
   暂作为兼容别名。切换与当前聊天工作串行执行。

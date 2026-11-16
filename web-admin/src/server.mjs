@@ -21,6 +21,8 @@ import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
+import { readExecPolicy, writeExecPolicy, normalizeExecPolicy, defaultProfilePath,
+  EXEC_MODES, APPROVAL_POLICIES, EXEC_OVERLAY_FILE } from './exec-policy.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -717,6 +719,8 @@ export function createAdminHandler(options = {}) {
   if (typeof reject !== 'function') throw new Error('DSH connection.requestRejection required')
   const managed = path.join(stateDir, 'admin-config.json')
   const proxyFile = path.join(stateDir, PROXY_FILE)
+  const profilePath = options.profilePath ?? defaultProfilePath(home)
+  const execOverlay = path.join(stateDir, EXEC_OVERLAY_FILE)
   // Short-lived, one-time confirmation tokens live only in authenticated Web.
   const sessionPreviews = new Map()
   // Save/credential/restart commands are serialized within this Web Host.
@@ -1046,6 +1050,28 @@ export function createAdminHandler(options = {}) {
           try { await execFile('systemctl', ['--user', 'restart', unit], { timeout: 12000 }) }
           catch { throw httpError(503, 'systemd user service unavailable; configure ' + unit + ' and retry') }
           return json(res, 200, { ok: true, requested: true })
+        })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/exec-policy') {
+        const current = await readExecPolicy({ stateDir, profilePath })
+        const health = await loopback(healthPort, '/health')
+        const startedAt = health?.health?.uptimeMs == null ? 0 : Date.now() - health.health.uptimeMs
+        let overlayMtimeMs = 0
+        try {
+          const st = await fs.lstat(execOverlay)
+          if (st.isFile() && !st.isSymbolicLink()) overlayMtimeMs = st.mtimeMs
+        } catch { /* no overlay yet */ }
+        return json(res, 200, { ok: true, policy: current.policy, source: current.source,
+          modes: EXEC_MODES, approvalPolicies: APPROVAL_POLICIES,
+          restartRequired: Boolean(overlayMtimeMs && startedAt && overlayMtimeMs > startedAt) })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/exec-policy') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['mode', 'approvalPolicy', 'additionalWritableRoots'])
+          const policy = normalizeExecPolicy(body)
+          await writeExecPolicy({ stateDir, profilePath }, policy)
+          return json(res, 200, { ok: true, policy, restartRequired: true })
         })
       }
       return json(res, 404, { ok: false, error: 'unknown management endpoint' })

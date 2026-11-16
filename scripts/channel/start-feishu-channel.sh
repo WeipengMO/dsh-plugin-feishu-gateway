@@ -131,6 +131,14 @@ configure_proxy() {
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 mkdir -p "$STATE_DIR"
 
+# Apply the admin-managed execution-permission overlay if one exists. The
+# Feishu Admin UI writes it under the state dir; `--patch` layers it after the
+# profile's own cordis.patch.yml so sandbox/approval edits take effect here.
+PATCH_ARGS=()
+if [ -f "$STATE_DIR/exec-policy.patch.yml" ]; then
+  PATCH_ARGS=(--patch "$STATE_DIR/exec-policy.patch.yml")
+fi
+
 case "${1:-}" in
   --status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -160,14 +168,14 @@ case "${1:-}" in
     fi
     set -a; . "$ENV_FILE"; set +a
     configure_proxy
-    nohup dsh --profile "$PROFILE" >> "$STATE_DIR/channel.stdout.log" 2>&1 &
+    nohup dsh --profile "$PROFILE" "${PATCH_ARGS[@]}" >> "$STATE_DIR/channel.stdout.log" 2>&1 &
     echo $! > "$PID_FILE"
     echo "started (pid $(cat "$PID_FILE")), logs: $STATE_DIR/channel.stdout.log"
     ;;
   "")
     set -a; . "$ENV_FILE"; set +a
     configure_proxy
-    exec dsh --profile "$PROFILE"
+    exec dsh --profile "$PROFILE" "${PATCH_ARGS[@]}"
     ;;
   *)
     die "unknown option $1 (use --daemon|--status|--stop)"

@@ -980,3 +980,51 @@ test('group validation and explicit open-mode confirmation', async () => {
     assert.equal(saved.json.config.groupPolicy, 'open')
   } finally { await f.close() }
 })
+
+test('exec-policy endpoint seeds from profile, persists overlay, and validates input', async () => {
+  const profDir = await mkdtemp(path.join(tmpdir(), 'dsh-exec-profile-'))
+  const profilePath = path.join(profDir, 'cordis.patch.yml')
+  await writeFile(profilePath, [
+    '- id: sandbox-policy',
+    "  name: '@deepseek-ai/dsh-sandbox-policy'",
+    '  config:',
+    '    mode: workspace-write',
+    '    workspaceRoot: /home/ubuntu/dsh-workspace',
+    '    additionalWritableRoots:',
+    '      - /home/ubuntu/.lark-cli',
+    '- id: approval',
+    "  name: '@deepseek-ai/dsh-user-approval'",
+    '  config:',
+    '    policy: ask',
+    '',
+  ].join('\n'))
+  const f = await fixture({ profilePath })
+  try {
+    const seeded = await f.request('/exec-policy')
+    assert.equal(seeded.status, 200)
+    assert.equal(seeded.json.source, 'profile')
+    assert.equal(seeded.json.policy.mode, 'workspace-write')
+    assert.deepEqual(seeded.json.policy.additionalWritableRoots, ['/home/ubuntu/.lark-cli'])
+
+    assert.equal((await f.request('/exec-policy', 'POST',
+      { mode: 'read-only', approvalPolicy: 'never', additionalWritableRoots: [] }, mutating)).status, 200)
+    const after = await f.request('/exec-policy')
+    assert.equal(after.json.source, 'managed')
+    assert.equal(after.json.policy.mode, 'read-only')
+    assert.equal(after.json.policy.approvalPolicy, 'never')
+    const overlay = await readFile(path.join(f.stateDir, 'exec-policy.patch.yml'), 'utf8')
+    assert.match(overlay, /defaultPreset: managed/)
+    assert.match(overlay, /mode: read-only/)
+
+    assert.equal((await f.request('/exec-policy', 'POST',
+      { mode: 'read-only', approvalPolicy: 'bogus', additionalWritableRoots: [] }, mutating)).status, 400)
+    assert.equal((await f.request('/exec-policy', 'POST',
+      { mode: 'workspace-write', approvalPolicy: 'ask', additionalWritableRoots: ['relative'] }, mutating)).status, 400)
+    assert.equal((await f.request('/exec-policy', 'POST',
+      { mode: 'read-only', approvalPolicy: 'ask', additionalWritableRoots: [] },
+      { ...allowed, 'content-type': 'application/json' })).status, 403)
+  } finally {
+    await f.close()
+    await rm(profDir, { recursive: true, force: true })
+  }
+})

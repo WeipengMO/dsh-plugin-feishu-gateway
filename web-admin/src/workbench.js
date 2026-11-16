@@ -211,6 +211,7 @@ function Workbench() {
     body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
   } else if (selected === 'security') {
     body = h(React.Fragment, null,
+      h(ExecPolicyPanel, {}),
       h('div', { className: 'fgw-two-column' },
         h(WbBlock, { title: '访问权限' },
           h(WbRow, { label: '群聊策略', value: flags.groupPolicy || 'disabled（默认关闭）' }),
@@ -219,12 +220,12 @@ function Workbench() {
           h(WbRow, { label: 'DSH Web 授权', value: '原生浏览器会话' }),
           h(WbRow, { label: '消息正文', value: '运维接口不返回' }),
           h(WbRow, { label: '凭据回显', value: '禁止' })),
-        h(WbBlock, { title: '审批边界' },
+        h(WbBlock, { title: '审批与安全边界' },
           h(WbRow, { label: '审批卡片', value: flags.approvalCards ? '已开启' : '继承 / 关闭' }),
           h(WbRow, { label: '当前等待审批', value: wbCount(health?.pendingApprovals) }),
           h(WbRow, { label: '配置生效', value: state?.pendingRestart ? '待重启' : '无待生效修改' }),
-          h(OpsNote, null, '不会绕过 DSH 原生审批流程。'))),
-      h(OpsAction, { label: '编辑白名单与安全设置', onClick: () => onConfig('permissions') }),
+          h(OpsNote, null, '执行权限由上方设置控制；审批卡片开启时，超出沙箱的操作会转为飞书审批。'))),
+      h(OpsAction, { label: '编辑白名单与群聊策略', onClick: () => onConfig('permissions') }),
       ops?.telemetryAvailable && h(WbBlock, { title: '最近审批安全事件' },
         h(OpsTimeline, { events: ops.summary?.approvals?.slice(0, 20) })))
   } else if (selected === 'advanced') {
