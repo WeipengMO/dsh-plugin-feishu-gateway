@@ -344,11 +344,13 @@ test('Markdown highlighting preserves source, fenced blocks and harmless literal
 })
 
 
-test('usage dashboard prioritizes a 365-day heatmap, a unified range picker and two charts', () => {
+test('usage dashboard prioritizes a 365-day heatmap, separate date inputs and two charts', () => {
   const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
   assert.match(panel, /function UsageDateRange/)
-  assert.match(panel, /aria-label': '选择日期范围'/)
+  assert.match(panel, /aria-label': '开始日期'/)
+  assert.match(panel, /aria-label': '结束日期'/)
+  assert.doesNotMatch(panel, /fgw-usage-range-popup/)
   assert.match(panel, /span >= 1 && span <= 366/)
   assert.match(panel, /const yearFrom = usageShiftDay\(today, -364\)/)
   assert.match(panel, /const yearUrl =/)
@@ -365,6 +367,62 @@ test('usage dashboard prioritizes a 365-day heatmap, a unified range picker and 
   assert.match(css, /@media\(max-width:690px\)[\s\S]*?\.fgw-usage-facets\.is-open \{ display:grid; \}/)
   assert.match(css, /\.fgw-usage-chart-grid \{ display:grid;/)
   assert.match(built, /function UsageTrendChart\(/)
+})
+
+test('model usage is a bar chart and the redundant model catalog panel is absent', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(panel, /function UsageModelBars/)
+  assert.match(panel, /h\(UsageModelBars, \{ rows: report.byModel, metricText \}\)/)
+  assert.match(panel, /部分用量未上报或缺少分类明细/)
+  assert.doesNotMatch(panel, /title: '飞书通道可用模型'/)
+  assert.match(css, /\.fgw-usage-model-track/)
+})
+
+test('date fields apply only valid inclusive ranges', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const code = panel.slice(panel.indexOf('function UsageDateRange('),
+    panel.indexOf('/* The server still returns daily records;'))
+  const changes = []
+  const create = (type, props, ...children) => ({ type, props: props || {}, children })
+  const make = (from, to) => {
+    let index = 0
+    const values = [from, to]
+    const range = runInNewContext(code + '\nUsageDateRange', {
+      h: create, React: { Fragment: 'fragment' }, UsageField: 'label',
+      useState: () => [values[index++], () => {}], useEffect: () => {}, Date, Math,
+    })
+    return range({ from, to, onApply: (...args) => changes.push(args) })
+  }
+  const normal = make('2026-11-01', '2026-11-16')
+  assert.equal(normal.children.length, 2)
+  const start = normal.children[0].children[0]
+  const end = normal.children[1].children[0]
+  assert.equal(start.props['aria-label'], '开始日期')
+  assert.equal(end.props['aria-label'], '结束日期')
+  start.props.onChange({ target: { value: '2026-11-10' } })
+  assert.deepEqual(changes, [['2026-11-10', '2026-11-16']])
+  end.props.onChange({ target: { value: '2028-01-01' } })
+  assert.equal(changes.length, 1)
+  start.props.onChange({ target: { value: '2026-11-20' } })
+  assert.equal(changes.length, 1)
+})
+
+test('model usage bars scale values and mark incomplete data', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const code = panel.slice(panel.indexOf('function UsageModelBars('), panel.indexOf('function UsageField('))
+  const bars = runInNewContext(code + '\nUsageModelBars', {
+    h: (type, props, ...children) => ({ type, props: props || {}, children }),
+    wbCount: value => String(value), Math, Number, String, Array,
+  })
+  const tree = bars({ metricText: '总 Token', rows: [
+    { model: 'a', value: 100, unknownTurns: 0 },
+    { model: 'b', value: 25, unknownTurns: 1 },
+  ] })
+  assert.equal(tree.children[0].children[1].children[0].props.style.width, '100%')
+  assert.equal(tree.children[1].children[1].children[0].props.style.width, '25%')
+  assert.match(tree.children[1].children[2].children[0], /部分用量/)
+  assert.match(bars({ metricText: '总 Token', rows: [] }).children[0], /没有模型用量记录/)
 })
 
 test('usage chart buckets maintain partial and unavailable coverage', () => {

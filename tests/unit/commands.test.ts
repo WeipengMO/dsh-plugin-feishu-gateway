@@ -20,10 +20,12 @@ describe('Feishu slash commands', () => {
     expect(parseControlCommand('/model')).toBe('model')
     expect(parseControlCommand('/models')).toBe('models')
     expect(parseControlCommand('/models magpie/group/hy4-free')).toBe('models')
-    expect(parseControlCommand('/model other')).toBeUndefined()
+    expect(parseControlCommand('/model magpie/group/hy4-free')).toBe('model')
   })
   it('explains cancellation safety and Session semantics', () => {
     expect(commandHelp).toContain('/stop')
+    expect(commandHelp).toContain('/models — 查看可用模型及当前会话模型')
+    expect(commandHelp).toContain('/model provider/model — 切换当前会话模型')
     expect(commandHelp).toContain('/new')
     expect(commandHelp).toContain('回滚')
   })

@@ -121,57 +121,61 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
         '部分任务未上报 usage')))
 }
 
+/** Horizontal bars compare recorded model use without inventing absent rows. */
+function UsageModelBars({ rows, metricText }) {
+  const data = Array.isArray(rows) ? rows : []
+  if (!data.length) return h('div', { className: 'fgw-usage-model-empty' },
+    '所选条件下没有模型用量记录')
+  const peak = Math.max(1, ...data.map(row => Number.isFinite(row.value) && row.value >= 0 ? row.value : 0))
+  return h('div', { className: 'fgw-usage-model-bars', role: 'list',
+    'aria-label': '按模型统计' + metricText },
+    ...data.map(row => {
+      const value = Number.isFinite(row.value) && row.value >= 0 ? row.value : 0
+      const partial = Number.isSafeInteger(row.unknownTurns) && row.unknownTurns > 0
+      const label = String(row.model || 'unknown')
+      return h('div', { className: 'fgw-usage-model-row', key: label, role: 'listitem' },
+        h('div', { className: 'fgw-usage-model-label' },
+          h('span', { title: label }, label === 'unknown' ? '未知模型' : label),
+          h('strong', null, wbCount(value), ' Token')),
+        h('div', { className: 'fgw-usage-model-track',
+          role: 'img', 'aria-label': label + '：' + wbCount(value) + ' ' + metricText +
+            (partial ? '，部分用量未上报' : '') },
+          h('div', { className: 'fgw-usage-model-bar', style: { width: (value / peak * 100) + '%' } })),
+        partial && h('span', { className: 'fgw-usage-model-partial' },
+          '部分用量未上报或缺少分类明细 · ' + wbCount(row.unknownTurns) + ' 项'))
+    }))
+}
+
 function UsageField({ title, children }) {
   return h('label', { className: 'fgw-usage-field' }, h('span', null, title), children)
 }
 
-/* A single, keyboard-accessible date range control. Validation matches the
- * historical usage endpoint (inclusive dates, 1..366 calendar days). */
+/* Keep drafts separate from the applied query until both dates form a valid
+ * inclusive range. Presets update both fields through the parent props. */
 function UsageDateRange({ from, to, onApply }) {
-  const [open, setOpen] = useState(false)
   const [start, setStart] = useState(from)
   const [end, setEnd] = useState(to)
-  useEffect(() => {
-    if (!open) return
-    const onKey = event => { if (event.key === 'Escape') setOpen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open])
+  useEffect(() => { setStart(from); setEnd(to) }, [from, to])
   const span = start && end
-    ? Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1 : 0
+    ? Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 86400000) + 1 : 0
   const valid = span >= 1 && span <= 366
-  const toggle = () => {
-    if (!open) { setStart(from); setEnd(to) }
-    setOpen(value => !value)
+  const change = (nextStart, nextEnd) => {
+    setStart(nextStart); setEnd(nextEnd)
+    const days = nextStart && nextEnd
+      ? Math.round((Date.parse(nextEnd + 'T00:00:00Z') - Date.parse(nextStart + 'T00:00:00Z')) / 86400000) + 1 : 0
+    if (days >= 1 && days <= 366) onApply(nextStart, nextEnd)
   }
-  return h('div', { className: 'fgw-usage-range' },
-    h('span', { className: 'fgw-usage-field-title' }, '日期范围'),
-    h('button', { type: 'button', className: 'fgw-usage-range-trigger',
-      'aria-expanded': open, 'aria-label': '选择日期范围',
-      onClick: toggle },
-      h('span', { className: 'fgw-usage-range-value' }, from + '  —  ' + to),
-      h('svg', { className: 'fgw-usage-range-icon', width: 16, height: 16,
-        viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8,
-        strokeLinecap: 'round', 'aria-hidden': true },
-        h('rect', { x: 3, y: 5, width: 18, height: 16, rx: 2 }),
-        h('path', { d: 'M7 3v4M17 3v4M3 10h18' }))),
-    open && h('div', { className: 'fgw-usage-range-popup', role: 'group',
-      'aria-label': '自定义日期范围' },
-      h('div', { className: 'fgw-usage-range-dates' },
-        h(UsageField, { title: '开始日期' }, h('input', {
-          type: 'date', value: start, onChange: e => setStart(e.target.value)
-        })),
-        h(UsageField, { title: '结束日期' }, h('input', {
-          type: 'date', value: end, onChange: e => setEnd(e.target.value)
-        }))),
-      h('p', { className: 'fgw-usage-range-help' },
-        valid ? '共 ' + span + ' 天（含起止日期）' : '请选择有效日期，最多 366 天'),
-      h('div', { className: 'fgw-usage-range-actions' },
-        h('button', { type: 'button', className: 'fgw-refresh',
-          onClick: () => setOpen(false) }, '取消'),
-        h('button', { type: 'button', className: 'fgw-refresh fgw-ops-cta',
-          disabled: !valid, onClick: () => { onApply(start, end); setOpen(false) } },
-          '应用日期'))))
+  return h(React.Fragment, null,
+    h(UsageField, { title: '开始日期' }, h('input', {
+      type: 'date', value: start, 'aria-label': '开始日期', 'aria-invalid': !valid,
+      onChange: event => change(event.target.value, end),
+    })),
+    h(UsageField, { title: '结束日期' }, h('input', {
+      type: 'date', value: end, 'aria-label': '结束日期', 'aria-invalid': !valid,
+      'aria-describedby': !valid ? 'usage-date-error' : undefined,
+      onChange: event => change(start, event.target.value),
+    }), !valid && h('span', { id: 'usage-date-error', className: 'fgw-usage-date-error', role: 'alert' },
+      '请选择有效日期，最多 366 天')))
 }
 
 /* The server still returns daily records; the chart groups longer ranges
@@ -489,22 +493,11 @@ function UsagePanel() {
           h('span', null, '周均 ' + (totals.averagePerWeek === null ? '—' :
             wbCount(Math.round(totals.averagePerWeek))) + ' Token · 仅供参考')),
         h('div', { className: 'fgw-two-column fgw-usage-breakdowns' },
-          h(WbBlock, { title: '按模型统计', aside: '仅统计所选时段的已采集记录' },
-            h(OpsTable, { rows: report.byModel,
-              columns: cols.filter(c => c.key !== 'botId') })),
+          h(WbBlock, { title: '按模型统计', aside: '所选时段 · ' + metricText },
+            h(UsageModelBars, { rows: report.byModel, metricText })),
           h(WbBlock, { title: '按机器人统计' },
             h(OpsTable, { rows: report.byBot,
               columns: cols.filter(c => c.key !== 'model') }))),
-        h(WbBlock, { title: '飞书通道可用模型', aside: '当前 Gateway 模型目录，不代表这些模型已有用量' },
-          report.modelCatalog && Array.isArray(report.modelCatalog.models)
-            ? h('div', { className: 'fgw-model-catalog' },
-              report.modelCatalog.models.map(name => h('div', { key: name, className: 'fgw-data-row' },
-                h('span', null, name),
-                h('span', { className: 'fgw-muted' }, (report.byModel || []).some(row => row.model === name)
-                  ? '所选范围有记录' : '所选范围无记录'))),
-              report.modelCatalog.incomplete && h('p', { className: 'fgw-caution' }, '部分模型目录不可用，列表可能不完整。'),
-              Date.now() - report.modelCatalog.ts > 120000 && h('p', { className: 'fgw-caution' }, '模型目录可能已过期。'))
-            : h('p', { className: 'fgw-muted' }, '模型目录尚未采集或 Gateway 暂不可用。')),
         h(OpsNote, null, '历史用量仅来自 DSH 原生 usage 事件，不额外调用模型。' +
           ' 定时任务新版记录完整上报用量；历史记录仅能补入已有总数，缺失输入、输出与缓存明细。' +
           ' 采集开始之前的日期不代表零用量。' +

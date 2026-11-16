@@ -567,39 +567,53 @@ export class FeishuGateway {
           `待发送回复：${health.outbox.pending}`,
           `当前已绑定会话：${this.registry.get(key) ? '是' : '否'}`,
         ].join('\n')
-      } else if (command === 'model') {
-        const existing = this.registry.get(key)
-        if (!existing) {
-          reply = '当前聊天尚未建立会话。发送 /models 可查看可用模型。'
-        } else {
-          const sessionId = await this.ensureSession(key, record.botId, record.chatId)
-          const selected = this.bridge.currentModel?.(sessionId)
-          reply = selected ? '当前会话模型：' + selected.provider + '/' + selected.model
-            : '当前会话模型不可用，请检查 DSH 会话状态。'
-        }
       } else if (command === 'models') {
-        const choice = record.text.trim().replace(/^\/models\s*/i, '').trim()
-        const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
-        const catalog = listing && !listing.timedOut ? listing.value : undefined
-        if (!catalog) {
-          reply = '当前 DSH Host 不支持模型目录。'
-        } else if (!choice) {
-          const routes = catalog.models.map(item => item.provider + '/' + item.model)
-          reply = routes.length
-            ? ['飞书通道可用模型：', ...routes.map(route => '• ' + route),
-              catalog.incomplete ? '部分模型提供方查询失败，列表可能不完整。' : '',
-              '使用 /models provider/model 切换当前会话模型。'].filter(Boolean).join('\n')
-            : '飞书通道暂未发现可用模型。' + (catalog.incomplete ? '部分模型目录查询失败。' : '')
+        const extra = record.text.trim().replace(/^\/models\s*/i, '').trim()
+        if (extra) {
+          reply = '查看模型请发送 /models；切换模型请发送 /model provider/model。'
         } else {
-          const found = catalog.models.find(item => item.provider + '/' + item.model === choice)
-          if (!found) {
-            reply = '未找到该模型，请先发送 /models 查看飞书通道可用模型。'
-          } else if (!this.bridge.selectModel) {
-            reply = '当前 DSH Host 不支持会话模型切换。'
-          } else {
+          const existing = this.registry.get(key)
+          let current: string | undefined
+          if (existing) {
             const sessionId = await this.ensureSession(key, record.botId, record.chatId)
-            this.bridge.selectModel(sessionId, found.provider, found.model)
-            reply = '当前会话已切换模型：' + found.provider + '/' + found.model + '\n下次请求生效；其他聊天和定时任务不受影响。'
+            const selected = this.bridge.currentModel?.(sessionId)
+            if (selected) current = selected.provider + '/' + selected.model
+          }
+          const currentLine = current ? '当前会话模型：' + current
+            : existing ? '当前会话模型暂不可用。' : '当前聊天尚未建立会话，暂没有当前会话模型。'
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const catalog = listing && !listing.timedOut ? listing.value : undefined
+          if (!catalog) {
+            reply = currentLine + '\n模型目录暂不可用，请稍后重试。'
+          } else {
+            const routes = catalog.models.map(item => item.provider + '/' + item.model)
+            reply = [currentLine,
+              routes.length ? '飞书通道可用模型：' : '飞书通道暂未发现可用模型。',
+              ...routes.map(route => '• ' + route + (route === current ? '（当前）' : '')),
+              catalog.incomplete ? '部分模型提供方查询失败，列表可能不完整。' : '',
+              '使用 /model provider/model 切换当前会话模型。'].filter(Boolean).join('\n')
+          }
+        }
+      } else if (command === 'model') {
+        const choice = record.text.trim().replace(/^\/model\s*/i, '').trim()
+        if (!choice) {
+          reply = '请发送 /model provider/model 切换当前会话模型；发送 /models 查看可用模型。'
+        } else {
+          const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
+          const catalog = listing && !listing.timedOut ? listing.value : undefined
+          if (!catalog) {
+            reply = '模型目录暂不可用，请稍后重试。'
+          } else {
+            const found = catalog.models.find(item => item.provider + '/' + item.model === choice)
+            if (!found) {
+              reply = '未找到该模型，请先发送 /models 查看飞书通道可用模型。'
+            } else if (!this.bridge.selectModel) {
+              reply = '当前 DSH Host 不支持会话模型切换。'
+            } else {
+              const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+              this.bridge.selectModel(sessionId, found.provider, found.model)
+              reply = '当前会话已切换模型：' + found.provider + '/' + found.model + '\n下次请求生效；其他聊天和定时任务不受影响。'
+            }
           }
         }
       } else if (command === 'cancel') {

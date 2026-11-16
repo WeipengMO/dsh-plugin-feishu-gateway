@@ -534,22 +534,15 @@
 .fgw-usage-filters .fgw-refresh { min-height:35px; }
 .fgw-usage-filters .fgw-usage-presets { gap:6px; }
 .fgw-usage-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
-.fgw-usage-primary-fields { display:grid; grid-template-columns:minmax(220px,1.8fr) minmax(152px,1fr) auto; align-items:end; gap:12px; }
+.fgw-usage-primary-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; align-items:end; gap:11px; }
 .fgw-usage-field-title { display:block; font-size:12px; color:var(--muted-foreground,#9298a3); margin-bottom:6px; }
 .fgw-usage-primary-fields .fgw-usage-field { gap:6px; }
 .fgw-usage-primary-fields .fgw-usage-field select { min-height:38px; }
-.fgw-usage-range { position:relative; min-width:0; }
-.fgw-usage-range-trigger { width:100%; min-width:0; min-height:38px; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 11px; border:1px solid var(--border,#8885); border-radius:8px; color:var(--foreground,inherit); background:var(--background,transparent); font:inherit; cursor:pointer; text-align:left; }
-.fgw-usage-range-trigger:hover,.fgw-usage-field select:hover { border-color:color-mix(in srgb,var(--primary,#4f7adb) 45%,var(--border,#8884)); }
-.fgw-usage-range-trigger:focus-visible,.fgw-usage-more:focus-visible,.fgw-usage-clear:focus-visible { outline:2px solid var(--ring,#4f7adb); outline-offset:2px; }
-.fgw-usage-range-value { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; font-variant-numeric:tabular-nums; }
-.fgw-usage-range-icon { color:var(--primary,#4f7adb); font-size:17px; line-height:1; }
-.fgw-usage-range-popup { position:absolute; top:calc(100% + 8px); left:0; z-index:20; width:min(380px,calc(100vw - 38px)); box-sizing:border-box; padding:15px; background:var(--popover,var(--card,#1c1d20)); color:var(--foreground,inherit); border:1px solid var(--border,#8886); box-shadow:0 16px 38px rgba(0,0,0,.22); border-radius:12px; }
-.fgw-usage-range-dates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-.fgw-usage-range-dates input { min-height:38px; font-variant-numeric:tabular-nums; color-scheme:normal; }
-.fgw-usage-range-help { margin:10px 0; font-size:11px; color:var(--muted-foreground,#929baa); }
-.fgw-usage-range-actions { display:flex; justify-content:flex-end; gap:7px; }
-.fgw-usage-range-actions button:disabled { cursor:not-allowed; opacity:.45; }
+.fgw-usage-primary-fields .fgw-usage-field input,
+.fgw-usage-primary-fields .fgw-usage-field select { min-height:38px; background:var(--background,transparent); color:var(--foreground,inherit); }
+.fgw-usage-primary-fields input[type=date] { font-variant-numeric:tabular-nums; color-scheme:inherit; }
+.fgw-usage-date-error { color:var(--destructive,#c83a3a); font-size:11px; line-height:1.35; }
+.fgw-usage-more:focus-visible,.fgw-usage-clear:focus-visible { outline:2px solid var(--ring,#4f7adb); outline-offset:2px; }
 .fgw-usage-more { display:none; white-space:nowrap; align-self:end; }
 .fgw-usage-facets { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:11px; margin-top:13px; }
 .fgw-usage-filter-foot { display:flex; justify-content:space-between; align-items:center; gap:10px; padding-top:13px; margin-top:13px; border-top:1px solid var(--border,#8883); font-size:11px; line-height:1.5; color:var(--muted-foreground,#8a94a3); }
@@ -577,6 +570,16 @@
 .fgw-usage-chart-empty { display:grid; place-items:center; color:var(--muted-foreground,#8996a4); font-size:12px; min-height:155px; text-align:center; }
 .fgw-usage-detail-line { display:flex; justify-content:space-between; gap:10px 20px; flex-wrap:wrap; color:var(--muted-foreground,#8996a4); font-size:11px; line-height:1.6; margin-top:-4px; }
 .fgw-usage-breakdowns { margin:0; }
+.fgw-usage-model-bars { display:flex; flex-direction:column; gap:17px; padding:14px 0 9px; min-width:0; }
+.fgw-usage-model-row { min-width:0; display:flex; flex-direction:column; gap:7px; }
+.fgw-usage-model-label { display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:12px; line-height:1.45; }
+.fgw-usage-model-label span { min-width:0; overflow-wrap:anywhere; color:var(--foreground,inherit); }
+.fgw-usage-model-label strong { flex:none; font-size:12px; font-weight:680; font-variant-numeric:tabular-nums; }
+.fgw-usage-model-track { width:100%; height:9px; border-radius:99px; overflow:hidden; background:var(--muted,rgba(127,127,127,.12)); }
+.fgw-usage-model-bar { height:100%; border-radius:inherit; background:linear-gradient(90deg,#4d78e8,#61b5ed); }
+.fgw-usage-model-partial { font-size:11px; line-height:1.5; color:var(--muted-foreground,#8996a4); }
+.fgw-usage-model-empty { min-height:100px; display:grid; place-items:center; color:var(--muted-foreground,#8996a4); font-size:12px; text-align:center; }
+
 .fgw-usage-dashboard .fgw-heatmap { --fgw-heat-cell:12px; width:100%; margin:0; gap:14px; box-sizing:border-box; }
 .fgw-usage-dashboard .fgw-heatmap-scroll { width:100%; box-sizing:border-box; padding:14px 12px 12px; }
 .fgw-usage-dashboard .fgw-heatmap-stats { gap:6px 17px; }
@@ -607,8 +610,7 @@
   .fgw-usage-filters .fgw-usage-presets { flex-wrap:nowrap; overflow-x:auto; padding-bottom:3px; }
   .fgw-usage-filters .fgw-usage-presets button { flex:none; }
   .fgw-usage-actions { justify-content:flex-start; }
-  .fgw-usage-primary-fields { grid-template-columns:minmax(0,1fr) auto; gap:10px; }
-  .fgw-usage-primary-fields .fgw-usage-range { grid-column:1/-1; }
+  .fgw-usage-primary-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
   .fgw-usage-primary-fields .fgw-usage-field { min-width:0; }
   .fgw-usage-more { display:inline-flex; justify-content:center; align-items:center; }
   .fgw-usage-facets { display:none; grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:12px; }
@@ -625,8 +627,7 @@
 }
 @media(max-width:390px) {
   .fgw-usage-facets { grid-template-columns:minmax(0,1fr); }
-  .fgw-usage-range-dates { grid-template-columns:minmax(0,1fr); }
-  .fgw-usage-range-popup { padding:12px; }
+  .fgw-usage-primary-fields { grid-template-columns:minmax(0,1fr); }
   .fgw-usage-chart-heading { flex-wrap:wrap; }
   .fgw-usage-filter-foot { flex-direction:column; gap:5px; }
 }
