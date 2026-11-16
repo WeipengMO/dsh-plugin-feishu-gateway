@@ -37,6 +37,8 @@
 .fga-bots { display:flex; flex-direction:column; gap:10px; }
 .fga-bot { display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end; border:1px solid var(--border,#8884); border-radius:12px; padding:13px; }
 .fga-bot .fga-button { grid-column:1 / -1; }
+.fga-settings-group{font-size:14px;font-weight:630;letter-spacing:-.01em;margin:1px 0 -4px}
+.fgw-advanced>.fgw-muted{font-size:12px;line-height:1.55}
 /* Model routing — quiet native controls, legible on desktop and small screens. */
 .fga-model-heading{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px 20px;margin-bottom:-3px}
 .fga-model-heading h3{font-size:15px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
