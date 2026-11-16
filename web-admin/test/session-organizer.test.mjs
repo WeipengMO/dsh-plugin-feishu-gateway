@@ -84,6 +84,8 @@ test('opt-in disabled by default: preview reads headers without writes or agent 
   const ledger = await sessionOrganizationInventory(f.stateDir, f.native, { orphanOnly: true })
   assert.equal(ledger.total, 3)
   assert.ok(ledger.items.every(row => !('sessionId' in row)))
+  assert.ok(ledger.items.every(row => row.lastActiveKnown === false),
+    'orphan Session createdAt must never be presented as known last use')
 })
 
 test('idempotent reconciliation adopts bound sessions, not unconfirmed historical orphans', async t => {
@@ -158,6 +160,7 @@ test('stale Gateway snapshot keeps header inventory visible but prevents mutatio
   const list = await sessionOrganizationInventory(f.stateDir, f.native)
   assert.equal(list.available, true)
   assert.equal(list.nativeCount, 4)
+  assert.equal(list.items.find(row => row.botId === 'default').status, 'unknown')
   const result = await reconcileSessionOrganization(f.stateDir, f.native, { dryRun: false })
   assert.equal(result.available, false)
   assert.deepEqual(f.attached, [])
