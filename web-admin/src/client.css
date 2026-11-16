@@ -21,6 +21,8 @@
 .fga-input:focus { outline:2px solid var(--ring,#6b9cee); outline-offset:1px; }
 .fga-textarea { min-height:140px; resize:vertical; font-family:ui-monospace,monospace; line-height:1.5; }
 .fga-fields-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+/* Provider + model selectors read from the DSH model directory. */
+.fga-route-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .fga-check { display:flex; align-items:center; gap:9px; font-size:13px; }
 .fga-check input { accent-color:var(--primary,#467cf4); width:15px; height:15px; }
 .fga-button { appearance:none; cursor:pointer; display:inline-flex; align-self:flex-start; align-items:center; justify-content:center; padding:9px 14px; border-radius:9px; border:1px solid transparent; background:var(--primary,#315bc8); color:var(--primary-foreground,#fff); font:inherit; font-weight:550; font-size:13px; }
@@ -41,7 +43,7 @@
 .fga-inline-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
 .fga-proxy-result { margin:0; }
 .fga-footer { margin:25px 0 0; color:var(--muted-foreground,#9399a3); font-size:11px; }
-@media(max-width:660px) { .fga-root { padding:12px 0 30px; } .fga-header { flex-direction:column; } .fga-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .fga-fields-row,.fga-bot { grid-template-columns:1fr; } }
+@media(max-width:660px) { .fga-root { padding:12px 0 30px; } .fga-header { flex-direction:column; } .fga-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .fga-fields-row,.fga-route-row,.fga-bot { grid-template-columns:1fr; } }
 
 
 /* Native Feishu operations workspace: theme-aware, independently scoped. */

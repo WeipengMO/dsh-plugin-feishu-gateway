@@ -47,6 +47,15 @@ test('strict config validation rejects secrets, forged paths, and env name colli
   assert.throws(() => validateConfig({ allowlist: ['bad'] }), /allowlist/)
   assert.throws(() => validateConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'feishu' }] }), /colliding/)
   assert.throws(() => validateConfig({ agent: { secret: 'xxx' } }), /unsupported/)
+  const route = validateConfig({ agent: { provider: 'magpie', model: 'group/deepseek',
+    fallback: { provider: 'magpie', model: 'group/hy4-free' } } })
+  assert.deepEqual(route.agent, { provider: 'magpie', model: 'group/deepseek',
+    fallback: { provider: 'magpie', model: 'group/hy4-free' } })
+  assert.throws(() => validateConfig({ agent: { fallback: { provider: 'magpie' } } }), /fallback/)
+  assert.throws(() => validateConfig({ agent: { fallback: 'magpie/group/deepseek' } }), /fallback/)
+  assert.throws(() => validateConfig({ agent: { provider: 'magpie', model: 'm',
+    fallback: { provider: 'magpie', model: 'm' } } }), /differ/)
+  assert.deepEqual(validateConfig({ agent: { fallback: null } }).agent, { fallback: null })
   const proxy = validateConfig({ networkProxy: {
     enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true,
   } })
@@ -230,6 +239,85 @@ test('admin validates reply format and persists the optional Markdown setting', 
     const latest = await f.request('/state')
     assert.equal(latest.json.config.replyFormat, 'markdown')
     assert.equal(latest.json.pendingRestart, false) // no running channel health
+  } finally { await f.close() }
+})
+
+test('state exposes the Gateway DSH model directory and never invents a default route', async () => {
+  const f = await fixture()
+  try {
+    // No Gateway snapshot yet: unknown, explicitly null, not a fabricated value.
+    const unknown = await f.request('/state')
+    assert.equal(unknown.json.modelCatalog, null)
+    assert.equal(unknown.json.agentRoute, null)
+    assert.equal(unknown.json.profileDefaultRoute, null)
+    assert.equal(unknown.json.modelDirectoryStale, null)
+
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'), JSON.stringify({
+      version: 1, ts: Date.now(), status: 'ok', secret: 'MUST-NOT-LEAK',
+      modelCatalog: { ts: Date.now(), incomplete: false, secret: 'catalog-secret',
+        models: ['magpie/group/deepseek', 'magpie/group/hy4-free'],
+        providers: [
+          { id: 'magpie', name: 'Magpie', secret: 'provider-secret', models: [
+            { id: 'group/deepseek', name: 'Deepseek', secret: 'model-secret' },
+            { id: 'group/hy4-free', name: 'HY4 free' },
+          ] },
+          { id: 'broken', models: [] },
+        ] },
+      agentRoute: { provider: 'magpie', model: 'group/deepseek',
+        fallback: { provider: 'magpie', model: 'group/hy4-free' }, reasoningEffort: 'high' },
+      profileDefaultRoute: { provider: 'magpie', model: 'group/deepseek', reasoningEffort: 'high' },
+      tasks: [], sessions: [], transport: {},
+      stats: { activeTurns: 0, boundSessions: 0, pendingApprovals: 0, processed: 0,
+        errors: 0, inboxPending: 0, outboxPending: 0 },
+    }), { mode: 0o600 })
+
+    const result = await f.request('/state')
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.json.modelCatalog.providers, [{ id: 'magpie', name: 'Magpie', models: [
+      { id: 'group/deepseek', name: 'Deepseek' }, { id: 'group/hy4-free', name: 'HY4 free' },
+    ] }])
+    assert.deepEqual(result.json.modelCatalog.models,
+      ['magpie/group/deepseek', 'magpie/group/hy4-free'])
+    assert.equal(result.json.modelCatalog.incomplete, false)
+    assert.deepEqual(result.json.agentRoute, { provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' }, reasoningEffort: 'high' })
+    assert.deepEqual(result.json.profileDefaultRoute, {
+      provider: 'magpie', model: 'group/deepseek', reasoningEffort: 'high' })
+    assert.equal(result.json.modelDirectoryStale, false)
+    assert.doesNotMatch(JSON.stringify(result.json),
+      /MUST-NOT-LEAK|provider-secret|model-secret|catalog-secret|"secret"/)
+  } finally { await f.close() }
+})
+
+test('model route fallback is validated, persisted and cleared explicitly', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.request('/state')
+    const saved = await f.request('/config', 'PUT', {
+      expectedRevision: first.json.revision,
+      config: { agent: { provider: 'magpie', model: 'group/deepseek',
+        fallback: { provider: 'magpie', model: 'group/hy4-free' } } },
+    }, mutating)
+    assert.equal(saved.status, 200)
+    let latest = await f.request('/state')
+    assert.deepEqual(latest.json.config.agent, { provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' } })
+
+    const identical = await f.request('/config', 'PUT', {
+      expectedRevision: latest.json.revision,
+      config: { agent: { provider: 'magpie', model: 'm', fallback: { provider: 'magpie', model: 'm' } } },
+    }, mutating)
+    assert.equal(identical.status, 400)
+
+    const cleared = await f.request('/config', 'PUT', {
+      expectedRevision: latest.json.revision,
+      config: { agent: { provider: 'magpie', model: 'group/deepseek', fallback: null } },
+    }, mutating)
+    assert.equal(cleared.status, 200)
+    latest = await f.request('/state')
+    assert.deepEqual(latest.json.config.agent, {
+      provider: 'magpie', model: 'group/deepseek', fallback: null })
   } finally { await f.close() }
 })
 

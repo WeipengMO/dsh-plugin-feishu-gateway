@@ -2,7 +2,9 @@ import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { implicitEnvNames, resolveConfig } from './config.js'
 import { DEFAULT_PROXY_URL_ENV } from './util/proxy-url.js'
-import type { BotSpec, GatewayConfig, GroupPolicy, GroupRule, GroupSessionScope } from './types.js'
+import type {
+  AgentFallbackRoute, BotSpec, GatewayConfig, GroupPolicy, GroupRule, GroupSessionScope,
+} from './types.js'
 
 /**
  * Strict reader for the admin-managed proxy URL (`network-proxy.json`).
@@ -26,7 +28,16 @@ export interface ManagedChannelConfig {
   groups?: GroupRule[]
   workspace?: string
   agentWorkspace?: string
-  agent?: { provider?: string; model?: string }
+  /**
+   * Primary route override. Fields may stay partial (inheriting the rest from
+   * the Profile); `fallback: null` explicitly clears a previously managed
+   * fallback, while an object must name a complete provider/model route.
+   */
+  agent?: {
+    provider?: string
+    model?: string
+    fallback?: AgentFallbackRoute | null
+  }
   replyTimeoutMs?: number
   networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean }
   replyFormat?: 'text' | 'markdown'
@@ -148,8 +159,8 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   }
   if (value.agent !== undefined) {
     if (!dictionary(value.agent)) throw new Error('agent must be an object')
-    assertFields(value.agent, ['provider', 'model'])
-    const agent: { provider?: string; model?: string } = {}
+    assertFields(value.agent, ['provider', 'model', 'fallback'])
+    const agent: ManagedChannelConfig['agent'] = {}
     for (const field of ['provider', 'model'] as const) {
       const v = value.agent[field]
       if (v !== undefined) {
@@ -158,6 +169,26 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
         }
         agent[field] = v
       }
+    }
+    const fallback = value.agent.fallback
+    if (fallback === null) {
+      // Explicit clear: never inherit a stale managed/Profile fallback.
+      agent.fallback = null
+    } else if (fallback !== undefined) {
+      if (!dictionary(fallback)) throw new Error('agent fallback must be an object or null')
+      assertFields(fallback, ['provider', 'model'])
+      const provider = fallback.provider
+      const model = fallback.model
+      if (typeof provider !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(provider)) {
+        throw new Error('invalid agent fallback provider')
+      }
+      if (typeof model !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(model)) {
+        throw new Error('invalid agent fallback model')
+      }
+      if (agent.provider === provider && agent.model === model) {
+        throw new Error('agent fallback must differ from the primary route')
+      }
+      agent.fallback = { provider, model }
     }
     result.agent = agent
   }
@@ -227,7 +258,30 @@ export function loadManagedConfig(base: GatewayConfig): GatewayConfig {
   return resolveConfig({
     ...base,
     ...managed,
-    agent: managed.agent ? { ...base.agent, ...managed.agent } : base.agent,
+    agent: mergeAgentRoute(base.agent, managed.agent),
     bots: managed.bots ?? base.bots,
   })
+}
+
+/**
+ * Apply the managed route over the Profile route. A managed `fallback: null`
+ * removes the route entirely instead of resurrecting a Profile fallback; the
+ * primary ids stay independent so a partial managed override keeps working.
+ */
+function mergeAgentRoute(
+  base: GatewayConfig['agent'],
+  managed: ManagedChannelConfig['agent'],
+): GatewayConfig['agent'] {
+  if (!managed) return base
+  const merged: {
+    provider?: string
+    model?: string
+    reasoningEffort?: string
+    fallback?: { provider: string; model: string }
+  } = { ...base }
+  if (managed.provider !== undefined) merged.provider = managed.provider
+  if (managed.model !== undefined) merged.model = managed.model
+  if (managed.fallback === null) delete merged.fallback
+  else if (managed.fallback) merged.fallback = managed.fallback
+  return merged
 }

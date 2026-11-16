@@ -43,7 +43,33 @@ export interface OpsSnapshot {
   /** Former/shared project directory; not the Feishu Session cwd. */
   readonly sharedProjectWorkspace?: string
   readonly isolatedAgent?: boolean
-  readonly modelCatalog?: { readonly ts: number; readonly incomplete: boolean; readonly models: readonly string[] }
+  /**
+   * The Gateway Host's DSH model directory: flat routes stay for older readers,
+   * `providers` feeds the Web Admin's provider/model selectors.
+   */
+  readonly modelCatalog?: {
+    readonly ts: number
+    readonly incomplete: boolean
+    readonly models: readonly string[]
+    readonly providers?: readonly {
+      readonly id: string
+      readonly name?: string
+      readonly models: readonly { readonly id: string; readonly name?: string }[]
+    }[]
+  }
+  /** Effective model route configured for Feishu Sessions (Profile + managed). */
+  readonly agentRoute?: {
+    readonly provider?: string
+    readonly model?: string
+    readonly reasoningEffort?: string
+    readonly fallback?: { readonly provider: string; readonly model: string }
+  }
+  /** The Host Profile's own `agent-default-model` selection (read-only fact). */
+  readonly profileDefaultRoute?: {
+    readonly provider?: string
+    readonly model?: string
+    readonly reasoningEffort?: string
+  }
   readonly version: 1
   readonly ts: number
   readonly status: string

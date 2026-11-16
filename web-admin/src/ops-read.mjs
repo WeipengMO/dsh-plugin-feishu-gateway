@@ -12,6 +12,59 @@ const safeRef = s => typeof s === 'string' && /^[a-f0-9]{16}$/.test(s) ? s : und
 const safeLabel = s => typeof s === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(s) ? s : undefined
 const safeBot = s => typeof s === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(s) ? s : undefined
 const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_.:/-]{1,96}$/.test(s) ? s : undefined
+const safeProvider = s => typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s) ? s : undefined
+const safeEffort = s => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(s) ? s : undefined
+/** Display labels are plain bounded text: no control characters, ever. */
+const safeDisplayName = s => typeof s === 'string'
+  ? s.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined
+  : undefined
+
+function safeRoute(value, includeFallback = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const route = {}
+  const provider = safeProvider(value.provider)
+  const model = safeModel(value.model)
+  if (provider) route.provider = provider
+  if (model) route.model = model
+  if (includeFallback && value.fallback && typeof value.fallback === 'object' && !Array.isArray(value.fallback)) {
+    const fallbackProvider = safeProvider(value.fallback.provider)
+    const fallbackModel = safeModel(value.fallback.model)
+    if (fallbackProvider && fallbackModel) {
+      route.fallback = { provider: fallbackProvider, model: fallbackModel }
+    }
+  }
+  const effort = safeEffort(value.reasoningEffort)
+  if (effort) route.reasoningEffort = effort
+  return Object.keys(route).length > 0 ? route : undefined
+}
+
+function safeModelCatalog(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (safeNum(value.ts) === undefined) return undefined
+  const models = Array.isArray(value.models)
+    ? [...new Set(value.models.filter(safeModel))].slice(0, 200) : []
+  const providers = (Array.isArray(value.providers) ? value.providers : []).slice(0, 50).flatMap(entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const id = safeProvider(entry.id)
+    if (!id) return []
+    const providerModels = (Array.isArray(entry.models) ? entry.models : []).slice(0, 200).flatMap(model => {
+      const modelId = safeModel(model?.id)
+      if (!modelId) return []
+      const name = safeDisplayName(model?.name)
+      return [{ id: modelId, ...(name ? { name } : {}) }]
+    })
+    // A provider with no selectable model is noise in the UI.
+    if (providerModels.length === 0) return []
+    const name = safeDisplayName(entry.name)
+    return [{ id, ...(name ? { name } : {}), models: providerModels }]
+  })
+  return {
+    ts: safeNum(value.ts),
+    incomplete: value.incomplete === true,
+    models,
+    ...(providers.length > 0 ? { providers } : {}),
+  }
+}
 
 async function readSafeFile(dir, file, maxBytes) {
   const root = await fs.lstat(dir).catch(e => { if (e.code === 'ENOENT') return null; throw e })
@@ -91,12 +144,9 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
       doc.sharedProjectWorkspace.length <= 4096 && !doc.sharedProjectWorkspace.includes('\0') ?
       { sharedProjectWorkspace: path.normalize(doc.sharedProjectWorkspace) } : {}),
     status: safeLabel(doc.status) ?? 'unknown',
-    ...(doc.modelCatalog && safeNum(doc.modelCatalog.ts) !== undefined &&
-      Array.isArray(doc.modelCatalog.models) ? { modelCatalog: {
-        ts: safeNum(doc.modelCatalog.ts),
-        incomplete: doc.modelCatalog.incomplete === true,
-        models: [...new Set(doc.modelCatalog.models.filter(safeModel))].slice(0, 200),
-      } } : {}),
+    ...(safeModelCatalog(doc.modelCatalog) ? { modelCatalog: safeModelCatalog(doc.modelCatalog) } : {}),
+    ...(safeRoute(doc.agentRoute, true) ? { agentRoute: safeRoute(doc.agentRoute, true) } : {}),
+    ...(safeRoute(doc.profileDefaultRoute) ? { profileDefaultRoute: safeRoute(doc.profileDefaultRoute) } : {}),
     tasks, sessions, transport: transports,
     stats: {
       activeTurns: get('activeTurns'), boundSessions: get('boundSessions'),

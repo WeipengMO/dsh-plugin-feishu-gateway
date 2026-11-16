@@ -93,6 +93,115 @@ window.__ModuleLoader__.load({
       return payload
     }
     /*__PROXY_HELPERS_END__*/
+    /*__MODEL_ROUTE_HELPERS_START__*/
+    // Pure helpers for the DSH-driven model selectors. They never invent a
+    // default route: every option comes from the Gateway Host's DSH catalog
+    // snapshot (`/state.modelCatalog`), plus the explicitly saved/effective
+    // routes so an unavailable saved value is still visible and replaceable.
+    function modelDirectoryView(state) {
+      const data = state && typeof state === 'object' ? state : {}
+      const catalog = data.modelCatalog && typeof data.modelCatalog === 'object' ? data.modelCatalog : null
+      const providers = []
+      if (catalog && Array.isArray(catalog.providers)) {
+        for (const entry of catalog.providers) {
+          if (!entry || typeof entry.id !== 'string' || !entry.id) continue
+          const models = (Array.isArray(entry.models) ? entry.models : [])
+            .filter(model => model && typeof model.id === 'string' && model.id)
+            .map(model => ({ id: model.id,
+              name: typeof model.name === 'string' && model.name ? model.name : model.id }))
+          if (!models.length) continue
+          providers.push({ id: entry.id,
+            name: typeof entry.name === 'string' && entry.name ? entry.name : entry.id, models })
+        }
+      }
+      const effective = data.agentRoute && typeof data.agentRoute === 'object' ? data.agentRoute : null
+      const profileDefault = data.profileDefaultRoute && typeof data.profileDefaultRoute === 'object'
+        ? data.profileDefaultRoute : null
+      const savedAgent = data.config && data.config.agent && typeof data.config.agent === 'object'
+        ? data.config.agent : null
+      const complete = route => route && typeof route.provider === 'string' && route.provider &&
+        typeof route.model === 'string' && route.model
+      // Precedence: the explicitly managed value (what this form saves and what
+      // the next restart applies), then the Host's effective route, then DSH's
+      // own Profile default. A blank "inherit" value is never presented.
+      const managedHasFallback = savedAgent !== null &&
+        Object.prototype.hasOwnProperty.call(savedAgent, 'fallback')
+      const primary = complete(savedAgent)
+        ? { provider: savedAgent.provider, model: savedAgent.model, source: 'saved' }
+        : complete(effective)
+          ? { provider: effective.provider, model: effective.model, source: 'effective' }
+          : complete(profileDefault)
+            ? { provider: profileDefault.provider, model: profileDefault.model, source: 'profile' }
+            : null
+      // `fallback: null` in the managed overlay is an explicit clear and must
+      // win over a still-stale effective route until the channel restarts.
+      const fallbackSource = managedHasFallback
+        ? (complete(savedAgent.fallback) ? savedAgent.fallback : null)
+        : complete(effective?.fallback) ? effective.fallback
+          : complete(savedAgent?.fallback) ? savedAgent.fallback : null
+      const savedFallback = fallbackSource
+        ? { provider: fallbackSource.provider, model: fallbackSource.model } : null
+      const withRoutes = withRouteOptions(providers, [primary, savedFallback, profileDefault])
+      return {
+        // A route is selectable when DSH advertises a directory or when an
+        // explicit saved/effective route exists; never a fabricated default.
+        providers: withRoutes,
+        primary,
+        fallback: savedFallback,
+        profileDefault,
+        incomplete: Boolean(catalog && catalog.incomplete),
+        catalogMissing: !catalog || !Array.isArray(catalog.providers) || catalog.providers.length === 0,
+        stale: data.modelDirectoryStale === true,
+      }
+    }
+    function withRouteOptions(providers, routes) {
+      const list = providers.map(provider => ({ ...provider, models: [...provider.models] }))
+      for (const route of routes) {
+        if (!route || typeof route.provider !== 'string' || !route.provider ||
+            typeof route.model !== 'string' || !route.model) continue
+        let provider = list.find(entry => entry.id === route.provider)
+        if (!provider) {
+          // Saved values are shown verbatim, never silently dropped: a select
+          // whose value is absent from its options would render blank.
+          provider = { id: route.provider, name: route.provider, models: [], unlisted: true }
+          list.push(provider)
+        }
+        if (!provider.models.some(model => model.id === route.model)) {
+          provider.models.push({ id: route.model, name: route.model, unlisted: true })
+        }
+      }
+      return list
+    }
+    function modelsForProvider(providers, providerId) {
+      const provider = (providers || []).find(entry => entry.id === providerId)
+      return provider ? provider.models : []
+    }
+    function firstModelForProvider(providers, providerId) {
+      const models = modelsForProvider(providers, providerId)
+      return models.length ? models[0].id : ''
+    }
+    function defaultFallbackSelection(providers, primaryProvider, primaryModel) {
+      for (const provider of providers || []) {
+        for (const model of provider.models || []) {
+          if (provider.id === primaryProvider && model.id === primaryModel) continue
+          return { provider: provider.id, model: model.id }
+        }
+      }
+      return null
+    }
+    function modelRoutePayload(input) {
+      const value = input && typeof input === 'object' ? input : {}
+      if (!value.provider || !value.model) return null
+      const route = { provider: value.provider, model: value.model }
+      const fallback = value.fallback
+      // null explicitly clears a saved fallback; omitting it would resurrect
+      // whatever the Profile/previous overlay had.
+      route.fallback = fallback && fallback.provider && fallback.model &&
+        !(fallback.provider === value.provider && fallback.model === value.model)
+        ? { provider: fallback.provider, model: fallback.model } : null
+      return route
+    }
+    /*__MODEL_ROUTE_HELPERS_END__*/
     function action(text, callback, busy, secondary = false) {
       return h('button', { type: 'button', className: 'fga-button' + (secondary ? ' fga-secondary' : ''),
         onClick: callback, disabled: busy }, text)
@@ -126,8 +235,11 @@ window.__ModuleLoader__.load({
       const [bots, setBots] = useState([{ id: 'default', enabled: true, domain: 'feishu' }])
       const [workspace, setWorkspace] = useState('')
       const [agentWorkspace, setAgentWorkspace] = useState('')
-      const [provider, setProvider] = useState('')
-      const [model, setModel] = useState('')
+      const [primaryProvider, setPrimaryProvider] = useState('')
+      const [primaryModel, setPrimaryModel] = useState('')
+      const [fallbackEnabled, setFallbackEnabled] = useState(false)
+      const [fallbackProvider, setFallbackProvider] = useState('')
+      const [fallbackModel, setFallbackModel] = useState('')
       const [timeout, setTimeout] = useState('')
       const [proxyEnabled, setProxyEnabled] = useState(false)
       const [proxyFallback, setProxyFallback] = useState(true)
@@ -153,8 +265,15 @@ window.__ModuleLoader__.load({
         setBots(c.bots || data.bots || [{ id: 'default', enabled: true, domain: 'feishu' }])
         setWorkspace(c.workspace || '')
         setAgentWorkspace(c.agentWorkspace || '')
-        setProvider(c.agent?.provider || '')
-        setModel(c.agent?.model || '')
+        // Current route comes from the Gateway Host's DSH snapshot, never from
+        // a blank "inherit Profile" placeholder. Saved values win when the Host
+        // is offline; otherwise DSH's effective/default route is shown.
+        const directory = modelDirectoryView(data)
+        setPrimaryProvider(directory.primary?.provider || '')
+        setPrimaryModel(directory.primary?.model || '')
+        setFallbackEnabled(Boolean(directory.fallback))
+        setFallbackProvider(directory.fallback?.provider || '')
+        setFallbackModel(directory.fallback?.model || '')
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
         setProxyEnabled(c.networkProxy?.enabled === true)
         setProxyFallback(c.networkProxy?.fallbackDirect !== false)
@@ -196,11 +315,11 @@ window.__ModuleLoader__.load({
         if (botsOverride) result.bots = bots.map(b => ({ id: b.id.trim(), domain: b.domain, enabled: b.enabled }))
         if (workspace.trim()) result.workspace = workspace.trim()
         if (agentWorkspace.trim()) result.agentWorkspace = agentWorkspace.trim()
-        if (provider.trim() || model.trim()) {
-          result.agent = {}
-          if (provider.trim()) result.agent.provider = provider.trim()
-          if (model.trim()) result.agent.model = model.trim()
-        }
+        const route = modelRoutePayload({
+          provider: primaryProvider.trim(), model: primaryModel.trim(),
+          fallback: fallbackEnabled ? { provider: fallbackProvider.trim(), model: fallbackModel.trim() } : null,
+        })
+        if (route) result.agent = route
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
         result.networkProxy = networkProxyPayload({
           enabled: proxyEnabled, fallbackDirect: proxyFallback,
@@ -284,6 +403,20 @@ window.__ModuleLoader__.load({
         setBots(current => current.map((b, i) => i === index ? { ...b, [key]: value } : b))
 
       const proxy = networkProxyView(state)
+      const directory = modelDirectoryView(state)
+      const fallbackSelectionInvalid = fallbackEnabled && (!fallbackProvider || !fallbackModel ||
+        (fallbackProvider === primaryProvider && fallbackModel === primaryModel))
+      // Keep the fallback a genuinely different route when the primary changes,
+      // instead of leaving the form in a silently-unsaveable state.
+      const ensureDistinctFallback = (nextProvider, nextModel) => {
+        if (!fallbackEnabled) return
+        if (!(fallbackProvider === nextProvider && fallbackModel === nextModel)) return
+        const pick = defaultFallbackSelection(directory.providers, nextProvider, nextModel)
+        setFallbackProvider(pick?.provider || '')
+        setFallbackModel(pick?.model || '')
+      }
+      const modelChoices = modelsForProvider(directory.providers, primaryProvider)
+      const fallbackChoices = modelsForProvider(directory.providers, fallbackProvider)
       const proxyHint = proxyCleared
         ? '已标记清除已保存地址：点击「保存配置」后删除，重启通道后回退到服务器环境变量或直连。'
         : proxy.storedError
@@ -317,9 +450,89 @@ window.__ModuleLoader__.load({
             action(loading ? '刷新中…' : '刷新状态', reload, loading || busy, true),
             action('重启飞书通道', restart, loading || busy))),
         tab === 'settings' && h('div', { className: 'fga-section' },
-          h('p', { className: 'fga-hint' }, '留空代表继承原 Profile 配置。设置仅在飞书通道重启后生效。'),
-          field('模型提供方 Provider', textInput(provider, setProvider, '继承 Profile，例如 magpie')),
-          field('模型 Model', textInput(model, setModel, '继承 Profile，例如 group/deepseek')),
+          h('p', { className: 'fga-hint' },
+            '模型目录与当前路由读取自运行飞书通道的 DSH Profile；所选 Provider/模型会显式写入托管配置，不再使用“留空继承”。设置仅在飞书通道重启后生效。'),
+          !directory.catalogMissing && h('p', { className: 'fga-hint' },
+            'DSH 目录：' + directory.providers.length + ' 个 Provider · ' +
+            directory.providers.reduce((count, provider) => count + provider.models.length, 0) + ' 个模型' +
+            (directory.incomplete ? ' · 部分 Provider 查询失败，列表可能不完整' : '') +
+            (directory.stale ? ' · 目录来自通道上一次运行快照，通道当前可能离线' : '')),
+          directory.catalogMissing && h('div', { className: 'fga-warning' },
+            '尚未读取到飞书通道的 DSH 模型目录。请确认独立飞书通道已启动（遥测约 10 秒刷新、模型目录约 60 秒刷新），然后刷新本页；在读取成功前不要保存模型选择。'),
+          h('div', { className: 'fga-route-row' },
+            field('主模型 Provider', h('select', { className: 'fga-input', value: primaryProvider,
+              disabled: busy || !state,
+              onChange: e => {
+                const provider = e.target.value
+                const nextModel = firstModelForProvider(directory.providers, provider)
+                setPrimaryProvider(provider)
+                setPrimaryModel(nextModel)
+                ensureDistinctFallback(provider, nextModel)
+              } },
+              primaryProvider ? null : h('option', { value: '' }, '选择 Provider'),
+              ...directory.providers.map(provider => h('option', { key: provider.id, value: provider.id },
+                provider.name + (provider.name !== provider.id ? ' · ' + provider.id : '') +
+                (provider.unlisted ? '（不在 DSH 目录）' : ''))))),
+            field('主模型 Model', h('select', { className: 'fga-input', value: primaryModel,
+              disabled: busy || !state || !primaryProvider,
+              onChange: e => {
+                const nextModel = e.target.value
+                setPrimaryModel(nextModel)
+                ensureDistinctFallback(primaryProvider, nextModel)
+              } },
+              primaryModel ? null : h('option', { value: '' }, '选择模型'),
+              ...modelChoices.map(model => h('option', { key: model.id, value: model.id },
+                (model.name || model.id) + (model.unlisted ? '（不在 DSH 目录）' : '')))))),
+          h('p', { className: 'fga-hint' },
+            '主模型：' + (primaryProvider && primaryModel ? primaryProvider + '/' + primaryModel : '未选择') +
+            (directory.primary?.source === 'profile' ? '（来自 DSH Profile 的默认模型选择）' : '') +
+            (directory.primary?.source === 'effective' ? '（当前生效路由）' : '') +
+            (directory.primary?.source === 'saved' ? '（已保存的托管配置，重启飞书通道后生效）' : '')),
+          h('label', { className: 'fga-check' },
+            h('input', { type: 'checkbox', checked: fallbackEnabled, disabled: busy || !state,
+              onChange: e => {
+                const enabled = e.target.checked
+                setFallbackEnabled(enabled)
+                if (!enabled) return
+                const keep = fallbackProvider && fallbackModel &&
+                  !(fallbackProvider === primaryProvider && fallbackModel === primaryModel)
+                  ? { provider: fallbackProvider, model: fallbackModel }
+                  : defaultFallbackSelection(directory.providers, primaryProvider, primaryModel)
+                setFallbackProvider(keep?.provider || '')
+                setFallbackModel(keep?.model || '')
+              } }),
+            '启用 Fallback 模型（主模型请求失败且未执行任何工具时，自动切换并重试一次）'),
+          fallbackEnabled && h(React.Fragment, null,
+            h('div', { className: 'fga-route-row' },
+              field('Fallback Provider', h('select', { className: 'fga-input', value: fallbackProvider,
+                disabled: busy || !state,
+                onChange: e => {
+                  const provider = e.target.value
+                  const options = modelsForProvider(directory.providers, provider)
+                  let model = options.length ? options[0].id : ''
+                  if (provider === primaryProvider && model === primaryModel) {
+                    model = options.find(option => option.id !== primaryModel)?.id || model
+                  }
+                  setFallbackProvider(provider)
+                  setFallbackModel(model)
+                } },
+                fallbackProvider ? null : h('option', { value: '' }, '选择 Provider'),
+                ...directory.providers.map(provider => h('option', { key: provider.id, value: provider.id },
+                  provider.name + (provider.name !== provider.id ? ' · ' + provider.id : '') +
+                  (provider.unlisted ? '（不在 DSH 目录）' : ''))))),
+              field('Fallback Model', h('select', { className: 'fga-input', value: fallbackModel,
+                disabled: busy || !state || !fallbackProvider,
+                onChange: e => setFallbackModel(e.target.value) },
+                fallbackModel ? null : h('option', { value: '' }, '选择模型'),
+                ...fallbackChoices.map(model => h('option', { key: model.id, value: model.id },
+                  (model.name || model.id) + (model.unlisted ? '（不在 DSH 目录）' : '')))))),
+            fallbackSelectionInvalid && h('p', { className: 'fga-error', role: 'alert' },
+              'Fallback 必须选择一个与主模型不同的可用模型；当前选择无法保存。'),
+            !fallbackSelectionInvalid && h('p', { className: 'fga-hint' },
+              '仅当主模型失败发生在任何工具执行之前时才自动切换并重试一次；已执行工具的失败绝不重放，以免重复副作用。'),
+            !fallbackSelectionInvalid && !defaultFallbackSelection(directory.providers, primaryProvider, primaryModel) &&
+              h('p', { className: 'fga-hint' }, '当前 DSH 目录中没有可与主模型区分开的其它模型。')),
+          h('div', { className: 'fga-divider' }),
           field('AI 回复格式', h('select', { className: 'fga-input', value: replyFormat,
             onChange: e => setReplyFormat(e.target.value) },
             h('option', { value: 'inherit' }, '继承 Profile（默认普通文本）'),
@@ -390,8 +603,8 @@ window.__ModuleLoader__.load({
               h('option', { value: 'enabled' }, '启用'),
               h('option', { value: 'disabled' }, '停用'))),
           h('div', { className: 'fga-inline-actions' },
-            action('保存配置', save, busy || !state),
-            action('保存并重启飞书通道', saveAndRestart, busy || !state, true))),
+            action('保存配置', save, busy || !state || fallbackSelectionInvalid),
+            action('保存并重启飞书通道', saveAndRestart, busy || !state || fallbackSelectionInvalid, true))),
         tab === 'permissions' && h('div', { className: 'fga-section' },
           h('label', { className: 'fga-check' },
             h('input', { type: 'checkbox', checked: allowOverride, onChange: e => setAllowOverride(e.target.checked) }),

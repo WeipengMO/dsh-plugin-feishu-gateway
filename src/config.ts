@@ -1,6 +1,8 @@
 import Schema from '@deepseek-ai/schemastery'
 import { resolveProxyUrl } from './util/proxy-url.js'
-import type { BotCredentials, BotSpec, GatewayConfig, GroupRule, GroupSessionScope } from './types.js'
+import type {
+  AgentRoute, BotCredentials, BotSpec, GatewayConfig, GroupRule, GroupSessionScope,
+} from './types.js'
 
 export type { GatewayConfig, BotSpec } from './types.js'
 
@@ -47,7 +49,11 @@ export const Config: ConfigValidator = Schema.object({
     provider: Schema.string(),
     model: Schema.string(),
     reasoningEffort: Schema.string(),
-  }).default({}).description('Optional model route override; omitted fields inherit the profile default.'),
+    fallback: Schema.object({
+      provider: Schema.string(),
+      model: Schema.string(),
+    }),
+  }).default({}).description('Optional model route override plus a Gateway-owned fallback rescue route.'),
   stateDir: Schema.string().default('')
     .description('Durable state directory. Empty resolves to $DSH_HOME/feishu-gateway.'),
   dedupTtlMs: Schema.number().default(24 * 60 * 60 * 1000)
@@ -129,7 +135,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     ...(typeof raw.agentWorkspace === 'string' && raw.agentWorkspace.trim() ?
       { agentWorkspace: raw.agentWorkspace } : {}),
     ...(typeof raw.agentPreset === 'string' && raw.agentPreset ? { agentPreset: raw.agentPreset } : {}),
-    agent: (raw.agent as GatewayConfig['agent']) ?? {},
+    agent: normalizeAgentRoute(raw.agent),
     stateDir,
     dedupTtlMs: numberOr(raw.dedupTtlMs, 24 * 60 * 60 * 1000),
     maxDedupEntries: numberOr(raw.maxDedupEntries, 50_000),
@@ -160,6 +166,45 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** One provider/model route id; matches the admin API's accepted alphabet. */
+const ROUTE_VALUE = /^[A-Za-z0-9_./:@+-]{1,160}$/
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Normalize the optional model route. A base profile may legitimately override
+ * only one of provider/model, so partial routes are preserved. A fallback is
+ * kept only when BOTH ids are present and valid and it is not the primary route
+ * (a fallback identical to the primary can never rescue the turn).
+ */
+export function normalizeAgentRoute(value: unknown): AgentRoute {
+  if (!isRecord(value)) return {}
+  const route: {
+    provider?: string
+    model?: string
+    reasoningEffort?: string
+    fallback?: { provider: string; model: string }
+  } = {}
+  for (const key of ['provider', 'model', 'reasoningEffort'] as const) {
+    const raw = value[key]
+    if (typeof raw !== 'string') continue
+    const text = raw.trim()
+    if (text && ROUTE_VALUE.test(text)) route[key] = text
+  }
+  const fallback = value.fallback
+  if (isRecord(fallback)) {
+    const provider = typeof fallback.provider === 'string' ? fallback.provider.trim() : ''
+    const model = typeof fallback.model === 'string' ? fallback.model.trim() : ''
+    if (provider && model && ROUTE_VALUE.test(provider) && ROUTE_VALUE.test(model) &&
+      !(route.provider === provider && route.model === model)) {
+      route.fallback = { provider, model }
+    }
+  }
+  return route
 }
 
 function defaultStateDir(): string {

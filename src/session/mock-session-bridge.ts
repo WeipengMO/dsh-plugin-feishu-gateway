@@ -1,5 +1,8 @@
-import type { AgentRoute, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions } from '../types.js'
+import type {
+  AgentRoute, ModelCatalog, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions,
+} from '../types.js'
 import { sleep } from '../util/retry.js'
+import { SessionTurnFailure } from './turn-failure.js'
 
 export interface MockSessionBridgeOptions {
   /** Fixed reply, or a function of the prompt. */
@@ -8,6 +11,16 @@ export interface MockSessionBridgeOptions {
   readonly delayMs?: number
   /** Fail the next submit with this message. */
   readonly failNext?: string
+  /** Directory advertised by `listModels`; defaults to two magpie routes. */
+  readonly catalog?: ModelCatalog
+  /** How many native turns fail (as `SessionTurnFailure`) before a reply. */
+  readonly turnFailures?: ReadonlyArray<{
+    readonly failure?: string
+    readonly toolCalls?: number
+    readonly toolFailures?: number
+  }>
+  /** Simulated DSH Profile `agent-default-model` selection. */
+  readonly defaultRoute?: AgentRoute
 }
 
 /**
@@ -22,16 +35,23 @@ export class MockSessionBridge implements SessionBridge {
   readonly resumed: string[] = []
   readonly resumedRoutes: Array<{ sessionId: string; route: AgentRoute }> = []
   readonly prompts: Array<{ sessionId: string; text: string }> = []
+  readonly modelSelections: Array<{ sessionId: string; provider: string; model: string }> = []
   readonly cancelled: string[] = []
   readonly disposedSessions: string[] = []
   private readonly live = new Map<string, string>()
   private readonly modelChoices = new Map<string, { provider: string; model: string }>()
   private readonly scheduleHandlers = new Set<(turn: ObservedScheduleTurn) => void>()
   private pendingFailure: string | undefined
+  private readonly pendingTurnFailures: Array<{
+    failure?: string
+    toolCalls?: number
+    toolFailures?: number
+  }>
   private disposed = false
 
   constructor(private readonly options: MockSessionBridgeOptions = {}) {
     this.pendingFailure = options.failNext
+    this.pendingTurnFailures = [...(options.turnFailures ?? [])]
   }
 
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
@@ -47,11 +67,18 @@ export class MockSessionBridge implements SessionBridge {
     this.live.set(sessionId, 'resumed')
   }
 
-  async listModels() {
-    return { models: [
+  async listModels(): Promise<ModelCatalog> {
+    return this.options.catalog ?? { models: [
       { provider: 'magpie', model: 'group/deepseek' },
       { provider: 'magpie', model: 'group/hy4-free' },
-    ], incomplete: false }
+    ], providers: [{ id: 'magpie', name: 'Magpie', models: [
+      { provider: 'magpie', model: 'group/deepseek', name: 'Deepseek' },
+      { provider: 'magpie', model: 'group/hy4-free', name: 'HY4 free' },
+    ] }], incomplete: false }
+  }
+
+  defaultModel(): AgentRoute | undefined {
+    return this.options.defaultRoute
   }
 
   currentModel(sessionId: string) {
@@ -61,6 +88,7 @@ export class MockSessionBridge implements SessionBridge {
 
   selectModel(sessionId: string, provider: string, model: string): void {
     if (!this.live.has(sessionId)) throw new Error('session not live')
+    this.modelSelections.push({ sessionId, provider, model })
     this.modelChoices.set(sessionId, { provider, model })
   }
 
@@ -78,6 +106,12 @@ export class MockSessionBridge implements SessionBridge {
 
   async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
     this.assertLive()
+    const injected = this.pendingTurnFailures.shift()
+    if (injected) {
+      throw new SessionTurnFailure(injected.failure ?? 'mock provider failure', {
+        toolCalls: injected.toolCalls, toolFailures: injected.toolFailures,
+      })
+    }
     const last = [...this.prompts].reverse().find((p) => p.sessionId === sessionId)
     const delay = Math.min(this.options.delayMs ?? 0, Math.max(0, options.timeoutMs))
     if (delay > 0) await sleep(delay, options.signal)

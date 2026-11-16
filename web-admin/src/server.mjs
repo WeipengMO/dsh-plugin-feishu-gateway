@@ -135,13 +135,30 @@ export function validateConfig(input) {
   }
   if (input.agent !== undefined) {
     if (!object(input.agent)) throw httpError(400, 'agent must be an object')
-    exactKeys(input.agent, ['provider', 'model'])
+    exactKeys(input.agent, ['provider', 'model', 'fallback'])
     const agent = {}
     for (const key of ['provider', 'model']) if (input.agent[key] !== undefined) {
       if (typeof input.agent[key] !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(input.agent[key])) {
         throw httpError(400, 'invalid model route ' + key)
       }
       agent[key] = input.agent[key]
+    }
+    const fallback = input.agent.fallback
+    if (fallback === null) {
+      // Explicit clear: the overlay must never silently inherit an old route.
+      agent.fallback = null
+    } else if (fallback !== undefined) {
+      if (!object(fallback)) throw httpError(400, 'agent fallback must be an object or null')
+      exactKeys(fallback, ['provider', 'model'])
+      for (const key of ['provider', 'model']) {
+        if (typeof fallback[key] !== 'string' || !/^[A-Za-z0-9_./:@+-]{1,160}$/.test(fallback[key])) {
+          throw httpError(400, 'invalid fallback model route ' + key)
+        }
+      }
+      if (agent.provider === fallback.provider && agent.model === fallback.model) {
+        throw httpError(400, 'fallback route must differ from the primary route')
+      }
+      agent.fallback = { provider: fallback.provider, model: fallback.model }
     }
     result.agent = agent
   }
@@ -762,15 +779,24 @@ export function createAdminHandler(options = {}) {
       if (req.method === 'GET' && route === PREFIX + '/state') {
         const current = await configFile(managed)
         const bots = current.config.bots ?? [{ id: 'default', domain: 'feishu', enabled: true }]
-        const [health, service, credentials, networkProxy] = await Promise.all([
+        const [health, service, credentials, networkProxy, snapshot] = await Promise.all([
           loopback(healthPort, '/health'), unitState(unit), credentialStatus(envFile, bots),
           networkProxyStatus(envFile, proxyFile, current.config),
+          // The model directory belongs to the Gateway Host, not this Web
+          // Profile: read only the Gateway's whitelisted telemetry snapshot.
+          readOpsSnapshot(stateDir).catch(() => null),
         ])
         const startedAt = health?.health?.uptimeMs == null ? 0 : Date.now() - health.health.uptimeMs
         return json(res, 200, { ok: true, apiVersion: VERSION, config: current.config,
           revision: current.revision, source: current.mtimeMs ? 'managed' : 'profile',
           pendingRestart: Boolean(current.mtimeMs && startedAt && current.mtimeMs > startedAt),
-          health, service, credentials, bots, networkProxy })
+          health, service, credentials, bots, networkProxy,
+          // Explicit selections for the admin form; null means "unknown", never
+          // a fabricated default route.
+          modelCatalog: snapshot?.modelCatalog ?? null,
+          agentRoute: snapshot?.agentRoute ?? null,
+          profileDefaultRoute: snapshot?.profileDefaultRoute ?? null,
+          modelDirectoryStale: snapshot ? snapshot.stale === true : null })
       }
       if (req.method === 'GET' && route === PREFIX + '/health') {
         return json(res, 200, { ok: true, health: await loopback(healthPort, '/health') })

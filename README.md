@@ -24,6 +24,7 @@
 - `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
 - 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
 - DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
+- **模型选择**：Provider 与可用模型目录由运行飞书通道的 DSH Profile 提供（`ctx.llm.listProviders()` / `listModels()`），管理端只读脱敏快照；主模型与 Fallback 模型均为显式选值，不再“留空继承”。Fallback 仅在主模型请求失败且该轮尚未执行任何工具时自动切换并重试一次。
 - **飞书运维控制中心（Gateway rc.7 / Admin rc.7）**：DSH 左侧栏可查看实时任务、消息生命周期、Session 绑定、原生审批审计、Token 用量、连接诊断与本地告警；确认后取消正在执行的任务或触发安全 Outbox 补发，并可以在高级配置里修改机器人、模型、白名单、审批卡片、重试和连接参数。Settings → 飞书 Gateway 只管理写入凭据。通过同机私有运维事件/命令队列与现有 DSH 认证 API 协作，不新增 Agent / LLM 调用。详见 [完整操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)。
 - **飞书独立身份与记忆管理（rc.7 / rc.7）**：飞书管理 → Agent 档案，采用双栏文件导航与专注 Markdown 编辑器（源码行号、当前行高亮、Markdown 语法着色、光标位置、空格缩进），以编辑/预览/版本历史/加载配置标签页切换（参考 OpenClaw 的 Files 操作方式）；支持 SOUL/IDENTITY/USER/TOOLS/MEMORY/AGENTS.md 及按日记忆的编辑、历史版本、恢复、加载开关与上下文字节预算。复用 DSH 原生 AGENTS.local.md 指令加载，保存后新 Session 生效，保留用户原有本地规则，不增加额外 LLM 调用。飞书 Session 使用独立 cwd，**不会再将飞书档案写入普通 DSH 工作目录**。旧共享托管区块支持备份后明确确认清除，旧飞书会话需 /new 切换。详见 [Agent 隔离与迁移手册](docs/AGENT-PROFILE-ISOLATION.md) 和 [档案管理手册](docs/AGENT-PROFILE-MANAGER.md)。
 - 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片。**0.2.0-rc.2 起，Card 模式成功时直接在原卡片显示最终完整答案与模型/Token/速度/用时底栏，不再额外发送相同的文本；完成后取消按钮自动消失。`0.2.0-rc.3` 起，底栏按行展示模型、**Token 总用量**、速度和用时；速度根据 DSH 已有的输出 Token 与流式生成时长计算，不额外请求模型，缺少有效时长则隐藏速度。`0.2.0-rc.4` 起，底栏使用 **12px 灰色辅助信息**，与原样的回答正文形成视觉区分。** 如卡片创建/更新失败或超出卡片大小限制，回退到 DurableOutbox 文本回复。

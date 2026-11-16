@@ -171,10 +171,25 @@ export interface GroupRule {
   readonly sessionScope: GroupSessionScope
 }
 
+/** Fully resolved rescue route; both ids are required to be usable. */
+export interface AgentFallbackRoute {
+  readonly provider: string
+  readonly model: string
+}
+
+/**
+ * Optional model route override for the native Feishu Session.
+ *
+ * `fallback` is a Gateway-owned rescue route: when one turn fails inside the
+ * native Agent loop BEFORE any tool call ran (no side effects), the Gateway
+ * switches that Session to the fallback model and retries the turn once. It is
+ * never forwarded to DSH `AgentOptions`; DSH itself has no fallback concept.
+ */
 export interface AgentRoute {
   readonly provider?: string
   readonly model?: string
   readonly reasoningEffort?: string
+  readonly fallback?: AgentFallbackRoute
 }
 
 /** Fully resolved plugin configuration (after schema defaults). */
@@ -272,8 +287,17 @@ export interface AvailableModel {
   readonly model: string
   readonly name?: string
 }
-export interface ModelCatalog {
+/** One provider route advertised by the Gateway Host's DSH `llm` service. */
+export interface AvailableProvider {
+  readonly id: string
+  readonly name?: string
   readonly models: readonly AvailableModel[]
+}
+export interface ModelCatalog {
+  /** Flat `provider/model` list kept for usage filters and older readers. */
+  readonly models: readonly AvailableModel[]
+  /** Provider-grouped directory for selectors; absent on older Hosts. */
+  readonly providers?: readonly AvailableProvider[]
   readonly incomplete: boolean
 }
 
@@ -287,6 +311,8 @@ export interface SessionBridge {
   resume(sessionId: string, route?: AgentRoute): Promise<void>
   /** Models advertised by this Gateway Host, not another DSH Profile. */
   listModels?(): Promise<ModelCatalog>
+  /** The Host Profile's own default model selection, when one is configured. */
+  defaultModel?(): AgentRoute | undefined
   currentModel?(sessionId: string): { provider: string; model: string } | undefined
   selectModel?(sessionId: string, provider: string, model: string): void
   /** Queue one user turn on a live Session. */

@@ -11,6 +11,7 @@ import { DurableOutbox } from './outbox/outbox.js'
 import { MessageRouter, type RejectReason } from './router/message-router.js'
 import { SessionRegistry } from './session/session-registry.js'
 import { truncateText } from './session/session-bridge.js'
+import { SessionTurnFailure } from './session/turn-failure.js'
 import { acquireStateDirOwnerLock, type StateDirOwnerLock } from './storage/owner-lock.js'
 import type {
   FeishuTransport,
@@ -20,6 +21,7 @@ import type {
   InboundMessage,
   ModelTokenUsage,
   SessionBridge,
+  SessionReply,
   TransportState,
 } from './types.js'
 import { chatKey, newId, sessionIdFor } from './util/id.js'
@@ -137,7 +139,12 @@ export class FeishuGateway {
   private approvalPublish: Promise<void> = Promise.resolve()
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
-  private modelCatalog: { ts: number; incomplete: boolean; models: string[] } | undefined
+  private modelCatalog: {
+    ts: number
+    incomplete: boolean
+    models: string[]
+    providers: Array<{ id: string; name?: string; models: Array<{ id: string; name?: string }> }>
+  } | undefined
   private modelCatalogAttempt = 0
   private modelCatalogLoading = false
   private startedAt = 0
@@ -590,13 +597,18 @@ export class FeishuGateway {
           }
           const currentLine = current ? '当前会话模型：' + current
             : existing ? '当前会话模型暂不可用。' : '当前聊天尚未建立会话，暂没有当前会话模型。'
+          const fallback = this.fallbackRoute()
+          const fallbackLine = fallback
+            ? 'Fallback 模型：' + fallback.provider + '/' + fallback.model +
+              '（主模型请求失败且未执行工具时自动切换一次）'
+            : ''
           const listing = this.bridge.listModels ? await withTimeout(this.bridge.listModels(), 10_000) : undefined
           const catalog = listing && !listing.timedOut ? listing.value : undefined
           if (!catalog) {
-            reply = currentLine + '\n模型目录暂不可用，请稍后重试。'
+            reply = [currentLine, fallbackLine, '模型目录暂不可用，请稍后重试。'].filter(Boolean).join('\n')
           } else {
             const routes = catalog.models.map(item => item.provider + '/' + item.model)
-            reply = [currentLine,
+            reply = [currentLine, fallbackLine,
               routes.length ? '飞书通道可用模型：' : '飞书通道暂未发现可用模型。',
               ...routes.map(route => '• ' + route + (route === current ? '（当前）' : '')),
               catalog.incomplete ? '部分模型提供方查询失败，列表可能不完整。' : '',
@@ -723,33 +735,68 @@ export class FeishuGateway {
         ref: record.messageId, session: sessionId })
       if (signal.aborted) throw new Error('turn aborted before submit')
       attempted = true
-      await this.bridge.submit(sessionId, record.text, signal)
-      if (this.config.streamCards && !signal.aborted) {
-        try {
-          const transport = this.transports.get(record.botId)
-          if (transport) {
-            const opened = await withTimeout(
-              TaskProgressCard.start(
-                transport, record.messageId, this.logger, this.config.streamIntervalMs),
-              5_000,
-              signal,
-            )
-            const progress = opened.timedOut ? undefined : opened.value
-            if (progress && !signal.aborted) {
-              turn.stream = progress
-              unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => progress.onTextDelta(delta))
-              unsubscribeTools = this.bridge.onToolActivity?.(sessionId, (event) => progress.onToolActivity(event))
+      // One turn may be retried exactly once on the configured fallback route,
+      // and only when the native failure happened before any tool call ran.
+      let fallbackAttempted = false
+      const attachProgress = () => {
+        if (!turn.stream) return
+        const card = turn.stream
+        unsubscribeProgress = this.bridge.onTextDelta?.(sessionId, (delta) => card.onTextDelta(delta))
+        unsubscribeTools = this.bridge.onToolActivity?.(sessionId, (event) => card.onToolActivity(event))
+      }
+      let reply: SessionReply
+      for (;;) {
+        await this.bridge.submit(sessionId, record.text, signal)
+        if (this.config.streamCards && !signal.aborted && !turn.stream) {
+          try {
+            const transport = this.transports.get(record.botId)
+            if (transport) {
+              const opened = await withTimeout(
+                TaskProgressCard.start(
+                  transport, record.messageId, this.logger, this.config.streamIntervalMs),
+                5_000,
+                signal,
+              )
+              const progress = opened.timedOut ? undefined : opened.value
+              if (progress && !signal.aborted) turn.stream = progress
             }
+          } catch {
+            // Non-durable progress must NEVER prevent a durable final reply.
+            this.logger.warn('Feishu progress card unavailable; keeping durable reply')
           }
-        } catch {
-          // Non-durable progress must NEVER prevent a durable final reply.
-          this.logger.warn('Feishu progress card unavailable; keeping durable reply')
+        }
+        attachProgress()
+        try {
+          reply = await this.bridge.waitForReply(sessionId, {
+            timeoutMs: this.config.replyTimeoutMs,
+            signal,
+          })
+          break
+        } catch (error) {
+          if (fallbackAttempted || !this.canRetryWithFallback(error, sessionId)) throw error
+          const fallback = this.fallbackRoute()
+          if (!fallback) throw error
+          fallbackAttempted = true
+          // The failed native turn already settled, so these observers belong
+          // to the discarded attempt; the next iteration re-attaches them.
+          unsubscribeProgress?.()
+          unsubscribeProgress = undefined
+          unsubscribeTools?.()
+          unsubscribeTools = undefined
+          this.logger.warn(
+            'model request failed before any tool call; retrying once on fallback route %s/%s',
+            fallback.provider, fallback.model)
+          this.audit({ kind: 'task', state: 'fallback-retry', botId: record.botId,
+            ref: record.messageId, session: sessionId,
+            model: fallback.provider + '/' + fallback.model })
+          try {
+            this.bridge.selectModel?.(sessionId, fallback.provider, fallback.model)
+          } catch (selectionError) {
+            this.logger.warn('fallback model selection failed: %s', String(selectionError))
+            throw error
+          }
         }
       }
-      const reply = await this.bridge.waitForReply(sessionId, {
-        timeoutMs: this.config.replyTimeoutMs,
-        signal,
-      })
       // A task can consume tokens even if delivery fails or the turn times out.
       reportedUsage = reply.usage
       reportedModel = reply.model
@@ -1218,9 +1265,20 @@ export class FeishuGateway {
       this.modelCatalogLoading = true
       void withTimeout(this.bridge.listModels(), 10_000).then(result => {
         if (!result.timedOut && !this.stopped) {
+          const routes = result.value.models.map(item => item.provider + '/' + item.model)
+            .filter(name => /^[A-Za-z0-9_.:/-]{1,96}$/.test(name)).slice(0, 200)
+          // Provider display names and model labels come from DSH, never from
+          // the admin side: the Web Profile may mount a different provider set.
+          const providers = (result.value.providers ?? []).slice(0, 50).map(provider => ({
+            id: provider.id,
+            ...(provider.name ? { name: provider.name.slice(0, 100) } : {}),
+            models: provider.models.slice(0, 200).map(model => ({
+              id: model.model.slice(0, 96),
+              ...(model.name ? { name: model.name.slice(0, 100) } : {}),
+            })),
+          }))
           this.modelCatalog = { ts: Date.now(), incomplete: result.value.incomplete,
-            models: result.value.models.map(item => item.provider + '/' + item.model)
-              .filter(name => /^[A-Za-z0-9_.:/-]{1,96}$/.test(name)).slice(0, 200) }
+            models: routes, providers }
           this.refreshOps()
         }
       }).catch(() => this.logger.warn('model catalog unavailable'))
@@ -1233,6 +1291,8 @@ export class FeishuGateway {
       sharedProjectWorkspace: this.config.workspace,
       isolatedAgent: true,
       ...(this.modelCatalog ? { modelCatalog: this.modelCatalog } : {}),
+      ...(this.routeSnapshot() ? { agentRoute: this.routeSnapshot() } : {}),
+      ...(this.profileDefaultRoute() ? { profileDefaultRoute: this.profileDefaultRoute() } : {}),
       tasks: [...this.activeTurns.values()].map(turn => ({
         ref: opsRef(turn.messageId), ...(turn.sessionId ? { session: opsRef(turn.sessionId) } : {}),
         botId: turn.botId, phase: turn.phase, elapsedMs: Date.now() - turn.startedAt,
@@ -1253,6 +1313,67 @@ export class FeishuGateway {
       },
     }
     void this.ops.snapshot(snapshot).catch(() => this.logger.warn('operations snapshot unavailable'))
+  }
+
+  /** Effective non-secret route for the Web Admin read model. */
+  private routeSnapshot(): {
+    provider?: string
+    model?: string
+    reasoningEffort?: string
+    fallback?: { provider: string; model: string }
+  } | undefined {
+    const route = this.config.agent
+    if (!route) return undefined
+    const snapshot: {
+      provider?: string
+      model?: string
+      reasoningEffort?: string
+      fallback?: { provider: string; model: string }
+    } = {}
+    if (route.provider) snapshot.provider = route.provider
+    if (route.model) snapshot.model = route.model
+    if (route.reasoningEffort) snapshot.reasoningEffort = route.reasoningEffort
+    if (route.fallback) snapshot.fallback = { provider: route.fallback.provider, model: route.fallback.model }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined
+  }
+
+  /** The Host Profile's own default selection, when DSH advertises one. */
+  private profileDefaultRoute(): {
+    provider?: string
+    model?: string
+    reasoningEffort?: string
+  } | undefined {
+    const route = this.bridge.defaultModel?.()
+    if (!route || (!route.provider && !route.model)) return undefined
+    return {
+      ...(route.provider ? { provider: route.provider } : {}),
+      ...(route.model ? { model: route.model } : {}),
+      ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
+    }
+  }
+
+  /** The configured rescue route, if it can actually differ from the primary. */
+  private fallbackRoute(): { provider: string; model: string } | undefined {
+    const route = this.config.agent
+    const fallback = route?.fallback
+    if (!fallback) return undefined
+    if (route?.provider === fallback.provider && route?.model === fallback.model) return undefined
+    return fallback
+  }
+
+  /**
+   * A fallback retry is allowed ONLY when the native turn failed before any
+   * tool ran. Once a tool executed, replaying the turn could duplicate side
+   * effects, so the existing fail-closed path is kept unchanged.
+   */
+  private canRetryWithFallback(error: unknown, sessionId: string): boolean {
+    const fallback = this.fallbackRoute()
+    if (!fallback || this.stopped || !this.bridge.selectModel) return false
+    if (!(error instanceof SessionTurnFailure)) return false
+    if (error.toolCalls > 0 || error.toolFailures > 0) return false
+    const current = this.bridge.currentModel?.(sessionId)
+    if (current && current.provider === fallback.provider && current.model === fallback.model) return false
+    return true
   }
 
   health(): GatewayHealth {

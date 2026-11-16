@@ -3,7 +3,7 @@ import type { InboundMessage } from '../../src/types.js'
 import { MockFeishuTransport } from '../../src/channel/mock-transport.js'
 import { resolveConfig } from '../../src/config.js'
 import { FeishuGateway, type GatewayHealth } from '../../src/gateway.js'
-import { MockSessionBridge } from '../../src/session/mock-session-bridge.js'
+import { MockSessionBridge, type MockSessionBridgeOptions } from '../../src/session/mock-session-bridge.js'
 import { silentLogger } from '../../src/util/logger.js'
 import { createGateway } from '../../src/index.js'
 import { DurableInbox } from '../../src/inbox/inbox.js'
@@ -32,6 +32,7 @@ interface Harness {
 async function harness(
   overrides: Partial<GatewayConfig> = {},
   reply?: string | ((text: string) => string),
+  bridgeOptions: Omit<MockSessionBridgeOptions, 'reply'> = {},
 ): Promise<Harness> {
   const { dir, cleanup } = await tempDir()
   cleanups.push(cleanup)
@@ -44,7 +45,7 @@ async function harness(
     ...overrides,
   })
   const transport = new MockFeishuTransport('default')
-  const bridge = new MockSessionBridge({ reply })
+  const bridge = new MockSessionBridge({ reply, ...bridgeOptions })
   const gateway = createGateway(config, {
     transports: [transport],
     bridge,
@@ -462,7 +463,10 @@ async function harnessUnavailable(): Promise<{ gateway: FeishuGateway; transport
 
 describe('periodic parked reply recovery', () => {
   it('retries a parked reply while the transport remains connected and no new inbound arrives', async () => {
-    const { gateway, transport } = await harness({ outboxRetryIntervalMs: 25 })
+    // A short-but-not-racy interval: the initial assertion must observe the
+    // parked record BEFORE the first periodic tick, otherwise the assertion
+    // itself races the retry (a pre-existing flake under full-suite load).
+    const { gateway, transport } = await harness({ outboxRetryIntervalMs: 250 })
     transport.remainingFailures = 2
     await transport.emitMessage(alice({ messageId: 'om_periodic_retry' }))
     await gateway.whenIdle()
@@ -472,7 +476,7 @@ describe('periodic parked reply recovery', () => {
     // `DurableOutbox.persist()` writes to disk *before* it swaps the in-memory
     // state, so observing `transport.sent` alone can be one write too early
     // (this made the assertion flaky under full-suite load, not in isolation).
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < 400; i += 1) {
       if (transport.sent.length > 0 && gateway.health().outbox.pending === 0) break
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
@@ -636,6 +640,97 @@ describe('group session isolation', () => {
     expect(prompts.get('topic first')).toBe(prompts.get('topic again'))
     expect(prompts.get('topic first')).not.toBe(prompts.get('topic other'))
     expect(gateway.health().rejected['group-sender-not-allowlisted']).toBe(1)
+    await gateway.stop()
+  })
+})
+
+describe('model directory and fallback rescue', () => {
+  const route = {
+    provider: 'magpie', model: 'group/deepseek',
+    fallback: { provider: 'magpie', model: 'group/hy4-free' },
+  } as const
+
+  it('retries once on the fallback model when the native turn failed before any tool call', async () => {
+    const { gateway, transport, bridge } = await harness({ agent: route }, 'fallback answer', {
+      turnFailures: [{ toolCalls: 0, failure: 'error: 429 rate limited' }],
+    })
+    await transport.emitMessage(alice({ messageId: 'om_fallback' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toEqual([
+      { sessionId: expect.any(String), provider: 'magpie', model: 'group/hy4-free' },
+    ])
+    expect(bridge.prompts).toHaveLength(2)
+    expect(transport.sent).toHaveLength(1)
+    expect(transport.sent[0]).toMatchObject({ text: 'fallback answer', replyToMessageId: 'om_fallback' })
+    expect(gateway.health()).toMatchObject({ processed: 1, errors: 0 })
+    await gateway.stop()
+  })
+
+  it('never replays a failed turn once a tool ran, even with a fallback route', async () => {
+    const { gateway, transport, bridge } = await harness({ agent: route }, 'unused', {
+      turnFailures: [{ toolCalls: 1, failure: 'error: 500' }],
+    })
+    await transport.emitMessage(alice({ messageId: 'om_tool_failure' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toHaveLength(0)
+    expect(bridge.prompts).toHaveLength(1)
+    expect(transport.sent).toHaveLength(1)
+    expect(transport.sent[0]?.text).toContain('处理失败')
+    expect(gateway.health().errors).toBe(1)
+    await gateway.stop()
+  })
+
+  it('fails closed when no fallback route is configured', async () => {
+    const { gateway, transport, bridge } = await harness(
+      { agent: { provider: 'magpie', model: 'group/deepseek' } }, 'unused',
+      { turnFailures: [{ toolCalls: 0 }] })
+    await transport.emitMessage(alice({ messageId: 'om_no_fallback' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toHaveLength(0)
+    expect(transport.sent[0]?.text).toContain('处理失败')
+    expect(gateway.health().errors).toBe(1)
+    await gateway.stop()
+  })
+
+  it('retries the fallback at most once and then reports the failure', async () => {
+    const { gateway, transport, bridge } = await harness({ agent: route }, 'unused', {
+      turnFailures: [{ toolCalls: 0 }, { toolCalls: 0 }],
+    })
+    await transport.emitMessage(alice({ messageId: 'om_double_failure' }))
+    await gateway.whenIdle()
+    expect(bridge.modelSelections).toHaveLength(1)
+    expect(bridge.prompts).toHaveLength(2)
+    expect(transport.sent[0]?.text).toContain('处理失败')
+    expect(gateway.health().errors).toBe(1)
+    await gateway.stop()
+  })
+
+  it('publishes the DSH model directory and effective/default routes for the admin UI', async () => {
+    const { gateway, stateDir } = await harness({ agent: route }, 'ok', {
+      defaultRoute: { provider: 'magpie', model: 'group/deepseek' },
+    })
+    const readSnapshot = async () => {
+      try { return JSON.parse(await readFile(path.join(stateDir, 'ops-runtime.json'), 'utf8')) as any }
+      catch { return undefined }
+    }
+    let snapshot = await readSnapshot()
+    for (let attempt = 0; attempt < 100 && !snapshot?.modelCatalog?.providers; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      snapshot = await readSnapshot()
+    }
+    expect(snapshot.modelCatalog.providers).toEqual([{
+      id: 'magpie', name: 'Magpie',
+      models: [
+        { id: 'group/deepseek', name: 'Deepseek' },
+        { id: 'group/hy4-free', name: 'HY4 free' },
+      ],
+    }])
+    expect(snapshot.modelCatalog.models).toEqual(['magpie/group/deepseek', 'magpie/group/hy4-free'])
+    expect(snapshot.agentRoute).toEqual({
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    })
+    expect(snapshot.profileDefaultRoute).toEqual({ provider: 'magpie', model: 'group/deepseek' })
     await gateway.stop()
   })
 })

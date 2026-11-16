@@ -4,6 +4,7 @@ import {
   implicitEnvNames,
   redactedConfigSummary,
   resolveBotCredentials,
+  normalizeAgentRoute,
   resolveConfig,
 } from '../../src/config.js'
 
@@ -22,6 +23,27 @@ describe('resolveConfig', () => {
     })
     expect(config.replyFormat).toBe('text')
     expect(config.workspace).toBe(process.cwd())
+  })
+
+  it('normalizes an explicit primary route and a distinct fallback route', () => {
+    const config = resolveConfig({ agent: {
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    } })
+    expect(config.agent).toEqual({
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    })
+    // A fallback equal to the primary can never rescue the turn: drop it.
+    expect(normalizeAgentRoute({ provider: 'magpie', model: 'm',
+      fallback: { provider: 'magpie', model: 'm' } }).fallback).toBeUndefined()
+    // Partial fallbacks and invalid ids are ignored instead of half-applied.
+    expect(normalizeAgentRoute({ fallback: { provider: 'magpie' } }).fallback).toBeUndefined()
+    expect(normalizeAgentRoute({ fallback: { provider: 'bad provider', model: 'm' } }).fallback)
+      .toBeUndefined()
+    expect(normalizeAgentRoute({ provider: 'magpie', model: 'group/deepseek',
+      fallback: null }).fallback).toBeUndefined()
+    expect(normalizeAgentRoute(undefined)).toEqual({})
   })
 
   it('supports opt-in Markdown without changing the default', () => {

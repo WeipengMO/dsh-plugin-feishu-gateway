@@ -27,3 +27,22 @@ Web 中配置的模型不一定安装到飞书 Profile。模型目录不产生 L
 “按模型统计”使用条形图展示所选时段有记录的模型；没有记录不代表用量为零。
 模型筛选包含 Gateway 当前目录及历史中出现过的模型，但目录中的模型不代表
 已完成凭据或真实调用验证。飞书内使用 /models 查看目录和当前会话模型。
+
+## 管理后台的模型与 Fallback 选择
+
+「飞书管理 → 模型与连接」不再使用“留空代表继承原 Profile”的空值约定：Provider 与模型
+选项直接来自**运行飞书通道的 DSH Profile**，不是 DSH Web Profile。
+
+- Gateway 通过 `ctx.get('llm')` 的 `listProviders()` / `listModels()` 生成 provider 分组目录，
+  写入脱敏的 `stateDir/ops-runtime.json`（`modelCatalog.providers`、`agentRoute`、
+  `profileDefaultRoute`）。Web Admin 只读这份白名单快照，不查询自己的模型。
+- 表单优先级：Host 当前生效路由（`agentRoute`）→ DSH Profile 默认模型
+  （`profileDefaultRoute`）→ 已保存的托管值。目录不可用或通道离线时保留上次快照并标注；
+  从未保存过路由时表单为空且不会伪造默认值。已保存但目录中已不存在的路由会以
+  “（不在 DSH 目录）”保留为可选项，避免选择框空白。
+- 保存时显式写入 `agent: { provider, model, fallback }`。`fallback: null` 表示清除；
+  主模型与 Fallback 必须是两个不同且完整的 `provider/model` 路由，否则 API 拒绝保存。
+- Fallback 不是 DSH 原生能力：如果主模型请求在**该轮尚未执行任何工具**（无副作用）时失败，
+  Gateway 会把该 Session 切换到 Fallback 模型并重试一次；一旦执行过工具，失败按原失败路径
+  处理，绝不重放。切换会写入运维事件 `task/fallback-retry`。
+- 修改保存后需重启独立飞书通道生效；飞书内 `/models` 会同时显示当前生效的 Fallback 路由。

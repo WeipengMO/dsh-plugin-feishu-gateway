@@ -41,6 +41,48 @@ describe('managed Feishu channel overlay', () => {
     expect(result.agentWorkspace).toBe('/tmp/feishu-independent')
     expect(result.stateDir).toBe(d.dir)
   })
+  it('manages an explicit fallback route and can clear it without inheriting a stale one', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    expect(validateManagedConfig({ agent: {
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    } }).agent).toEqual({
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    })
+    // Incomplete, invalid, or identical fallbacks are rejected: a fallback
+    // must be a complete, different route.
+    expect(() => validateManagedConfig({ agent: { fallback: { provider: 'magpie' } } }))
+      .toThrow(/fallback/)
+    expect(() => validateManagedConfig({ agent: { fallback: { provider: 'bad route', model: 'm' } } }))
+      .toThrow(/fallback/)
+    expect(() => validateManagedConfig({ agent: {
+      provider: 'magpie', model: 'm', fallback: { provider: 'magpie', model: 'm' },
+    } })).toThrow(/differ/)
+    expect(validateManagedConfig({ agent: { fallback: null } }).agent).toEqual({ fallback: null })
+
+    const base = resolveConfig({ stateDir: d.dir, agent: {
+      provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' },
+    } })
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
+      agent: { provider: 'magpie', model: 'auto/hy4flash-free',
+        fallback: { provider: 'magpie', model: 'group/deepseek' } },
+    } }))
+    expect(loadManagedConfig(base).agent).toEqual({
+      provider: 'magpie', model: 'auto/hy4flash-free',
+      fallback: { provider: 'magpie', model: 'group/deepseek' },
+    })
+    // Explicit clear must not resurrect the Profile fallback.
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: {
+      agent: { fallback: null },
+    } }))
+    expect(loadManagedConfig(base).agent).toEqual({
+      provider: 'magpie', model: 'group/deepseek',
+    })
+  })
+
   it('rejects secrets, unknown fields, invalid ids, and env collisions', () => {
     expect(() => validateManagedConfig({ appSecret: 'top-secret' })).toThrow(/unsupported/)
     expect(() => validateManagedConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'lark' }] })).toThrow(/colliding/)

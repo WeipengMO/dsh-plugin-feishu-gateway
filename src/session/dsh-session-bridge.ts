@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type {
   AgentRoute,
+  AvailableModel,
+  AvailableProvider,
   ModelCatalog,
   CordisLike,
   GatewayLogger,
@@ -13,6 +15,7 @@ import type {
 } from '../types.js'
 import { withTimeout } from '../util/retry.js'
 import { extractText } from './session-bridge.js'
+import { SessionTurnFailure } from './turn-failure.js'
 
 /** Official `@deepseek-ai/dsh-llm` entry, imported lazily at runtime. */
 const LLM_MODULE = '@deepseek-ai/dsh-llm'
@@ -155,19 +158,26 @@ export class DshSessionBridge implements SessionBridge {
   }
 
   async listModels(): Promise<ModelCatalog> {
-    let llm: { listProviders?: () => unknown; listModels?: (provider: string) => Promise<unknown> } | undefined
+    let llm: {
+      listProviders?: () => unknown
+      listModels?: (provider: string) => Promise<unknown>
+    } | undefined
     try { llm = this.ctx.get('llm') as typeof llm } catch { return { models: [], incomplete: true } }
     if (!llm || typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function')
       return { models: [], incomplete: true }
     try {
       const providers = llm.listProviders()
       if (!Array.isArray(providers)) return { models: [], incomplete: true }
-      const models: Array<{ provider: string; model: string; name?: string }> = []
+      const models: AvailableModel[] = []
+      const directory: AvailableProvider[] = []
       const seen = new Set<string>()
       let incomplete = false
       for (const entry of providers.slice(0, 50)) {
         const id = entry && typeof entry.id === 'string' ? entry.id : ''
         if (!/^[A-Za-z0-9_.-]{1,64}$/.test(id)) continue
+        const providerName = typeof entry?.name === 'string' && entry.name.trim()
+          ? entry.name.trim().slice(0, 100) : ''
+        const providerModels: AvailableModel[] = []
         try {
           const available = await llm.listModels(id)
           if (!Array.isArray(available)) { incomplete = true; continue }
@@ -178,12 +188,26 @@ export class DshSessionBridge implements SessionBridge {
             if (seen.has(key)) continue
             seen.add(key)
             const name = typeof item.name === 'string' ? item.name.slice(0, 100) : ''
-            models.push({ provider: id, model, ...(name ? { name } : {}) })
+            const availableModel: AvailableModel = { provider: id, model, ...(name ? { name } : {}) }
+            models.push(availableModel)
+            providerModels.push(availableModel)
           }
-        } catch { incomplete = true }
+        } catch { incomplete = true; continue }
+        // Empty groups are omitted: a selector must never show a dead route.
+        if (providerModels.length > 0) {
+          directory.push({ id, ...(providerName ? { name: providerName } : {}), models: providerModels })
+        }
       }
-      return { models, incomplete }
+      return { models, providers: directory, incomplete }
     } catch { return { models: [], incomplete: true } }
+  }
+
+  /** The Profile's own `agent-default-model` selection, when the Host mounts it. */
+  defaultModel(): AgentRoute | undefined {
+    const selection = this.defaultModelSelection()
+    if (!selection?.provider || !selection.model) return undefined
+    return { provider: selection.provider, model: selection.model,
+      ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
   }
 
   currentModel(sessionId: string): { provider: string; model: string } | undefined {
@@ -320,7 +344,11 @@ export class DshSessionBridge implements SessionBridge {
     // the message `done` with a useless "model returned no text" reply and keep
     // the (possibly half-updated) Session bound. Propagate it so the existing
     // failure path marks `failed` + unbinds, isolating the next message.
-    if (failure) throw new Error(`native DSH Agent turn failed (${failure})`)
+    if (failure) {
+      // Typed failure: the Gateway may retry once with the configured fallback
+      // model, but ONLY when the failure carries no executable side effects.
+      throw new SessionTurnFailure(failure, { toolCalls: turn.toolCalls, toolFailures: turn.toolFailures })
+    }
     return {
       text,
       reason,

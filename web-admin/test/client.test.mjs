@@ -273,6 +273,112 @@ test('network proxy save-and-restart saves first, then restarts with confirmatio
   assert.match(source, /proxyErrorText\(e\?\.message \|\| e\)/)
 })
 
+test('model and connection settings offer DSH provider/model selectors instead of blank inherit fields', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(source, /\/\*__MODEL_ROUTE_HELPERS_START__\*\//)
+  assert.doesNotMatch(source, /留空代表继承原 Profile 配置/)
+  assert.doesNotMatch(source, /textInput\(provider, setProvider/)
+  assert.doesNotMatch(source, /textInput\(model, setModel/)
+  for (const label of ['主模型 Provider', '主模型 Model', 'Fallback Provider', 'Fallback Model',
+    '启用 Fallback 模型', 'DSH 目录：']) {
+    assert.ok(source.includes(label), label)
+  }
+  assert.match(source, /modelDirectoryView\(state\)/)
+  assert.match(source, /data\.modelCatalog/)
+  assert.match(source, /result\.agent = route/)
+  assert.match(source, /modelRoutePayload\(\{/)
+  assert.match(source, /name: 'feishu-proxy-url'/)
+  assert.match(css, /\.fga-route-row \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/)
+  assert.match(css, /@media\(max-width:660px\)[\s\S]*?\.fga-route-row/)
+  assert.match(built, /fga-route-row/)
+  assert.match(built, /启用 Fallback 模型/)
+  assert.match(built, /function modelDirectoryView\(/)
+})
+
+test('model route helpers read the DSH directory, keep saved routes visible and never invent a default', async () => {
+  const { runInNewContext } = await import('node:vm')
+  const block = source.split('/*__MODEL_ROUTE_HELPERS_START__*/')[1].split('/*__MODEL_ROUTE_HELPERS_END__*/')[0]
+  assert.ok(block && block.length > 500)
+  const api = runInNewContext(block + '\n({ modelDirectoryView, withRouteOptions, modelsForProvider, ' +
+    'firstModelForProvider, defaultFallbackSelection, modelRoutePayload })', {})
+  // Objects built inside the vm realm have their own prototypes; compare data.
+  const plain = value => JSON.parse(JSON.stringify(value))
+
+  // No snapshot and no saved route: explicitly unknown, never a fabricated route.
+  const empty = api.modelDirectoryView({ config: {} })
+  assert.equal(empty.primary, null)
+  assert.equal(empty.fallback, null)
+  assert.equal(empty.providers.length, 0)
+  assert.equal(empty.catalogMissing, true)
+
+  // Catches upstream: provider-grouped directory + effective/fallback routes.
+  const view = api.modelDirectoryView({
+    config: {},
+    modelCatalog: { ts: 1, incomplete: true, models: [], providers: [
+      { id: 'magpie', name: 'Magpie', models: [
+        { id: 'group/deepseek', name: 'Deepseek' }, { id: 'group/hy4-free' },
+      ] },
+    ] },
+    agentRoute: { provider: 'magpie', model: 'group/hy4-free',
+      fallback: { provider: 'magpie', model: 'group/deepseek' } },
+    profileDefaultRoute: { provider: 'magpie', model: 'group/deepseek' },
+    modelDirectoryStale: true,
+  })
+  assert.deepEqual(plain(view.primary), { provider: 'magpie', model: 'group/hy4-free', source: 'effective' })
+  assert.deepEqual(plain(view.fallback), { provider: 'magpie', model: 'group/deepseek' })
+  assert.equal(view.incomplete, true)
+  assert.equal(view.stale, true)
+  assert.equal(view.catalogMissing, false)
+  assert.equal(api.firstModelForProvider(view.providers, 'magpie'), 'group/deepseek')
+  assert.deepEqual(plain(api.defaultFallbackSelection(view.providers, 'magpie', 'group/deepseek')),
+    { provider: 'magpie', model: 'group/hy4-free' })
+  assert.equal(api.defaultFallbackSelection(
+    [{ id: 'magpie', name: 'Magpie', models: [{ id: 'only', name: 'only' }] }], 'magpie', 'only'), null)
+
+  // DSH Profile default is a read fact when nothing is managed/effective yet.
+  const profile = api.modelDirectoryView({ config: {},
+    profileDefaultRoute: { provider: 'magpie', model: 'group/deepseek' } })
+  assert.deepEqual(plain(profile.primary), { provider: 'magpie', model: 'group/deepseek', source: 'profile' })
+
+  // A saved route that DSH no longer advertises stays visible/selectable,
+  // instead of rendering a blank select whose value has no option.
+  const saved = api.modelDirectoryView({ config: { agent: {
+    provider: 'deepseek-account', model: 'deepseek-flash',
+    fallback: { provider: 'magpie', model: 'group/deepseek' },
+  } } })
+  assert.equal(saved.primary.source, 'saved')
+  assert.equal(saved.providers[0].id, 'deepseek-account')
+  assert.equal(saved.providers[0].models[0].id, 'deepseek-flash')
+  assert.equal(saved.providers[0].models[0].unlisted, true)
+  assert.deepEqual(plain(saved.fallback), { provider: 'magpie', model: 'group/deepseek' })
+
+  // A saved managed route is what the form edits and the next restart applies,
+  // so it wins over a still-stale effective snapshot; an explicit
+  // `fallback: null` clear must not be resurrected by that snapshot.
+  const managed = api.modelDirectoryView({
+    config: { agent: { provider: 'magpie', model: 'auto/hy4flash-free', fallback: null } },
+    agentRoute: { provider: 'magpie', model: 'group/deepseek',
+      fallback: { provider: 'magpie', model: 'group/hy4-free' } },
+    profileDefaultRoute: { provider: 'magpie', model: 'group/deepseek' },
+  })
+  assert.deepEqual(plain(managed.primary),
+    { provider: 'magpie', model: 'auto/hy4flash-free', source: 'saved' })
+  assert.equal(managed.fallback, null)
+
+  // Save payload: primary required, fallback explicit (null clears).
+  assert.deepEqual(plain(api.modelRoutePayload({ provider: 'magpie', model: 'a',
+    fallback: { provider: 'magpie', model: 'b' } })),
+  { provider: 'magpie', model: 'a', fallback: { provider: 'magpie', model: 'b' } })
+  assert.deepEqual(plain(api.modelRoutePayload({ provider: 'magpie', model: 'a',
+    fallback: { provider: 'magpie', model: 'a' } })),
+  { provider: 'magpie', model: 'a', fallback: null })
+  assert.deepEqual(plain(api.modelRoutePayload({ provider: 'magpie', model: 'a', fallback: null })),
+    { provider: 'magpie', model: 'a', fallback: null })
+  assert.equal(api.modelRoutePayload({ provider: 'magpie' }), null)
+  assert.equal(api.modelRoutePayload(undefined), null)
+  assert.deepEqual(plain(api.modelsForProvider(view.providers, 'missing')), [])
+})
+
 test('usage heatmap is a labelled calendar with a theme-aware ramp and one shared tooltip', () => {
   const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')

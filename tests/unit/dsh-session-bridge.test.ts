@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DshSessionBridge } from '../../src/session/dsh-session-bridge.js'
+import { SessionTurnFailure } from '../../src/session/turn-failure.js'
 import { extractText } from '../../src/session/session-bridge.js'
 import { silentLogger } from '../../src/util/logger.js'
 import type { CordisLike } from '../../src/types.js'
@@ -129,15 +130,21 @@ describe('DshSessionBridge model catalog and scheduled usage', () => {
       dispose: async () => {},
     })
     ctx.services.set('llm', {
-      listProviders: () => [{ id: 'magpie' }, { id: 'broken' }],
+      listProviders: () => [{ id: 'magpie', name: 'Magpie routing' }, { id: 'broken' }],
       listModels: async (provider: string) => {
         if (provider === 'broken') throw new Error('offline')
         return [{ id: 'group/deepseek', name: 'DeepSeek' }, { id: 'group/hy4-free', name: 'HY' }]
       },
     })
-    expect(await bridge.listModels()).toMatchObject({ incomplete: true, models: [
+    const catalog = await bridge.listModels()
+    expect(catalog).toMatchObject({ incomplete: true, models: [
       { provider: 'magpie', model: 'group/deepseek' }, { provider: 'magpie', model: 'group/hy4-free' },
     ] })
+    // Provider-grouped directory for selectors; the failed provider is omitted.
+    expect(catalog.providers).toMatchObject([{ id: 'magpie', name: 'Magpie routing', models: [
+      { provider: 'magpie', model: 'group/deepseek', name: 'DeepSeek' },
+      { provider: 'magpie', model: 'group/hy4-free', name: 'HY' },
+    ] }])
     await bridge.create('s', '/tmp')
     expect(bridge.currentModel('s')).toEqual({ provider: 'magpie', model: 'group/deepseek' })
     bridge.selectModel('s', 'magpie', 'group/hy4-free')
@@ -504,6 +511,35 @@ describe('DshSessionBridge', () => {
       data: { turn: 1, reason: { kind: 'error', error: { message: '500: upstream failure', code: 'SERVER' } } },
     })
     await expect(waiting).rejects.toThrow(/native DSH Agent turn failed \(error: 500: upstream failure\)/)
+  })
+
+  it('exposes the Profile default route without inventing a fallback', async () => {
+    const { ctx, bridge } = setup()
+    expect(bridge.defaultModel()).toBeUndefined()
+    ctx.services.set('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'magpie', model: 'group/deepseek', reasoningEffort: 'high' }),
+    })
+    expect(bridge.defaultModel()).toEqual({
+      provider: 'magpie', model: 'group/deepseek', reasoningEffort: 'high',
+    })
+  })
+
+  it('carries tool counters on a native turn failure so the Gateway can decide on fallback safely', async () => {
+    const { ctx, bridge } = setup()
+    await bridge.create('session-1', '/workspace')
+    await bridge.submit('session-1', 'hi', new AbortController().signal)
+    const waiting = bridge.waitForReply('session-1', { timeoutMs: 1000, signal: new AbortController().signal })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'tool/call', data: { callId: 'call-1', name: 'bash', arguments: '{}' },
+    })
+    ctx.emit('session/event', { id: 'session-1' }, {
+      type: 'turn/end',
+      data: { turn: 1, reason: { kind: 'error', error: { message: '429 rate limited', code: 'RATE_LIMIT' } } },
+    })
+    const error = await waiting.catch((value: unknown) => value)
+    expect(error).toBeInstanceOf(SessionTurnFailure)
+    expect((error as SessionTurnFailure).toolCalls).toBe(1)
+    expect((error as SessionTurnFailure).failure).toBe('error: 429 rate limited')
   })
 
   it('accepts a `turn/end` with reason.kind completed', async () => {
