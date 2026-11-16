@@ -378,6 +378,11 @@ export class ApprovalStore {
     }
   }
 
+  /** Drain queued rule/audit writes before shutdown or temporary-dir cleanup. */
+  async flush(): Promise<void> {
+    await this.queue
+  }
+
   /** Publish the Web Admin read model (atomic, 0600). */
   async publish(pending: readonly ApprovalPendingView[], timeoutMs: number): Promise<void> {
     const model = this.readModel(pending, timeoutMs)
