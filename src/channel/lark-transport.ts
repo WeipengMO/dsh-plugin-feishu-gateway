@@ -104,6 +104,7 @@ interface RawReceiveEvent {
 export class LarkTransport implements FeishuTransport {
   private stateValue: TransportState = 'idle'
   private client: LarkClientLike | undefined
+  private readonly nameCache = new Map<string, { value?: string; until: number }>()
   private ws: LarkWsLike | undefined
   private handlers: FeishuEventHandlers | undefined
   private botOpenId: string | undefined
@@ -113,6 +114,46 @@ export class LarkTransport implements FeishuTransport {
   private everConnected = false
   private handshakeTimer: ReturnType<typeof setTimeout> | undefined
   private retryTimer: ReturnType<typeof setTimeout> | undefined
+
+  private async lookupDisplayName(
+    key: string, url: string, pick: (response: LarkMessageApiResult) => unknown,
+  ): Promise<string | undefined> {
+    const now = Date.now()
+    const cached = this.nameCache.get(key)
+    if (cached && cached.until > now) return cached.value
+    if (!this.client) return undefined
+    let value: string | undefined
+    try {
+      // A rejected API permission must never stop a Session from being created.
+      const response = await Promise.race([
+        this.client.request({ method: 'GET', url, data: {} }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error('name lookup timeout')), 2000)
+          timer.unref?.()
+        }),
+      ])
+      const name = (response.code === undefined || response.code === 0) ? pick(response) : undefined
+      if (typeof name === 'string' && name.trim()) value = name.trim().slice(0, 100)
+    } catch { /* optional Feishu contact/chat read scope */ }
+    this.nameCache.set(key, { value, until: now + (value ? 3600_000 : 60_000) })
+    if (this.nameCache.size > 512) this.nameCache.delete(this.nameCache.keys().next().value!)
+    return value
+  }
+
+  async lookupChatName(chatId: string): Promise<string | undefined> {
+    if (!/^oc_[A-Za-z0-9_-]{2,128}$/.test(chatId)) return undefined
+    return this.lookupDisplayName('chat:' + chatId,
+      '/open-apis/im/v1/chats/' + encodeURIComponent(chatId),
+      response => (response.data as { name?: unknown } | undefined)?.name)
+  }
+
+  async lookupUserName(openId: string): Promise<string | undefined> {
+    if (!/^ou_[A-Za-z0-9_-]{2,128}$/.test(openId)) return undefined
+    return this.lookupDisplayName('user:' + openId,
+      '/open-apis/contact/v3/users/' + encodeURIComponent(openId) + '?user_id_type=open_id',
+      response => (response.data as { user?: { name?: unknown; en_name?: unknown } } | undefined)?.user?.name ??
+        (response.data as { user?: { en_name?: unknown } } | undefined)?.user?.en_name)
+  }
 
   private clearStartupTimers(): void {
     if (this.handshakeTimer) clearTimeout(this.handshakeTimer)

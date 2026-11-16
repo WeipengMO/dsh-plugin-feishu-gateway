@@ -978,7 +978,7 @@ export class FeishuGateway {
   private async setNativeTitle(sessionId: string, title: string): Promise<void> {
     if (!this.bridge.title || this.bridge.titleSource?.(sessionId) === 'user') return
     // DSH's sessionTitle service enforces its own configured maxTitleBytes.
-    let safe = title.replace(/[\\u0000-\\u001f\\u007f]/g, ' ').replace(/\\s+/g, ' ').trim()
+    let safe = title.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
     while (Buffer.byteLength(safe, 'utf8') > 120) safe = safe.slice(0, -1)
     if (!safe) return
     try { await this.bridge.title(sessionId, safe) }
