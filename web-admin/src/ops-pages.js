@@ -28,6 +28,8 @@ function OpsTable({ columns, rows, empty }) {
 }
 function OpsPage({ kind, ops, onConfig, onCommand }) {
   if (kind === 'sessions') return h(FeishuSessionsInventory, {})
+  // Historical token metrics remain available when the Gateway is offline.
+  if (kind === 'usage') return h(UsagePanel, {})
   if (!ops?.telemetryAvailable) return h(OpsUnavailable, {})
   const snapshot = ops.snapshot
   const summary = ops.summary ?? {}
@@ -80,7 +82,6 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
     h(OpsNote, null, '不在后台伪造审批决策或绕过 DSH 原生 ask 策略。审批卡的有效性仍由 bot/chat/actor/nonce 校验。'),
     h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') }))
   // Token 用量趋势和历史贡献热图从独立的历史数据源加载。
-  if (kind === 'usage') return h(UsagePanel, {})
   if (kind === 'alerts') return h(React.Fragment, null,
     h(WbBlock, { title: '当前健康告警', aside: '本地规则计算，非 AI 推断' },
       (summary.alerts ?? []).length ?
@@ -208,7 +209,7 @@ function FeishuSessionsInventory() {
       if (!confirmed) { setNotice('操作已取消。'); return }
       const queued = await request('/sessions/commands', 'POST', { token: preview.token })
       setNotice('已排队：' + queued.command.id + '（最多 ' + preview.count +
-        ' 条）。具体完成/跳过数量请到「告警中心」查看。')
+        ' 条）。具体完成/跳过数量请到「运维与诊断 → 告警中心」查看。')
       setSelected([])
       void load()
     } catch (e) { setNotice('批量操作未提交：' + (e.message || String(e))) }
