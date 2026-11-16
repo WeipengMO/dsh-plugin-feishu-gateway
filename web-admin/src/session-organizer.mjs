@@ -5,7 +5,7 @@
  * NEVER imports agents, calls resume, opens persistence for write or deletes logs.
  * The Gateway owns session titles and the chat->Session binding.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -23,7 +23,7 @@ const ms = value => {
   return Number.isFinite(n) && n >= 0 && n <= 1e13 ? Math.floor(n) : 0
 }
 const emptyConfig = Object.freeze({ enabled: false, revealNames: false, graceHours: 24 })
-const emptyCursor = () => ({ version: 1, bindings: {}, schedule: {}, missing: {}, handled: [] })
+const emptyCursor = () => ({ version: 1, bindings: {}, schedule: {}, missing: {}, handled: [], pending: {} })
 
 async function privateJson(dir, name) {
   const base = await fs.lstat(dir).catch(e => {
@@ -54,7 +54,7 @@ async function privateWrite(dir, name, value) {
     throw e
   })
   if (old && (!old.isFile() || old.isSymbolicLink())) throw Error('unsafe organization record')
-  const temp = path.join(dir, '.' + name + '.' + process.pid + '.' + Date.now() + '.tmp')
+  const temp = path.join(dir, '.' + name + '.' + randomUUID() + '.tmp')
   const fd = await fs.open(temp, 'wx', 0o600)
   try {
     await fd.writeFile(JSON.stringify(value, null, 2) + '\n')
@@ -221,6 +221,7 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
   const cursor = isObj(old) && old.version === 1 ? old : emptyCursor()
   const previousBindings = isObj(cursor.bindings) ? cursor.bindings : {}
   const previousSchedule = isObj(cursor.schedule) ? cursor.schedule : {}
+  const pending = isObj(cursor.pending) ? { ...cursor.pending } : {}
   const missing = isObj(cursor.missing) ? { ...cursor.missing } : {}
   const handled = new Set(Array.isArray(cursor.handled) ? cursor.handled.filter(x => SAFE_ID.test(x)) : [])
   const currentIds = new Set(data.records.map(r => r.id))
@@ -229,9 +230,18 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
   for (const [chatRef, oldSession] of Object.entries(previousBindings)) {
     if (SAFE_ID.test(oldSession) && data.current[chatRef] &&
       data.current[chatRef] !== oldSession && !boundIds.has(oldSession) &&
-      currentIds.has(oldSession) && !handled.has(oldSession)) archiveCandidates.push({ id: oldSession, reason: 'binding-replaced' })
+      currentIds.has(oldSession) && !handled.has(oldSession)) {
+      pending[oldSession] = 'binding-replaced'
+    }
   }
-  for (const id of Object.keys(previousSchedule)) {
+  for (const [id, reason] of Object.entries(pending)) {
+    if (!SAFE_ID.test(id) || !currentIds.has(id) || handled.has(id) || boundIds.has(id)) {
+      delete pending[id]
+      continue
+    }
+    archiveCandidates.push({ id, reason })
+  }
+  for (const id of new Set([...Object.keys(previousSchedule), ...Object.keys(missing)])) {
     if (data.activeTasks[id] || !currentIds.has(id) || handled.has(id)) {
       delete missing[id]
       continue
@@ -241,7 +251,7 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
       archiveCandidates.push({ id, reason: 'schedule-orphan-grace-elapsed' })
   }
   const newState = { version: 1, bindings: data.current,
-    schedule: data.activeTasks, missing, handled: [...handled].slice(-10000) }
+    schedule: data.activeTasks, missing, pending, handled: [...handled].slice(-10000) }
   // Do not auto-archive any historical sessions on the very first deployment.
   // An explicit migration preview/confirmation is required for those.
   const attach = data.records.filter(row => !row.legacy &&
@@ -262,6 +272,8 @@ export async function reconcileSessionOrganization(stateDir, services, { dryRun 
       // Default activity check (no stopActivity=true), no Agent resume.
       await services.registry.archiveSession(candidate.id)
       handled.add(candidate.id)
+      delete pending[candidate.id]
+      delete missing[candidate.id]
       result.archived += 1
       await auditOrganization(stateDir, candidate.id, 'native-session-auto-archived')
     } catch { result.skipped.push({ id: candidate.id, reason: 'active-or-unavailable' }) }
