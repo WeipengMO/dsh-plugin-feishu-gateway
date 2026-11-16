@@ -994,6 +994,54 @@ export class FeishuGateway {
     }).finally(() => { this.commandRunning = false })
   }
 
+  /**
+   * Partial failures are explicit: each binding is re-resolved and checked in
+   * the same scope queue as inbound turns. A crash after one item is uncertain,
+   * NEVER replayed by the operator mailbox. Native DSH data is not touched.
+   */
+  private async executeSessionBatch(command: OperatorCommand): Promise<{
+    readonly state: OperatorResult['state']; readonly detail: string
+  }> {
+    const batch = command.batch
+    if (!batch || !['archive', 'unlink'].includes(batch.action) ||
+      batch.items.length < 1 || batch.items.length > 20) return { state: 'rejected', detail: 'invalid batch' }
+    let applied = 0
+    let skipped = 0
+    for (const item of batch.items) {
+      const matches = this.registry.entries().filter(([key, binding]) => {
+        const colon = key.indexOf(':')
+        return colon > 0 && key.slice(0, colon) === item.botId &&
+          opsRef(key.slice(colon + 1)) === item.chatRef &&
+          opsRef(binding.sessionId) === item.ref &&
+          binding.lastActiveAt === item.expectedLastActiveAt
+      })
+      if (matches.length !== 1) { skipped += 1; continue }
+      const [key, binding] = matches[0]!
+      const chatId = key.slice(item.botId.length + 1)
+      await this.enqueue(item.botId, chatId, async () => {
+        if (this.stopped || Date.now() - command.ts >= 30_000 ||
+          this.activeTurns.has(key) || this.approvals.size > 0 ||
+          this.inbox.hasUnresolvedFor(item.botId, chatId.split(':group:')[0]!) ||
+          this.outbox.pending().length > 0 || (batch.action === 'archive' && binding.archived)) {
+          skipped += 1
+          return
+        }
+        const changed = batch.action === 'archive'
+          ? await this.registry.archiveIfUnchanged(key, binding.sessionId, binding.lastActiveAt)
+          : await this.registry.unbindIfUnchanged(key, binding.sessionId, binding.lastActiveAt)
+        if (!changed) { skipped += 1; return }
+        applied += 1
+        this.audit({ kind: 'system',
+          state: batch.action === 'archive' ? 'session-archived' : 'session-unbound',
+          botId: item.botId, session: binding.sessionId })
+        this.refreshOps()
+      }, key)
+    }
+    this.audit({ kind: 'system', state: 'session-batch-' + batch.action })
+    return { state: skipped ? 'conflict' : 'completed',
+      detail: 'applied=' + applied + ' skipped=' + skipped + ' total=' + batch.items.length }
+  }
+
   private async executeOperatorCommand(command: OperatorCommand): Promise<OperatorResult['state'] | {
     readonly state: OperatorResult['state']; readonly detail?: string
   }> {
@@ -1008,6 +1056,7 @@ export class FeishuGateway {
       const detail = outcome.message ?? outcome.taskId ?? outcome.state
       return { state: outcome.state, detail: `${outcome.state} ${detail}`.slice(0, 200) }
     }
+    if (command.type === 'batch-sessions') return this.executeSessionBatch(command)
     if (command.type === 'retry-outbox') {
       // Existing durable Outbox UUID/idempotency and permanent-failure rules
       // remain intact. This NEVER re-executes an uncertain Agent turn.
@@ -1045,7 +1094,7 @@ export class FeishuGateway {
           botId, session: binding.sessionId })
         this.refreshOps()
         state = 'completed'
-      })
+      }, key)
       return state
     }
     if (command.type !== 'cancel-task' || !command.ref) return 'rejected'
