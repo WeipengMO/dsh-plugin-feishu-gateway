@@ -215,10 +215,13 @@ Session；`schedule/resolve-agent` waterfall 把恢复请求接回 Gateway 持�
 Gateway 的 `DshSessionBridge` 采集 `session/event` 里的 `assistant/message` /
 `assistant/attempt` 文本与 usage，直到 `turn/end`，形成 `ObservedScheduleTurn`。
 `ScheduleManager.onScheduleTurn()` 据 `notify` 决定发送，发送前再次
-`validateFeishuTarget`（当前白名单/群策略），再经 **DurableOutbox** 以
-`schedule:<taskId>:<messageId>` 幂等键把（截断后的）文本发到所选私聊或群。失败 / 空回复
-按 `notify` 发送有界失败通知；若 Host 创建的 Session 事件被 scope 过滤，兜底通知保证
-飞书侧至少收到「已触发、结果在 DSH Session」的提示。
+`validateFeishuTarget`（当前白名单/群策略），再把（截断后的）文本渲染成 **Feishu
+interactive card**（蓝色标题栏 + `lark_md` 分区 + 灰色 note 页脚；失败/兜底通知为橙色），
+经 **DurableOutbox** 以 `schedule:<taskId>:<messageId>` 幂等键用
+`msg_type:'interactive'` 发到所选私聊或群。`OutboundTarget.card` 走的是同一条 Outbox
+路径（同一 UUID、同一重试与补发），所以卡片推送与文本回复一样幂等；`text` 仅作为
+持久化的兜底表示。失败 / 空回复按 `notify` 发送有界失败通知；若 Host 创建的 Session
+事件被 scope 过滤，兜底通知保证飞书侧至少收到「已触发、结果在 DSH Session」的提示。
 
 原生投递回执只证明**指令已进入 Session 收件箱并被持久化**（`ctx.sessions.flush`），
 **不证明模型已执行完成**；真实执行结果以 DSH Session / 飞书收到的文本为准。

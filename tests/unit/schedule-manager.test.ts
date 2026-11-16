@@ -5,6 +5,7 @@ import path from 'node:path'
 import { silentLogger } from '../../src/util/logger.js'
 import type { ObservedScheduleTurn } from '../../src/types.js'
 import { ScheduleNativeError } from '../../src/schedule/native.js'
+import { CARD_TEXT_MAX } from '../../src/schedule/card.js'
 import type {
   NativeCreateRequest, NativeEditRequest, NativeSchedulePort, NativeTask,
 } from '../../src/schedule/native.js'
@@ -40,7 +41,7 @@ function track<T extends ScheduleManager>(manager: T): T {
 
 interface SentCall {
   botId: string
-  target: { chatId: string; text: string; format?: 'text' | 'markdown' }
+  target: { chatId: string; text: string; format?: 'text' | 'markdown'; card?: Record<string, unknown> }
   key: string
 }
 interface HookSpy {
@@ -479,8 +480,11 @@ describe('ScheduleManager — observed turns and fallback', () => {
     await manager.onScheduleTurn(successTurn)
     expect(spy.sent).toHaveLength(1)
     expect(spy.sent[0]!.key).toBe('schedule:schedule-1:msg-xyz')
-    expect(spy.sent[0]!.target.text.length).toBeLessThanOrEqual(1000)
+    expect(spy.sent[0]!.target.text.length).toBeLessThanOrEqual(CARD_TEXT_MAX)
     expect(spy.sent[0]!.target.text).not.toContain('sess-client-1')
+    // Results are pushed as Feishu interactive cards, not plain text.
+    expect(spy.sent[0]!.target.card).toHaveProperty('header.template', 'blue')
+    expect(spy.sent[0]!.target.card).toHaveProperty('config.wide_screen_mode', true)
     await manager.onScheduleTurn(successTurn) // duplicate messageId
     expect(spy.sent).toHaveLength(1)
 
@@ -534,6 +538,7 @@ describe('ScheduleManager — observed turns and fallback', () => {
     expect(spy.sent).toHaveLength(1)
     expect(spy.sent[0]!.target.text).not.toContain('RAW_EXCEPTION_BODY')
     expect(spy.sent[0]!.target.text).toContain('failed')
+    expect(spy.sent[0]!.target.card).toHaveProperty('header.template', 'orange')
     await manager.refresh()
     expect(manager.snapshot().runs[0]!.status).toBe('failed')
 
@@ -569,6 +574,7 @@ describe('ScheduleManager — observed turns and fallback', () => {
     expect(spy.sent[0]!.key).toBe('schedule:schedule-1:m-fallback:notice')
     expect(spy.sent[0]!.target.text).toContain('DSH Session')
     expect(spy.sent[0]!.target.text).not.toContain('sess-client-1')
+    expect(spy.sent[0]!.target.card).toHaveProperty('header.template', 'orange')
     await manager.refresh()
     expect(spy.sent).toHaveLength(1) // marker persisted, no duplicate
   })

@@ -23,6 +23,7 @@ import {
   boundedText, nativeRecordToSpec, sessionRef, specSummary, toNativeTiming, validateSpec,
 } from './spec.js'
 import type { ScheduleSpec } from './spec.js'
+import { buildScheduleCard, CARD_TEXT_MAX } from './card.js'
 import {
   isScheduleNativeError, ScheduleNativeError,
 } from './native.js'
@@ -59,7 +60,13 @@ export interface ScheduleManagerHooks {
   /** Durable, idempotent Outbox send. key must be stable per delivery. */
   readonly sendFeishu: (
     botId: string,
-    target: { chatId: string; text: string; format?: 'text' | 'markdown' },
+    target: {
+      chatId: string
+      text: string
+      format?: 'text' | 'markdown'
+      /** Feishu interactive card; when present the transport sends the card. */
+      card?: Record<string, unknown>
+    },
     idempotencyKey: string,
   ) => Promise<boolean>
 }
@@ -170,7 +177,7 @@ interface RunState {
 // ---------------------------------------------------------------------------
 
 const UNAVAILABLE_REASON = 'DSH native schedule service is not mounted in this profile'
-const FALLBACK_NOTICE_TEXT = 'scheduled task triggered; result lives in the DSH Session'
+const FALLBACK_NOTICE_TEXT = '定时任务已触发；完整结果请到 DSH Session 查看'
 /**
  * A scheduled Agent turn can legitimately take minutes (data-collection scripts,
  * slow models). Wait long enough that a real result is not racing a fallback
@@ -810,7 +817,8 @@ export class ScheduleManager {
       try {
         await this.hooks.sendFeishu(
           config.botId,
-          { chatId: config.chatId, text: FALLBACK_NOTICE_TEXT, format: 'text' },
+          { chatId: config.chatId, text: FALLBACK_NOTICE_TEXT, format: 'text',
+            card: buildScheduleCard(FALLBACK_NOTICE_TEXT, { template: 'orange' }) },
           key,
         )
       } catch { /* Outbox is durable; a marker is still written below. */ }
@@ -857,7 +865,8 @@ export class ScheduleManager {
         try {
           delivered = await this.hooks.sendFeishu(
             config.botId,
-            { chatId: config.chatId, text, format: 'text' },
+            { chatId: config.chatId, text, format: 'text',
+              card: buildScheduleCard(text, { template: turn.status === 'success' ? 'blue' : 'orange' }) },
             key,
           )
         } catch { delivered = false }
@@ -903,10 +912,12 @@ export class ScheduleManager {
     // Never send raw exception bodies or session ids. Failed/empty/timeout turns
     // get a fixed bounded notice instead of the assistant text.
     if (turn.status !== 'success') {
-      return `scheduled task finished: ${turn.status} (result available in the DSH Session)`
+      const label = turn.status === 'failed' ? '执行失败'
+        : turn.status === 'timeout' ? '执行超时' : '未产出内容'
+      return `定时任务${label}（${turn.status}）；详情见 DSH Session`
     }
     const text = typeof turn.text === 'string' ? turn.text : ''
-    return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').slice(0, 1000)
+    return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').slice(0, CARD_TEXT_MAX)
   }
 
   private normalizeStatus(status: ObservedScheduleTurn['status']): ScheduleRunRecord['status'] {

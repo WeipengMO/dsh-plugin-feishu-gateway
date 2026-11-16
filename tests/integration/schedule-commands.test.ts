@@ -209,6 +209,9 @@ describe('native schedule command bridge', () => {
     expect(sent?.text).toContain('今日简报内容')
     // A p2p target supplied as a user open_id must use receive_id_type=open_id.
     expect(sent?.receiveIdType).toBe('open_id')
+    // Scheduled results are durable interactive cards, not plain text.
+    expect(sent?.card).toHaveProperty('header.template', 'blue')
+    expect(JSON.stringify(sent?.card)).toContain('今日简报内容')
 
     // The same native delivery id must never produce a duplicate Feishu message.
     bridge.emitScheduleTurn({ sessionId, messageId: 'msg-schedule-1',

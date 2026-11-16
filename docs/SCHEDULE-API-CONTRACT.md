@@ -131,7 +131,13 @@ export interface ScheduleManagerHooks {
   /** Durable, idempotent Outbox send. key must be stable per delivery. */
   readonly sendFeishu: (
     botId: string,
-    target: { chatId: string; text: string; format?: 'text' | 'markdown' },
+    target: {
+      chatId: string
+      text: string
+      format?: 'text' | 'markdown'
+      /** Feishu interactive card; when present the transport sends the card. */
+      card?: Record<string, unknown>
+    },
     idempotencyKey: string,
   ) => Promise<boolean>
 }
@@ -215,8 +221,9 @@ Every call is wrapped so a native rejection becomes a bounded error string.
   `audit`. Bounded: <= 200 tasks, <= 20 deliveries/task, <= 200 runs, <= 200 audit.
 * `onScheduleTurn(turn)`: look up the task by `turn.sessionId`. If a delivery
   config exists and `validateFeishuTarget` still passes and `notify` allows it,
-  send `turn.text` (truncated) through `sendFeishu` with key
-  `schedule:<taskId>:<messageId>`. Record one `ScheduleRunRecord` (status,
+  render `turn.text` with `buildScheduleCard()` and send it through
+  `sendFeishu` with key `schedule:<taskId>:<messageId>` as an interactive
+  card (`msg_type:'interactive'` via the durable Outbox). Record one `ScheduleRunRecord` (status,
   elapsedMs, tokens, model, sessionRef, delivered). On failed/empty turns send a
   bounded failure notice when `notify` includes failure. Deduplicate by
   `messageId` (in-memory + persisted run ledger).

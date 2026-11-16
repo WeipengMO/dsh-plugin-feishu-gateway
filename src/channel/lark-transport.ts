@@ -242,9 +242,14 @@ export class LarkTransport implements FeishuTransport {
 
   async sendText(target: OutboundTarget): Promise<SendReceipt> {
     if (!this.client) throw new Error(`bot ${this.botId} is not connected`)
-    const rich = target.format === 'markdown'
-    const content = rich ? feishuMarkdownContent(target.text) : JSON.stringify({ text: target.text })
-    const msgType = rich ? 'post' : 'text'
+    // A scheduled task result may carry a durable Feishu interactive card.
+    // It goes through the same Outbox path (same UUID, same retries), so card
+    // pushes are just as idempotent as plain text replies.
+    const interactive = target.card !== undefined
+    const rich = target.format === 'markdown' && !interactive
+    const content = interactive ? JSON.stringify(target.card)
+      : rich ? feishuMarkdownContent(target.text) : JSON.stringify({ text: target.text })
+    const msgType = interactive ? 'interactive' : rich ? 'post' : 'text'
     if (target.replyToMessageId) {
       const result = await this.client.im.message.reply({
         data: { content, msg_type: msgType, uuid: target.uuid ?? newId('fg') },

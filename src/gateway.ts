@@ -187,7 +187,8 @@ export class FeishuGateway {
         chatId: target.chatId,
         ...(target.chatId.startsWith('ou_') ? { receiveIdType: 'open_id' as const } : {}),
         text: target.text,
-        ...(target.format === 'markdown' ? { format: 'markdown' as const } : {}),
+        ...(target.card ? { card: target.card } : {}),
+        ...(target.format === 'markdown' && !target.card ? { format: 'markdown' as const } : {}),
       }, idempotencyKey),
     })
   }

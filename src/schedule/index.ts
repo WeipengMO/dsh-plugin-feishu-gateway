@@ -25,3 +25,6 @@ export type {
   ScheduleAuditEntry, ScheduleReadModel,
 } from './manager.js'
 export { ScheduleManager } from './manager.js'
+
+export type { ScheduleCardOptions } from './card.js'
+export { buildScheduleCard, CARD_TEXT_MAX } from './card.js'

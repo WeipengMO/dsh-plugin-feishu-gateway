@@ -49,6 +49,12 @@ export interface OutboundTarget {
   readonly text: string
   /** Optional rich post/md reply; omitted for backward-compatible plain text. */
   readonly format?: 'markdown'
+  /**
+   * Optional Feishu interactive card (`msg_type: 'interactive'`). When set,
+   * the transport sends this card instead of `text`; `text` stays as the
+   * durable fallback / audit representation of the same content.
+   */
+  readonly card?: Record<string, unknown>
   /** Stable per-message idempotency UUID reused on every REST retry. */
   readonly uuid?: string
 }
