@@ -10,7 +10,7 @@ const SCHED_KIND_ORDER = ['once', 'every', 'daily', 'weekly', 'monthly', 'cron']
 const SCHED_KIND_LABELS = { once: '一次性', every: '间隔', daily: '每天', weekly: '每周', monthly: '每月', cron: 'Cron' }
 const SCHED_NOTIFY_LABELS = { result: '仅结果', failure: '仅失败', both: '结果 + 失败', none: '不通知' }
 const SCHED_WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日']
-const SCHED_STATUS_FILTERS = [['all', '全部'], ['active', '运行中'], ['paused', '已暂停'], ['ended', '已结束']]
+const SCHED_STATUS_FILTERS = [['all', '全部'], ['active', '已启用'], ['paused', '已暂停'], ['ended', '已结束']]
 const SCHED_TABS = [['tasks', '任务列表'], ['runs', '运行历史'], ['audit', '操作审计']]
 const SCHED_STATE_LABELS = { completed: '已完成', rejected: '已拒绝', 'not-found': '未找到',
   conflict: '冲突', 'schedule_conflict': '冲突', error: '执行错误' }
@@ -62,9 +62,11 @@ function schedSpecText(spec) {
     default: return '未知'
   }
 }
-function schedDeliveryConfigText(delivery) {
+function schedDeliveryConfigText(delivery, groups = []) {
+  const group = delivery.chatType === 'group' ? groups.find(item => item.chatId === delivery.chatId) : undefined
+  const target = group && group.name ? schedBound(group.name, 80) : schedBound(delivery.chatId, 128)
   return (schedBound(delivery.botId, 32) + ' → ' +
-    (delivery.chatType === 'group' ? '群聊 ' : '私聊 ') + schedBound(delivery.chatId, 128) +
+    (delivery.chatType === 'group' ? '群聊 ' : '私聊 ') + target +
     (delivery.notify ? ' · ' + (SCHED_NOTIFY_LABELS[delivery.notify] || delivery.notify) : '')).slice(0, 240)
 }
 function schedUuid() {
@@ -146,8 +148,11 @@ function SchedStatusPill({ value }) {
   const status = value === undefined || value === null || value === '' ? '—' : String(value)
   const tone = ['active', 'success', 'completed', 'ok', 'native'].includes(status) ? 'ok'
     : ['failed', 'error', 'timeout', 'conflict', 'schedule_conflict', 'rejected'].includes(status) ? 'bad' : 'neutral'
+  const labels = { active: '已启用', paused: '已暂停', ended: '已结束', success: '成功',
+    failed: '失败', error: '错误', timeout: '超时', skipped: '已跳过', completed: '已完成',
+    rejected: '已拒绝', conflict: '冲突', 'not-found': '未找到', native: '原生' }
   return h('span', { className: 'fgw-pill fgw-pill-' + tone },
-    h('span', { className: 'fgw-dot' }), schedBound(status, 32))
+    h('span', { className: 'fgw-dot' }), labels[status] || schedBound(status, 32))
 }
 
 function SchedulePanel({ state, onChanged }) {
@@ -418,17 +423,18 @@ function SchedulePanel({ state, onChanged }) {
       h('div', { className: 'fgw-sched-task-title' },
         h('strong', null, schedBound(task.title, 120) || '(无标题)'),
         h(SchedStatusPill, { value: task.status })),
-      h('div', { className: 'fgw-sched-task-meta' },
-        h('span', null, '类型：', SCHED_KIND_LABELS[task.spec && task.spec.kind] || task.timingKind || '未知'),
-        h('span', null, ' · 时区：', schedBound(task.timeZone, 64) || 'UTC'),
-        task.executionActive && h('span', { className: 'fgw-sched-active' }, ' · 正在执行')),
-      h('div', { className: 'fgw-sched-task-meta' },
-        h('span', null, '下次：', schedLocalDate(task.scheduledAt, task.timeZone)),
-        h('span', null, ' · 上次：', schedLocalDate(
-          task.lastDelivery && (task.lastDelivery.deliveredAt || task.lastDelivery.scheduledAt), task.timeZone))),
-      h('div', { className: 'fgw-sched-task-meta' },
-        h('span', null, '飞书投递：', task.delivery ? schedDeliveryConfigText(task.delivery)
-          : '未配置（结果仅在 DSH Session）'))),
+      task.executionActive && h('span', { className: 'fgw-sched-active' }, '正在执行'),
+      h('div', { className: 'fgw-sched-task-facts' },
+        h('div', { className: 'fgw-sched-fact' }, h('span', null, '执行计划'),
+          h('strong', null, task.spec ? schedSpecText(task.spec) : (task.timingKind || '未知'))),
+        h('div', { className: 'fgw-sched-fact' }, h('span', null, '下次触发'),
+          h('strong', null, schedLocalDate(task.scheduledAt, task.timeZone))),
+        h('div', { className: 'fgw-sched-fact' }, h('span', null, '上次投递'),
+          h('strong', null, schedLocalDate(task.lastDelivery &&
+            (task.lastDelivery.deliveredAt || task.lastDelivery.scheduledAt), task.timeZone))),
+        h('div', { className: 'fgw-sched-fact' }, h('span', null, '飞书投递'),
+          h('strong', null, task.delivery ? schedDeliveryConfigText(task.delivery, allowedGroups)
+            : '未配置 · 结果保留在 DSH Session')))),
     h('div', { className: 'fgw-sched-task-actions' },
       action(task.status === 'paused' ? '恢复' : '暂停',
         () => void submit({ action: task.status === 'paused' ? 'resume' : 'pause', taskId: task.id }),
@@ -458,23 +464,22 @@ function SchedulePanel({ state, onChanged }) {
           Array.isArray(safeModel.deliveries && safeModel.deliveries[task.id])
             ? safeModel.deliveries[task.id].length : 0))),
       h('div', { className: 'fgw-data-row' }, h('span', { className: 'fgw-muted' }, '飞书投递配置'),
-        h('strong', { className: 'fgw-row-value' }, task.delivery ? schedDeliveryConfigText(task.delivery) : '未配置')),
+        h('strong', { className: 'fgw-row-value' }, task.delivery ? schedDeliveryConfigText(task.delivery, allowedGroups) : '未配置')),
       h('h4', { className: 'fgw-sched-prompt-title' }, '执行提示词'),
       h('pre', { className: 'fgw-sched-prompt' }, schedBound(task.prompt, 4000) || '（空）')))
 
   const tasksTab = h(React.Fragment, null,
     h('div', { className: 'fgw-metrics fgw-metrics-three' },
-      h(WbMetric, { title: '任务总数', value: wbCount(tasks.length), caption: '来自 Gateway 读模型' }),
-      h(WbMetric, { title: '运行中', value: wbCount(tasks.filter(task => task.status === 'active').length),
-        caption: 'status=active' }),
+      h(WbMetric, { title: '任务总数', value: wbCount(tasks.length), caption: '所有已登记的任务' }),
+      h(WbMetric, { title: '已启用', value: wbCount(tasks.filter(task => task.status === 'active').length),
+        caption: '其中正在执行 ' + wbCount(tasks.filter(task => task.executionActive).length) + ' 项' }),
       h(WbMetric, { title: '已暂停', value: wbCount(tasks.filter(task => task.status === 'paused').length),
-        caption: 'status=paused' })),
-    h('div', { className: 'fgw-sched-filters' },
+        caption: '暂停后不会按计划触发' })),
+    h('div', { className: 'fgw-sched-filters fgw-sched-task-filters' },
       h('label', { className: 'fgw-sched-filter' }, h('span', null, '状态'),
         schedSelect(statusFilter, setStatusFilter, SCHED_STATUS_FILTERS)),
       h('label', { className: 'fgw-sched-filter' }, h('span', null, '搜索'),
-        textInput(search, setSearch, '标题或任务 ID', { maxLength: 64 })),
-      action('+ 新建任务', openCreate, busy)),
+        textInput(search, setSearch, '标题或任务 ID', { maxLength: 64 }))),
     formOpen && formView,
     visibleTasks.length
       ? h('div', { className: 'fgw-sched-list' }, visibleTasks.map(taskCard))
@@ -482,8 +487,8 @@ function SchedulePanel({ state, onChanged }) {
         description: '仅展示 Gateway 读模型中的真实任务；调整筛选条件或新建任务。' }),
     h('div', { className: 'fgw-sched-footbar' },
       action('刷新原生状态', () => void submit({ action: 'refresh' }), busy || Boolean(pendingId), true),
-      action('清理未激活任务', () => {
-        if (window.confirm('确认删除所有未激活的定时任务？此操作由 Gateway 执行且不可撤销。'))
+      action('清理已结束任务', () => {
+        if (window.confirm('确认删除此 DSH Host 上所有已结束的定时任务？此操作不可撤销，不包括已暂停任务。'))
           void submit({ action: 'delete-inactive' })
       }, busy || Boolean(pendingId), true),
       h('span', { className: 'fgw-muted' },
@@ -555,5 +560,5 @@ function SchedulePanel({ state, onChanged }) {
     safeModel.stale && h('div', { className: 'fgw-caution' }, '读模型可能已过期，请点击「↻ 刷新」。'),
     content,
     h('p', { className: 'fgw-footnote' },
-      '定时任务由 DSH 原生 schedule 服务持有；此页面通过已认证的跨 Profile 命令队列提交操作，结果以 /schedule/results 为准。'))
+      '任务由 DSH 原生调度服务执行；提交操作后，请留意页面中的执行结果。'))
 }

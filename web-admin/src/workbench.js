@@ -268,7 +268,7 @@ function Workbench() {
           selected !== 'agent-profile' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
           selected !== 'advanced' && selected !== 'agent-profile' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
             onClick: () => onConfig(selected === 'bots' ? 'bots' : selected === 'security' ? 'permissions' : 'settings') }, '配置管理'),
-          selected !== 'agent-profile' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
+          selected !== 'agent-profile' && selected !== 'schedule' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
         h('div', null, h('div', { className: 'fgw-hero-kicker' }, 'GATEWAY OPERATIONS'),

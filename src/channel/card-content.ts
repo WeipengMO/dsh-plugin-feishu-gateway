@@ -1,8 +1,8 @@
 import type { CardCompletionStats } from '../types.js'
 
 /**
- * Feishu Card JSON 2.0 builders. Approval cards deliberately do not expose
- * command arguments, user content, paths, secrets, or arbitrary reasons.
+ * Feishu Card JSON 2.0 builders. Approval details are displayed in the
+ * originating authorized chat; commands may contain sensitive data.
  */
 export const CARD_NAMESPACE = 'dsh-feishu-gateway'
 export const PROGRESS_ELEMENT_ID = 'task_progress'
@@ -24,13 +24,23 @@ function button(label: string, value: Record<string, string>, type: 'primary' | 
   }
 }
 
-export function approvalCard(toolName: string, nonce: string): Record<string, unknown> {
+export function approvalCard(toolName: string, nonce: string, command?: string, reason?: string): Record<string, unknown> {
   const safeName = /^[A-Za-z0-9_.:/-]{1,96}$/.test(toolName) ? toolName : '受保护工具'
+  // Indented Markdown code blocks preserve backticks in the command without
+  // allowing a crafted fence to terminate the block and alter the card.
+  const commandBlock = command === undefined ? undefined
+    : '    ' + command.replace(/\n/g, '\n    ')
   return {
     ...header('DSH 工具执行审批', 'orange'),
     body: { elements: [
       { tag: 'markdown', content: '**工具：** ' + safeName +
-        '\n\n是否允许执行本次调用？\n不会展示命令参数、文件路径或密钥。\n超时、断线或取消均不批准。' },
+        (toolName === 'bash' && command === undefined ? '\n\n⚠️ 无法可靠获取或完整展示命令，请谨慎决定。' : '') },
+      ...(reason ? [{ tag: 'div', text: { tag: 'plain_text', content: '授权原因：' + reason } }] : []),
+      ...(commandBlock !== undefined ? [
+        { tag: 'markdown', content: '**待执行命令**' },
+        { tag: 'markdown', content: commandBlock },
+      ] : []),
+      { tag: 'markdown', content: '是否允许执行本次调用？超时、断线或取消均不批准。' },
       { tag: 'column_set', flex_mode: 'none', columns: [
         { tag: 'column', width: 'weighted', weight: 1, elements: [
           button('仅允许本次', { kind: 'approval', nonce, decision: 'allow' }, 'primary'),

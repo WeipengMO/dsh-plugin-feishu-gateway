@@ -1,12 +1,13 @@
 # DSH 原生定时任务与执行历史（Issue #19）
 
-> **开发分支功能，尚未实机验收。** 本文描述 `feat/scheduled-tasks` 分支为 GitHub Issue #19
-> 「feat(admin): Web 后台管理 DSH 原生定时任务与执行历史」新增的能力与边界。CI 只运行
-> Mock 单元/集成测试，不接入真实飞书租户或真实 DSH Host；截至本分支**没有任何真实租户
-> 端到端（E2E）结论**，不得把 CI 全绿、Mock 用例或本文的验证清单当作实机 PASS。本文所有
-> 原生 API 事实均来自本机已安装的 `@deepseek-ai/dsh-schedule@0.2.2-rc.1`，跨 Profile 接口
-> 事实来自 [SCHEDULE-API-CONTRACT.md](SCHEDULE-API-CONTRACT.md)（该合约是设计单一事实来源，
-> 本文不改动它）。§7 另附 OpenClaw 交互 / 生命周期对照参考，并明确本插件不复制其调度引擎。
+> **状态（2026-11-16 更新）：已在真实 DSH/飞书部署完成 9 项实机验收（9/9 通过）。** 证据见
+> [Issue #19 实机验收报告](ACCEPTANCE-ISSUE-19.md)。本文描述 `feat/scheduled-tasks` 分支为
+> GitHub Issue #19「feat(admin): Web 后台管理 DSH 原生定时任务与执行历史」新增的能力与边界。
+> **CI 仍只运行 Mock 单元/集成测试**，不接真实租户，CI 全绿不能替代实机验收；本报告为真实
+> 租户结论，也不改变历史实机结论的适用边界。本文原生 API 事实来自本机已安装的
+> `@deepseek-ai/dsh-schedule@0.2.2-rc.1`，跨 Profile 接口事实来自
+> [SCHEDULE-API-CONTRACT.md](SCHEDULE-API-CONTRACT.md)（设计单一事实来源，本文不改动它）。
+> §7 另附 OpenClaw 交互 / 生命周期对照参考，并明确本插件不复制其调度引擎。
 
 ---
 
@@ -138,7 +139,7 @@ wall-clock 转 UTC（DST 安全、时区显式，不用固定数值偏移），�
 | 执行目标与 prompt | 每个任务由 `ensureTaskSession(clientRef)` 预留一个 **Gateway 自有的原生 Session**（`target: { kind:'session', sessionId }`），prompt 作为每次触发投递的指令；到期由 DSH 在该 Session 中唤醒 Agent。`clientRef` 在 `create` 时必填，用于在原生 task id 产生前预留 Session id。 |
 | 飞书投递目标 | 私聊（`p2p`，白名单用户）/ 已启用群（`group`）二选一，可选 `botId`、`senderId` 与 `notify: 'result' \| 'failure' \| 'both' \| 'none'`。`chatId` 可为 `oc_…`（chat_id）或 `ou_…`（user open_id，`p2p` 时以 `receive_id_type: 'open_id'` 发送）；群目标必须是 `oc_…`。下拉项受 `GET /state` 的已配置机器人、白名单用户与已启用群约束；当前策略会拒绝的群直接拒绝，且每次投递前再次复核白名单 / 群策略。`delivery: null` 清除配置。 |
 | 运行控制 | `pause` / `resume` / `run`（立即执行，不移动下次触发）/ `delete` 需浏览器二次确认；另有 `delete-inactive` / `refresh`；`update` 可带 `expectedUpdatedAt` 做乐观冲突检测。底层只调用 `port.edit(...)` / `port.run(...)` / `port.deleteInactive()`，与原生状态保持一致。 |
-| 执行历史 | **原生投递回执**（`deliveries`：`scheduledAt` / `deliveredAt` / `messageId` / `targetSessionId`）+ **Gateway 执行台账**（`runs`：状态、耗时 `elapsedMs`、`tokens`、`model`、`sessionRef`（16-hex 关联引用）、`delivered`、有界 `error` 摘要）。台账状态取自 `ObservedScheduleTurn.status`：`success` / `failed` / `timeout` / `empty`（空回复，界面按「无结果 / 跳过」展示，**不是**一个名为 `skipped` 的字段）。 |
+| 执行历史 | **原生投递回执**（`deliveries`：`scheduledAt` / `deliveredAt` / `messageId` / `targetSessionId`）+ **Gateway 执行台账**（`runs`：状态、耗时 `elapsedMs`、`tokens`、`model`、`sessionRef`（16-hex 关联引用）、`delivered`、有界 `error` 摘要）。台账状态取自 `ObservedScheduleTurn.status`：`success` / `failed` / `timeout`；空回复归一为 `skipped`，**`NO_REPLY` 静默亦记为 `skipped`**（界面按「无结果 / 跳过」展示，不发送飞书消息）。 |
 | 错误处理 | 见 §3.1。 |
 | 权限与审计 | 见 §3.2。 |
 
@@ -356,10 +357,10 @@ dsh --profile <隔离 Web 测试 Profile> --dump-config
   「至少一次」。执行结果看 `runs` 台账与 DSH Session，不能把回执当成功。
 - **原生服务为 Host-wide**：原生目录无任务级授权；本功能的越权防护来自 DSH Web 认证 +
   Gateway 侧权威复核，二者都不改变原生目录的 Host-wide 性质。
-- **无真实租户 E2E**：本分支只有 Mock 单元/集成测试（合约 §7）；§5 的 runbook 是待执行
-  清单，**尚未在真实飞书租户 / 真实 DSH Web Profile 完成**。历史实机验收结论
-  （[ACCEPTANCE-0.2.0-rc.1.md](ACCEPTANCE-0.2.0-rc.1.md)）针对的是私聊/卡片/审批，**不覆盖
-  本功能**。
+- **真实租户 E2E（已完成）**：2026-11-16 已在真实 DSH/飞书部署完成 §5 清单对应的 9 项实机
+  验收（9/9 通过），证据见 [ACCEPTANCE-ISSUE-19.md](ACCEPTANCE-ISSUE-19.md)。CI 仍只跑 Mock
+  单元/集成测试（合约 §7），CI 全绿不替代实机结论。历史实机验收结论
+  （[ACCEPTANCE-0.2.0-rc.1.md](ACCEPTANCE-0.2.0-rc.1.md)）针对私聊/卡片/审批，不覆盖本功能。
 - **其他沿用既有边界**：交付历史受原生保留配置与读模型有界裁剪限制；Outbox 仍是
   「至少一次 + 尽力幂等」，不提供 exactly-once；跨主机 / NFS 共享 `stateDir` 仍不在
   支持范围内。

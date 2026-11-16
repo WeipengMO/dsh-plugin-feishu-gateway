@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FeishuApprovalManager } from '../../src/channel/approval-manager.js'
+import { approvalCommand, FeishuApprovalManager } from '../../src/channel/approval-manager.js'
 import { MockFeishuTransport } from '../../src/channel/mock-transport.js'
 import { silentLogger } from '../../src/util/logger.js'
 import { CARD_NAMESPACE } from '../../src/channel/card-content.js'
@@ -27,7 +27,7 @@ function setup(timeoutMs = 200) {
   const action = (decision: string) => {
     const sent = transport.interactiveCards[0]!
     const card = sent.card as any
-    const btn = card.body.elements[1].columns[decision === 'allow' ? 0 : 1].elements[0]
+    const btn = card.body.elements.find((e: any) => e.tag === 'column_set').columns[decision === 'allow' ? 0 : 1].elements[0]
     return {
       botId: owner.botId,
       chatId: owner.chatId,
@@ -40,6 +40,75 @@ function setup(timeoutMs = 200) {
 }
 
 describe('fail-closed native approval card manager', () => {
+
+  it('shows the exact correlated bash command and localized approval reason', async () => {
+    const t = setup()
+    const command = 'printf hello\ncat /tmp/example'
+    const waiting = t.manager.answer({
+      agent: { id: 's_1', session: { deriveMessages: () => [
+        { role: 'assistant', content: [
+          { type: 'tool-call', id: 'other', name: 'bash', arguments: JSON.stringify({ command: 'wrong' }) },
+          { type: 'tool-call', id: 'wanted', name: 'bash', arguments: JSON.stringify({ command }) },
+        ] },
+      ] } },
+      toolName: 'bash', callId: 'wanted', reason: 'fallback',
+      displayReason: { en: 'English', zh: '允许提升沙箱权限' },
+    }, async () => 'unavailable')
+    await t.untilPending()
+    const elements = (t.transport.interactiveCards[0]!.card as any).body.elements
+    expect(elements.some((e: any) => e.tag === 'markdown' && e.content === '    ' + command.replace(/\n/g, '\n    '))).toBe(true)
+    expect(elements.some((e: any) => e.text?.content === '授权原因：允许提升沙箱权限')).toBe(true)
+    expect(JSON.stringify(elements)).not.toContain('wrong')
+    t.manager.consume(t.action('allow'))
+    expect(await waiting).toBe('allowed-once')
+    t.manager.stop()
+  })
+
+  it('keeps embedded markdown fences and mentions inside the command code block', async () => {
+    const t = setup()
+    const command = 'echo first\n' + String.fromCharCode(96).repeat(3) + '\n<at id=all></at>\n  echo last'
+    const waiting = t.manager.answer({
+      agent: { id: 's_1', session: { deriveMessages: () => [
+        { role: 'assistant', content: [
+          { type: 'tool-call', id: 'c', name: 'bash', arguments: JSON.stringify({ command }) },
+        ] },
+      ] } },
+      toolName: 'bash', callId: 'c',
+    }, async () => 'unavailable')
+    await t.untilPending()
+    const elements = (t.transport.interactiveCards[0]!.card as any).body.elements
+    const code = elements.find((e: any) => e.tag === 'markdown' && e.content.startsWith('    echo first'))
+    expect(code.content).toBe('    ' + command.replace(/\n/g, '\n    '))
+    expect(elements.findIndex((e: any) => e === code)).toBeLessThan(elements.findIndex((e: any) => e.tag === 'column_set'))
+    t.manager.consume(t.action('reject'))
+    expect(await waiting).toBe('rejected')
+    t.manager.stop()
+  })
+
+  it('warns when bash command cannot be displayed, while preserving the user decision', async () => {
+    const t = setup()
+    const waiting = t.ask()
+    await t.untilPending()
+    expect(JSON.stringify(t.transport.interactiveCards[0]!.card)).toContain('无法可靠获取或完整展示命令')
+    t.manager.consume(t.action('allow'))
+    expect(await waiting).toBe('allowed-once')
+    t.manager.stop()
+  })
+
+  it('never substitutes a different, malformed, duplicate, or oversized command', () => {
+    const call = (id: string, args: string) => ({ type: 'tool-call', id, name: 'bash', arguments: args })
+    const request = (blocks: unknown[]) => ({
+      toolName: 'bash', callId: 'wanted',
+      agent: { session: { deriveMessages: () => [{ role: 'assistant', content: blocks }] } },
+    })
+    expect(approvalCommand(request([call('other', '{"command":"wrong"}')]))).toBeUndefined()
+    expect(approvalCommand(request([call('wanted', 'invalid')]))).toBeUndefined()
+    expect(approvalCommand(request([call('wanted', '{"command":"a"}'), call('wanted', '{"command":"b"}')]))).toBeUndefined()
+    expect(approvalCommand(request([call('wanted', JSON.stringify({ command: 'a'.repeat(3501) }))]))).toBeUndefined()
+    expect(approvalCommand(request([call('wanted', JSON.stringify({ command: 'a\u0000b' }))]))).toBeUndefined()
+  })
+
+
   it('does not capture unrelated DSH approval requests', async () => {
     const { manager, transport } = setup()
     const result = await manager.answer({

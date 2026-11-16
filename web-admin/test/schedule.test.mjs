@@ -21,7 +21,8 @@ async function fixture(extra = {}) {
   const stateDir = path.join(dir, 'state')
   const envFile = path.join(dir, 'feishu-channel.env')
   const handler = createAdminHandler({
-    stateDir, envFile, healthPort: 39201, ...extra,
+    stateDir, envFile, healthPort: 39201,
+    requestAdmission: () => ({ peer: { principal: { kind: 'owner' } } }), ...extra,
     requestRejection: req => req.headers.cookie === 'sched-ok' ? undefined : 401,
   })
   const server = createServer((req, res) => { void handler(req, res) })
@@ -353,6 +354,58 @@ test('every schedule endpoint requires the authenticated DSH browser session', a
       { spec: { kind: 'every', everySeconds: 60 }, count: 1 }, write)).status, 401)
     assert.equal((await f.request('/schedule/commands', 'POST',
       { type: 'schedule', schedule: { action: 'refresh' } }, write)).status, 401)
+  } finally { await f.close() }
+})
+
+test('schedule authorization trusts only the DSH admitted owner, including legacy mailbox route', async () => {
+  for (const admission of [
+    () => ({ peer: { principal: { kind: 'share-viewer', actor: { subjectId: 'owner' } } } }),
+    () => ({ peer: { principal: { kind: 'unknown' } } }),
+    () => ({ peer: {} }),
+    () => { throw new Error('unavailable') },
+  ]) {
+    const f = await fixture({ requestAdmission: admission })
+    try {
+      const expected = (() => { try { admission(); return 403 } catch { return 503 } })()
+      assert.equal((await f.request('/schedule')).status, expected)
+      assert.equal((await f.request('/schedule/results')).status, expected)
+      assert.equal((await f.request('/schedule/preview', 'POST',
+        { spec: { kind: 'every', everySeconds: 60 }, count: 1 }, mutating)).status, expected)
+      for (const action of ['create', 'update', 'run', 'delete', 'refresh']) {
+        const schedule = action === 'create'
+          ? { action, clientRef: CLIENT_REF }
+          : action === 'refresh' ? { action } : { action, taskId: TASK_ID }
+        assert.equal((await f.request('/schedule/commands', 'POST',
+          { type: 'schedule', schedule }, mutating)).status, expected)
+        assert.equal((await f.request('/ops/commands', 'POST',
+          { type: 'schedule', schedule }, mutating)).status, expected)
+      }
+      await assert.rejects(stat(path.join(f.stateDir, 'ops-control')), error => error.code === 'ENOENT')
+    } finally { await f.close() }
+  }
+})
+
+test('legacy operations dashboard filters schedule results for a non-owner', async () => {
+  const f = await fixture({ requestAdmission: () => ({ peer: { principal: { kind: 'share-viewer' } } }) })
+  try {
+    const dir = path.join(f.stateDir, 'ops-control', 'results')
+    await mkdir(dir, { recursive: true })
+    const id = '11111111-1111-4111-8111-111111111111'
+    await writeFile(path.join(dir, id + '.json'), JSON.stringify({
+      version: 1, id, type: 'schedule', state: 'completed', ts: Date.now(), detail: 'schedule-result',
+    }))
+    const result = await f.request('/ops')
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.json.commands, [])
+  } finally { await f.close() }
+})
+
+test('schedule endpoints fail closed when trusted peer admission is unavailable', async () => {
+  const f = await fixture({ requestAdmission: undefined })
+  try {
+    assert.equal((await f.request('/schedule')).status, 503)
+    assert.equal((await f.request('/schedule/commands', 'POST',
+      { type: 'schedule', schedule: { action: 'refresh' } }, mutating)).status, 503)
   } finally { await f.close() }
 })
 

@@ -6,9 +6,40 @@ import type { CardActionEvent, FeishuTransport, GatewayLogger } from '../types.j
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
 export interface ApprovalRequestLike {
-  readonly agent?: { readonly id?: unknown; readonly session?: { readonly id?: unknown } }
+  readonly agent?: { readonly id?: unknown; readonly session?: { readonly id?: unknown; deriveMessages?: () => unknown[] } }
+  readonly callId?: unknown
+  readonly reason?: unknown
+  readonly displayReason?: { readonly zh?: unknown; readonly en?: unknown }
   readonly toolName?: string
   readonly signal?: AbortSignal
+}
+
+/** Match only the exact native call in this agent's own committed messages. */
+export function approvalCommand(req: ApprovalRequestLike): string | undefined {
+  if (req.toolName !== 'bash' || typeof req.callId !== 'string' || !req.callId) return undefined
+  try {
+    const messages = req.agent?.session?.deriveMessages?.()
+    if (!Array.isArray(messages)) return undefined
+    const matches: unknown[] = []
+    for (const message of messages) {
+      if (!message || typeof message !== 'object') continue
+      const m = message as { role?: unknown; content?: unknown }
+      if (m.role !== 'assistant' || !Array.isArray(m.content)) continue
+      for (const block of m.content) {
+        if (block && typeof block === 'object') {
+          const b = block as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }
+          if (b.type === 'tool-call' && b.id === req.callId && b.name === 'bash') matches.push(b.arguments)
+        }
+      }
+    }
+    if (matches.length !== 1 || typeof matches[0] !== 'string') return undefined
+    const args: unknown = JSON.parse(matches[0])
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined
+    const command = (args as { command?: unknown }).command
+    if (typeof command !== 'string' || !command.trim() ||
+        Buffer.byteLength(command, 'utf8') > 3500 || /[\x00-\x08\x0b-\x1f\x7f]/.test(command)) return undefined
+    return command
+  } catch { return undefined }
 }
 
 export interface ApprovalOwner {
@@ -71,12 +102,15 @@ export class FeishuApprovalManager {
     const nonce = randomUUID()
     const initialEpoch = this.botEpoch.get(owner.botId) ?? 0
     const toolName = typeof req.toolName === 'string' ? req.toolName : '受保护工具'
+    const command = approvalCommand(req)
+    const rawReason = req.displayReason?.zh ?? req.displayReason?.en ?? req.reason
+    const reason = typeof rawReason === 'string' && Buffer.byteLength(rawReason, 'utf8') <= 2000 ? rawReason : undefined
     let cardMessageId: string
     try {
       const result = await withTimeout(
         transport.sendInteractiveCard(
           { replyToMessageId: owner.replyToMessageId },
-          approvalCard(toolName, nonce)),
+          approvalCard(toolName, nonce, command, reason)),
         Math.min(5_000, this.timeoutMs),
         req.signal,
       )

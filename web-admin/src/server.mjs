@@ -434,6 +434,26 @@ function security(req, reject) {
     if (!req.headers['content-type']?.startsWith('application/json')) throw httpError(415, 'JSON required')
   }
 }
+// DSH HTTP admission returns a trusted Peer, unlike request headers/body.
+// Browser connections currently all share the Host owner's principal. Until
+// DSH exposes independently authenticated roles, unknown principals have no
+// schedule permissions; never infer a role from an email, header, or UI.
+const SCHEDULE_PERMISSION_BY_ACTION = Object.freeze({
+  create: 'create', update: 'edit', pause: 'edit', resume: 'edit',
+  run: 'run', delete: 'delete', 'delete-inactive': 'delete', refresh: 'view',
+})
+function authorizeSchedule(req, admit, permission) {
+  if (typeof admit !== 'function') throw httpError(503, 'schedule authorization unavailable')
+  let admission
+  try { admission = admit(req) } catch { throw httpError(503, 'schedule authorization unavailable') }
+  if (admission?.rejection === 401 || admission?.rejection === 403)
+    throw httpError(admission.rejection, 'DSH browser authorization required')
+  const kind = admission?.peer?.principal?.kind
+  if (kind !== 'owner') throw httpError(403, 'schedule permission denied')
+  if (!['view', 'create', 'edit', 'run', 'delete'].includes(permission))
+    throw httpError(403, 'schedule permission denied')
+}
+
 async function loopback(port, route) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw httpError(500, 'invalid health port')
   return await new Promise(resolve => {
@@ -637,6 +657,7 @@ export function createAdminHandler(options = {}) {
     throw new Error('invalid proxy test timeout')
   }
   const reject = options.requestRejection
+  const admit = options.requestAdmission
   if (typeof reject !== 'function') throw new Error('DSH connection.requestRejection required')
   const managed = path.join(stateDir, 'admin-config.json')
   const proxyFile = path.join(stateDir, PROXY_FILE)
@@ -679,7 +700,12 @@ export function createAdminHandler(options = {}) {
         const [snapshot, events] = await Promise.all([
           readOpsSnapshot(stateDir), readOpsEvents(stateDir, { limit: 200 }),
         ])
-        const commands = await readOpsResults(stateDir)
+        const allCommands = await readOpsResults(stateDir)
+        // The legacy operations dashboard shares the results directory. Do
+        // not leak schedule command outcomes around schedule authorization.
+        let canViewSchedule = false
+        try { authorizeSchedule(req, admit, 'view'); canViewSchedule = true } catch { /* fail closed */ }
+        const commands = canViewSchedule ? allCommands : allCommands.filter(c => c.type !== 'schedule')
         return json(res, 200, { ok: true, snapshot, events, commands,
           summary: summarizeOps(events, snapshot), telemetryAvailable: snapshot !== null })
       }
@@ -827,10 +853,18 @@ export function createAdminHandler(options = {}) {
       if (req.method === 'POST' && route === PREFIX + '/ops/commands') {
         return await serializeMutation(async () => {
           const body = await readBody(req)
+          if (body.type === 'schedule') {
+            const parsed = validateScheduleCommand(body.schedule)
+            authorizeSchedule(req, admit, SCHEDULE_PERMISSION_BY_ACTION[parsed.action])
+          }
           const command = await queueOperatorCommand(stateDir, body)
           return json(res, 202, { ok: true, command, queued: true })
         })
       }
+      // Schedule reads and previews require a trusted owner Peer.
+      if ((route === PREFIX + '/schedule' || route === PREFIX + '/schedule/results' ||
+           route === PREFIX + '/schedule/preview') && (req.method === 'GET' || req.method === 'POST'))
+        authorizeSchedule(req, admit, 'view')
       // --- Issue #19: scheduled tasks (all behind security(req, reject)) ---
       if (req.method === 'GET' && route === PREFIX + '/schedule') {
         // Only the sanitized, redacted read model is readable here.
@@ -854,7 +888,8 @@ export function createAdminHandler(options = {}) {
           if (body.type !== 'schedule') throw httpError(400, 'unsupported schedule command')
           // validateScheduleCommand is the pure helper shared with the mailbox
           // writer; the writer validates once more under serializeMutation.
-          validateScheduleCommand(body.schedule)
+          const parsed = validateScheduleCommand(body.schedule)
+          authorizeSchedule(req, admit, SCHEDULE_PERMISSION_BY_ACTION[parsed.action])
           const command = await queueOperatorCommand(stateDir, body, SCHEDULE_COMMAND_MAX_BYTES)
           return json(res, 202, { ok: true, command, queued: true })
         })
@@ -951,7 +986,8 @@ export function apply(ctx, config = {}) {
   }
   ctx.effect(() => {
     const unregister = webServer.register({ kind: 'prefix', path: PREFIX,
-      handler: createAdminHandler({ ...config, requestRejection: req => connection.requestRejection(req) }) })
+      handler: createAdminHandler({ ...config, requestRejection: req => connection.requestRejection(req),
+        requestAdmission: typeof connection.admit === 'function' ? req => connection.admit(req) : undefined }) })
     ctx.logger.info('feishu-admin: management API registered on authenticated DSH Web')
     return () => unregister?.()
   }, 'feishu-admin.http')

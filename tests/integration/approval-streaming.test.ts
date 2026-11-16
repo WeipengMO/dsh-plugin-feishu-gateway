@@ -47,7 +47,7 @@ describe('Feishu callback and native DSH approval integration', () => {
       async () => 'unavailable')
     await until(() => b.gateway.health().pendingApprovals === 1)
     const card = b.t.interactiveCards[0]!
-    const first = (((card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value))
+    const first = (((card.card as any).body.elements.find((e: any) => e.tag === 'column_set').columns[0].elements[0].behaviors[0].value))
     const event = {
       botId: 'default', chatId: 'oc_one', actorOpenId: 'ou_alice',
       messageId: card.messageId, value: first,
@@ -92,7 +92,7 @@ describe('Feishu callback and native DSH approval integration', () => {
       async () => 'unavailable')
     await until(() => b.gateway.health().pendingApprovals === 1)
     const card = b.t.interactiveCards[0]!
-    const value = (card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value
+    const value = (card.card as any).body.elements.find((e: any) => e.tag === 'column_set').columns[0].elements[0].behaviors[0].value
     await b.emit('om_cancel', '/cancel')
     await b.gateway.whenIdle()
     expect(await decision).toBe('cancelled')
@@ -133,7 +133,7 @@ describe('Feishu callback and native DSH approval integration', () => {
       async () => 'unavailable')
     await until(() => b.gateway.health().pendingApprovals === 1)
     const card = b.t.interactiveCards[0]!
-    const actionValue = (card.card as any).body.elements[1].columns[0].elements[0].behaviors[0].value
+    const actionValue = (card.card as any).body.elements.find((e: any) => e.tag === 'column_set').columns[0].elements[0].behaviors[0].value
     const approval = { botId: 'default', chatId: 'oc_shared', messageId: card.messageId,
       actorOpenId: 'ou_bob', value: actionValue }
     // Bob is permitted to use the group, but is not Alice, the turn owner.

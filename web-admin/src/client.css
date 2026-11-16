@@ -653,6 +653,9 @@
 .fgw-sched-tab.is-active{color:var(--primary,#4f80d9);border-bottom-color:var(--primary,#4f80d9);font-weight:660}
 .fgw-sched-tab:focus-visible{outline:2px solid var(--ring,#4f88f0);outline-offset:2px;border-radius:6px}
 .fgw-sched-filters{display:flex;align-items:end;flex-wrap:wrap;gap:12px;min-width:0}
+.fgw-schedule .fgw-metrics{margin-bottom:0}
+.fgw-sched-task-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end}
+.fgw-sched-task-filters .fgw-sched-filter{min-width:0}
 .fgw-sched-filter{display:flex;flex-direction:column;gap:6px;min-width:170px;flex:1;font-size:12px;color:var(--muted-foreground,#9298a3)}
 .fgw-sched-filter .fga-input{min-width:0;width:100%}
 .fgw-sched-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:start}
@@ -676,6 +679,12 @@
 .fgw-sched-task-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .fgw-sched-task-title strong{font-size:14px;font-weight:660;overflow-wrap:anywhere}
 .fgw-sched-task-meta{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11.5px;color:var(--muted-foreground,#8f9aa8);line-height:1.5}
+.fgw-sched-task-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 24px;margin-top:5px}
+.fgw-sched-fact{display:flex;flex-direction:column;gap:5px;min-width:0}
+.fgw-sched-fact span{font-size:11px;color:var(--muted-foreground,#8f9aa8)}
+.fgw-sched-fact strong{font-size:12px;font-weight:540;line-height:1.55;overflow-wrap:anywhere}
+.fgw-schedule .fgw-metric{min-height:105px;padding:16px 18px}
+.fgw-schedule .fgw-sched-task-actions{padding-top:4px}
 .fgw-sched-active{color:#c78e33;font-weight:650}
 .fgw-sched-task-actions{display:flex;flex-wrap:wrap;gap:8px;padding:0 18px 15px}
 .fgw-sched-task-actions .fga-button{padding:6px 11px;font-size:12px;min-height:32px}
@@ -690,4 +699,4 @@
 .fgw-sched-footbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding-top:4px}
 .fgw-sched-footbar .fga-button{padding:7px 12px;font-size:12px;min-height:34px}
 @media(max-width:860px){.fgw-sched-form-grid{grid-template-columns:minmax(0,1fr)}.fgw-sched-filter{min-width:140px}}
-@media(max-width:690px){.fgw-sched-tabs{overflow-x:auto}.fgw-sched-toolbar{flex-direction:column;align-items:stretch}.fgw-sched-task-actions{gap:6px}.fgw-sched-filter{flex:1 1 100%}}
+@media(max-width:690px){.fgw-sched-task-facts{grid-template-columns:minmax(0,1fr)}.fgw-sched-task-filters{grid-template-columns:minmax(0,1fr)}.fgw-sched-tabs{overflow-x:auto}.fgw-sched-toolbar{flex-direction:column;align-items:stretch}.fgw-sched-task-actions{gap:6px}.fgw-sched-filter{flex:1 1 100%}}
