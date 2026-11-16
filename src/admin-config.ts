@@ -196,7 +196,7 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
     }
   }
   if (value.approvalTimeoutMs !== undefined)
-    result.approvalTimeoutMs = positiveInteger(value.approvalTimeoutMs, 'approvalTimeoutMs', 5_000, 300_000)
+    result.approvalTimeoutMs = positiveInteger(value.approvalTimeoutMs, 'approvalTimeoutMs', 5_000, 1_800_000)
   if (value.streamIntervalMs !== undefined)
     result.streamIntervalMs = positiveInteger(value.streamIntervalMs, 'streamIntervalMs', 500, 5_000)
   if (value.autoConnect !== undefined) {

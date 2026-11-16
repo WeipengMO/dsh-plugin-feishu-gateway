@@ -236,3 +236,41 @@ describe('native schedule operator commands', () => {
     } finally { await rm(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('permanent approval revocation command', () => {
+  it('dispatches one versioned approval-revoke carrying only a 16-hex ref', async () => {
+    const { dir, folder } = await setup()
+    try {
+      const ref = 'ab1234567890cdef'
+      const id = await command(folder, 'approval-revoke', ref)
+      const seen: Array<{ type: string; ref?: string }> = []
+      expect(await processOperatorCommands(dir, async cmd => {
+        seen.push({ type: cmd.type, ...(cmd.ref ? { ref: cmd.ref } : {}) })
+        return { state: 'completed', detail: 'revoked bash · lark-cli*' }
+      })).toBe(1)
+      expect(seen).toEqual([{ type: 'approval-revoke', ref }])
+      const result = JSON.parse(await readFile(path.join(dir, 'ops-control', 'results', id + '.json'), 'utf8'))
+      expect(result).toMatchObject({ version: 1, type: 'approval-revoke', state: 'completed', ref })
+      expect(result.detail).toContain('revoked')
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+
+  it('rejects malformed, extra-field or expired revocation requests', async () => {
+    const { dir, folder } = await setup()
+    try {
+      await command(folder, 'approval-revoke', 'not-a-ref')
+      const extra = randomUUID()
+      await writeFile(path.join(folder, extra + '.json'), JSON.stringify({
+        version: 1, id: extra, ts: Date.now(), type: 'approval-revoke',
+        ref: 'ab1234567890cdef', extra: 'nope',
+      }), { mode: 0o600 })
+      await command(folder, 'approval-revoke', 'ab1234567890cdef', Date.now() - 45_000)
+      let calls = 0
+      expect(await processOperatorCommands(dir, async () => {
+        calls += 1
+        return 'completed'
+      })).toBe(3)
+      expect(calls).toBe(0)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+})

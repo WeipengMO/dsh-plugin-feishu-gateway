@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { ApprovalStore } from '../../src/channel/approval-store.js'
 import { approvalCommand, FeishuApprovalManager } from '../../src/channel/approval-manager.js'
 import { MockFeishuTransport } from '../../src/channel/mock-transport.js'
 import { silentLogger } from '../../src/util/logger.js'
@@ -27,7 +31,14 @@ function setup(timeoutMs = 200) {
   const action = (decision: string) => {
     const sent = transport.interactiveCards[0]!
     const card = sent.card as any
-    const btn = card.body.elements.find((e: any) => e.tag === 'column_set').columns[decision === 'allow' ? 0 : 1].elements[0]
+    const columns = card.body.elements.find((e: any) => e.tag === 'column_set').columns as any[]
+    let btn: any
+    for (const column of columns) {
+      for (const element of column.elements) {
+        if (element?.behaviors?.[0]?.value?.decision === decision) btn = element
+      }
+    }
+    expect(btn).toBeTruthy()
     return {
       botId: owner.botId,
       chatId: owner.chatId,
@@ -228,5 +239,172 @@ describe('fail-closed native approval card manager', () => {
       value: { namespace: CARD_NAMESPACE, kind: 'unrelated', nonce: 'n' },
     })).toBeUndefined()
     t.manager.stop()
+  })
+})
+
+describe('FeishuApprovalManager permanent authorizations and countdown', () => {
+  const owner2 = {
+    botId: 'default', chatId: 'oc_one', senderId: 'ou_alice', replyToMessageId: 'om_original',
+  }
+  const bashRequest = (callId: string, command = 'lark-cli calendar +agenda --as user') => ({
+    agent: {
+      id: 's_1',
+      session: {
+        deriveMessages: () => [{ role: 'assistant', content: [
+          { type: 'tool-call', id: callId, name: 'bash', arguments: JSON.stringify({ command }) },
+        ] }],
+      },
+    },
+    toolName: 'bash',
+    callId,
+  })
+  const button = (card: unknown, decision: string) => {
+    const columns = ((card as any).body.elements.find((e: any) => e.tag === 'column_set').columns) as any[]
+    for (const column of columns) {
+      for (const element of column.elements) {
+        if (element?.behaviors?.[0]?.value?.decision === decision) return element
+      }
+    }
+    return undefined
+  }
+  async function setupWithStore(timeoutMs = 500, countdownIntervalMs = 5_000) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'approval-manager-'))
+    const store = new ApprovalStore({ stateDir: dir })
+    await store.load()
+    const transport = new MockFeishuTransport('default')
+    let changed = 0
+    const manager = new FeishuApprovalManager(
+      timeoutMs,
+      new Set(['ou_alice']),
+      id => id === 's_1' ? owner2 : undefined,
+      botId => botId === 'default' ? transport : undefined,
+      silentLogger,
+      () => undefined,
+      { store, onChanged: () => { changed += 1 } },
+      countdownIntervalMs,
+    )
+    const pendingEvent = (decision: string) => {
+      const sent = transport.interactiveCards[0]!
+      const btn = button(sent.card, decision)!
+      return {
+        botId: owner2.botId, chatId: owner2.chatId, actorOpenId: owner2.senderId,
+        messageId: sent.messageId,
+        value: btn.behaviors[0].value as { namespace: string; kind: string; nonce: string; decision: string },
+      }
+    }
+    const untilPending = async () => {
+      for (let i = 0; i < 100 && manager.size !== 1; i += 1) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+      expect(manager.size).toBe(1)
+    }
+    const cleanup = () => rm(dir, { recursive: true, force: true })
+    return { manager, transport, store, changed: () => changed, pendingEvent, untilPending, cleanup }
+  }
+
+  it('saves a narrow rule and auto-allows the next matching command without a card', async () => {
+    const t = await setupWithStore()
+    try {
+      const first = t.manager.answer(bashRequest('c1'), async () => 'unavailable')
+      await t.untilPending()
+      const card = t.transport.interactiveCards[0]!.card as any
+      const content = JSON.stringify(card)
+      expect(content).toContain('永久允许 lark-cli*')
+      expect(content).toContain('⏳ 剩余')
+      expect(button(card, 'allow')).toBeTruthy()
+      expect(button(card, 'allow-permanent')).toBeTruthy()
+      expect(button(card, 'reject')).toBeTruthy()
+      const toast = t.manager.consume(t.pendingEvent('allow-permanent') as any)
+      expect(toast?.toast.type).toBe('success')
+      expect(await first).toBe('allowed-once')
+      expect(t.store.ruleFor('bash', 'lark-cli')).toBeDefined()
+      expect(t.store.rulesView()[0]!.uses).toBe(0)
+
+      // Same command root: auto-allowed, no second card, usage counted.
+      expect(await t.manager.answer(bashRequest('c2'), async () => 'unavailable')).toBe('allowed-once')
+      expect(t.transport.interactiveCards).toHaveLength(1)
+      expect(t.store.ruleFor('bash', 'lark-cli')!.uses).toBe(1)
+      const decisions = t.store.recordsView().map(record => record.decision)
+      expect(decisions).toContain('allowed-permanent')
+      expect(decisions).toContain('auto-allowed')
+      expect(t.changed()).toBeGreaterThan(0)
+    } finally {
+      t.manager.stop()
+      await t.cleanup()
+    }
+  })
+
+  it('offers a tool-scoped permanent option for non-bash tools', async () => {
+    const t = await setupWithStore()
+    try {
+      const waiting = t.manager.answer({ agent: { id: 's_1' }, toolName: 'web_fetch' },
+        async () => 'unavailable')
+      await t.untilPending()
+      const card = t.transport.interactiveCards[0]!.card as any
+      expect(button(card, 'allow-permanent')).toBeTruthy()
+      t.manager.consume(t.pendingEvent('allow-permanent') as any)
+      expect(await waiting).toBe('allowed-once')
+      expect(t.store.ruleFor('web_fetch', undefined)).toBeDefined()
+      // A different tool is not covered.
+      expect(t.store.ruleFor('bash', 'lark-cli')).toBeUndefined()
+      expect(t.store.ruleFor('web_fetch', undefined)!.label).toBe('web_fetch')
+    } finally {
+      t.manager.stop()
+      await t.cleanup()
+    }
+  })
+
+  it('hides the permanent option when no narrow scope can be derived', async () => {
+    const t = await setupWithStore()
+    try {
+      const waiting = t.manager.answer({ agent: { id: 's_1' }, toolName: 'bash' },
+        async () => 'unavailable')
+      await t.untilPending()
+      const card = t.transport.interactiveCards[0]!.card as any
+      expect(button(card, 'allow-permanent')).toBeUndefined()
+      // A stale/forged permanent callback must not widen the allowlist.
+      const event = t.pendingEvent('allow') as any
+      const toast = t.manager.consume({ ...event, value: { ...event.value, decision: 'allow-permanent' } })
+      expect(toast?.toast).toMatchObject({ type: 'warning' })
+      expect(t.manager.size).toBe(1)
+      t.manager.consume(t.pendingEvent('reject') as any)
+      expect(await waiting).toBe('rejected')
+      expect(t.store.ruleFor('bash', undefined)).toBeUndefined()
+    } finally {
+      t.manager.stop()
+      await t.cleanup()
+    }
+  })
+
+  it('repaints the countdown while the request is pending', async () => {
+    const t = await setupWithStore(5_000, 10)
+    try {
+      const waiting = t.manager.answer(bashRequest('c1'), async () => 'unavailable')
+      await t.untilPending()
+      await new Promise(resolve => setTimeout(resolve, 45))
+      expect(t.transport.patchedCards.length).toBeGreaterThan(0)
+      const repainted = JSON.stringify(t.transport.patchedCards.at(-1)!.card)
+      expect(repainted).toContain('⏳ 剩余')
+      t.manager.consume(t.pendingEvent('reject') as any)
+      expect(await waiting).toBe('rejected')
+      const painted = t.transport.patchedCards.length
+      await new Promise(resolve => setTimeout(resolve, 40))
+      expect(t.transport.patchedCards.length).toBe(painted)
+    } finally {
+      t.manager.stop()
+      await t.cleanup()
+    }
+  })
+
+  it('records a timed-out decision in the durable audit', async () => {
+    const t = await setupWithStore(20)
+    try {
+      const result = await t.manager.answer(bashRequest('c1'), async () => 'allowed-once')
+      expect(result).toBe('unavailable')
+      expect(t.store.recordsView()[0]!.decision).toBe('timed-out')
+    } finally {
+      t.manager.stop()
+      await t.cleanup()
+    }
   })
 })

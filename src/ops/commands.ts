@@ -37,7 +37,7 @@ export interface OperatorCommand {
   readonly version: 1
   readonly id: string
   readonly ts: number
-  readonly type: 'cancel-task' | 'retry-outbox' | 'archive-session' | 'unbind-session' | 'batch-sessions' | 'schedule'
+  readonly type: 'cancel-task' | 'retry-outbox' | 'archive-session' | 'unbind-session' | 'batch-sessions' | 'schedule' | 'approval-revoke'
   readonly ref?: string
   readonly expectedLastActiveAt?: number
   /** Bounded, server-derived label of the authenticated DSH Web operator. */
@@ -251,13 +251,15 @@ export async function processOperatorCommands(
       const isSession = data.type === 'archive-session' || data.type === 'unbind-session'
       const isSchedule = data.type === 'schedule'
       const isBatch = data.type === 'batch-sessions'
+      const isApprovalRevoke = data.type === 'approval-revoke'
       if (isSchedule) resultType = 'schedule'
       if (isBatch) resultType = 'batch-sessions'
+      if (isApprovalRevoke) resultType = 'approval-revoke'
       const legacy = data.type === 'cancel-task' || data.type === 'retry-outbox' || isSession
       const fresh = typeof data.ts === 'number' && Date.now() - data.ts >= 0 &&
         Date.now() - data.ts < 30_000
       if (data?.version === 1 && data.id === name.slice(0, -5) && fresh &&
-        (legacy || isSchedule || isBatch) &&
+        (legacy || isSchedule || isBatch || isApprovalRevoke) &&
         fileSize <= (isSchedule ? SCHEDULE_MAX_BYTES : isBatch ? BATCH_MAX_BYTES : LEGACY_MAX_BYTES)) {
         if (isSchedule) {
           const schedule = parseSchedulePayload(data.schedule)
@@ -286,6 +288,17 @@ export async function processOperatorCommands(
             state = typeof outcome === 'string' ? outcome : outcome.state
             detail = boundedDetail(typeof outcome === 'string' ? undefined : outcome.detail)
           }
+        } else if (isApprovalRevoke &&
+          Object.keys(data).every(key => ['version', 'id', 'ts', 'type', 'ref'].includes(key)) &&
+          typeof data.ref === 'string' && REF.test(data.ref)) {
+          const command: OperatorCommand = {
+            version: 1, id: data.id as string, ts: data.ts as number,
+            type: 'approval-revoke', ref: data.ref,
+          }
+          cmd = command
+          const outcome = await execute(command)
+          state = typeof outcome === 'string' ? outcome : outcome.state
+          detail = boundedDetail(typeof outcome === 'string' ? undefined : outcome.detail)
         } else if ((data.type === 'cancel-task' || data.type === 'retry-outbox' || isSession) &&
           (data.type === 'retry-outbox' ? data.ref === undefined && data.expectedLastActiveAt === undefined :
             REF.test(data.ref as string)) &&

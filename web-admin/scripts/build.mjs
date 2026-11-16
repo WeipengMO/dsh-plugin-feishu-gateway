@@ -10,6 +10,7 @@ copyFileSync(path.join(dir, 'src/usage-read.mjs'), path.join(output, 'usage-read
 copyFileSync(path.join(dir, 'src/agent-profile.mjs'), path.join(output, 'agent-profile.mjs'))
 copyFileSync(path.join(dir, 'src/schedule-spec.mjs'), path.join(output, 'schedule-spec.mjs'))
 copyFileSync(path.join(dir, 'src/schedule-read.mjs'), path.join(output, 'schedule-read.mjs'))
+copyFileSync(path.join(dir, 'src/approvals-read.mjs'), path.join(output, 'approvals-read.mjs'))
 copyFileSync(path.join(dir, 'src/exec-policy.mjs'), path.join(output, 'exec-policy.mjs'))
 const css = readFileSync(path.join(dir, 'src/client.css'), 'utf8')
 const js = readFileSync(path.join(dir, 'src/client.js'), 'utf8')

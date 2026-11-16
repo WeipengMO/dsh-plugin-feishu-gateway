@@ -4,7 +4,7 @@
 
 ## 架构与安全边界
 
-- approvalCards（默认 false）：监听原生 DSH approval/request waterfall，仅处理本插件创建、且目前正在执行的 Agent Session。审批结果完全采用原生 allowed-once / rejected / cancelled / unavailable。
+- approvalCards（默认 false）：监听原生 DSH approval/request waterfall，仅处理本插件创建、且目前正在执行的 Agent Session。单次审批结果采用原生 allowed-once / rejected / cancelled / unavailable；**永久允许是 Gateway 自己的窄规则**（见下节），通过后续请求直接返回 allowed-once 实现，绝不修改 DSH 审批策略，也不存在『永久放行所有工具』的开关。
 - streamCards（默认 false）：为长任务创建 CardKit v1 卡片实体，按节流周期更新可见文本。0.2.0-rc.2 起，**正常完成时在原卡片上展示完整答复**，并移除取消按钮、显示真实模型和用量统计（有数据才显示）；不会重复发普通文本。仅卡片创建/终态更新失败或超长时回退 DurableOutbox。
 - approvalTimeoutMs：默认 90000 毫秒，可选 5000–300000。
 - streamIntervalMs：默认 800 毫秒，可选 500–5000。
@@ -13,6 +13,18 @@
 - 操作者的 open_id、botId、chatId、卡片消息 ID、随机 nonce、请求未过期状态必须全部匹配。重复或伪造回调不能得到第二次授权。
 - 取消 Agent 会同步失效对应审批卡片。进程重启后不恢复旧审批 Promise，过期卡片只能拒绝，绝不能转成授权。
 - 按钮通过既有飞书 WS 连接的 card.action.trigger 触发；不暴露公网管理回调接口。
+
+## 永久授权、审批倒计时与后台审计（本次新增）
+
+- 审批卡片三个动作：**仅允许本次**、**永久允许 `<范围>`**、**拒绝执行**。永久允许由 Gateway 持久化一条**窄规则**：
+  - `bash` 规则按「工具 + 命令可执行根」匹配（例如 `lark-cli*`、`git*`），永不按整段参数或任意 shell 放行；
+  - 非 bash 工具按工具名匹配（`web_fetch` 等）。
+  - 无法安全解析命令根（bash 命令缺失/无法关联 callId）或工具名不合法时**不显示**永久按钮，伪造的 `allow-permanent` 回调会被拒绝。
+- 永久规则保存在 `<stateDir>/approvals.json`（0600，原子写），匹配请求由 Gateway 直接返回 `allowed-once` 并写审计，不再发送新卡片；删除规则立即停止自动放行。
+- 审批卡片带实时倒计时（每 5 秒 patch 一次卡片）：默认等待 **600 秒**，可在 Web Admin 调整为 **5–1800 秒**。超时按 `timed-out` 记录并拒绝；断线、取消、Session 结束同样失效。
+- 审计状态：`requested` / `allowed-once` / `allowed-permanent` / `auto-allowed` / `rejected` / `timed-out` / `cancelled` / `unavailable`；写入 `<stateDir>/approval-audit.jsonl`（保留最近 500 条），并由 Gateway 发布脱敏读模型 `<stateDir>/ops-approvals.json`（0600，version 1）。
+- Web Admin「用量与审计 → 审批审计」展示待审批（含剩余时间倒计时）、永久授权规则（范围/创建者引用/最近使用/次数）和最近审批记录；撤销按钮经 `ops-control` 命令邮箱交给 Gateway 权威执行（`approval-revoke`），后台不直接修改状态文件。
+- 审计与读模型只含 16-hex 引用（聊天/创建者/规则），不含原始 chat id、open_id、token 或完整异常文本；命令摘要截断到 200 字符。
 
 ## 飞书开发者后台前提
 
@@ -58,6 +70,6 @@
 ## 已知限制
 
 - **已实机通过**：当前租户 CardKit 创建与流式更新、card.action.trigger 的取消按钮、原生 approval/request → allowed-once / rejected。该结论仅针对已测试的单用户私聊与当前已发布飞书应用配置。
-- **仍未实机验证**：审批超时、重复点击、审批中取消、陌生账号/跨聊天点击；单元/集成覆盖不等于真实租户验证。
+- **仍未实机验证**：审批超时、重复点击、审批中取消、陌生账号/跨聊天点击；单元/集成覆盖不等于真实租户验证。永久授权的真实租户端到端（含撤销后立即失效）也需在部署后复验。
 - 命令展示变更需要在真实飞书租户验证；命令无法完整显示时卡片会明确提示，仍由用户决定是否批准。
 - 流式卡片仅是非持久预览，断线后可能停止更新；最终答复由 DurableOutbox 继续恢复投递。

@@ -1028,3 +1028,94 @@ test('exec-policy endpoint seeds from profile, persists overlay, and validates i
     await rm(profDir, { recursive: true, force: true })
   }
 })
+
+// --- Permanent tool authorizations: sanitized read model + revoke mailbox ---
+
+test('approvals API requires DSH login and returns only the sanitized read model', async () => {
+  const f = await fixture()
+  try {
+    assert.equal((await f.request('/approvals', 'GET', undefined, {})).status, 401)
+    // A missing file is a safe empty model, not an HTTP failure.
+    const missing = await f.request('/approvals')
+    assert.equal(missing.status, 200)
+    assert.equal(missing.json.model.available, false)
+    assert.deepEqual(missing.json.model.pending, [])
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    const ruleRef = 'fedcba0987654321'
+    const doc = {
+      version: 1, ts: Date.now(), available: true, reason: null, timeoutMs: 600000,
+      pending: [{ ref: 'abcdef0123456789', botId: 'default', chatRef: '0123456789abcdef',
+        tool: 'bash', command: 'lark-cli calendar +agenda', requestedAt: Date.now(),
+        expiresAt: Date.now() + 60000, secret: 'MUST-NOT-LEAK' }],
+      rules: [{ ref: ruleRef, tool: 'bash', commandRoot: 'lark-cli',
+        label: 'bash · lark-cli*', createdAt: Date.now(), createdByRef: 'abcdef0123456789',
+        lastUsedAt: null, uses: 2, secret: 'MUST-NOT-LEAK' }],
+      records: [{ ts: Date.now(), tool: 'bash', command: null, decision: 'auto-allowed',
+        botId: 'default', chatRef: '0123456789abcdef', ruleRef,
+        elapsedMs: 12, secret: 'MUST-NOT-LEAK' }],
+      recordLimit: 200, secretTop: 'MUST-NOT-LEAK-TOP',
+    }
+    await writeFile(path.join(f.stateDir, 'ops-approvals.json'), JSON.stringify(doc), { mode: 0o600 })
+    const res = await f.request('/approvals')
+    assert.equal(res.status, 200)
+    assert.equal(res.json.model.available, true)
+    assert.equal(res.json.model.timeoutMs, 600000)
+    assert.equal(res.json.model.pending[0].tool, 'bash')
+    assert.equal(res.json.model.pending[0].command, 'lark-cli calendar +agenda')
+    assert.equal(res.json.model.rules[0].label, 'bash · lark-cli*')
+    assert.equal(res.json.model.rules[0].createdByRef, 'abcdef0123456789')
+    assert.equal(res.json.model.records[0].decision, 'auto-allowed')
+    assert.equal(res.json.model.records[0].ruleRef, ruleRef)
+    assert.doesNotMatch(JSON.stringify(res.json), /MUST-NOT-LEAK/)
+    // Corrupt content degrades to a safe empty model on GET (never a 500).
+    await writeFile(path.join(f.stateDir, 'ops-approvals.json'), '{broken', { mode: 0o600 })
+    const corrupt = await f.request('/approvals')
+    assert.equal(corrupt.status, 200)
+    assert.equal(corrupt.json.model.available, false)
+    assert.deepEqual(corrupt.json.model.rules, [])
+  } finally { await f.close() }
+})
+
+test('approvals revoke queues one bounded mailbox request and rejects bad references', async () => {
+  const f = await fixture()
+  try {
+    const ref = 'abcdef0123456789'
+    assert.equal((await f.request('/approvals/revoke', 'POST', { ref }, {})).status, 401)
+    for (const body of [
+      {}, { ref: 'bad' }, { ref: 'ABCDEF0123456789' }, { ref: 42 },
+      { ref, extra: 'unknown' }, { ref, type: 'cancel-task' },
+    ]) {
+      assert.equal((await f.request('/approvals/revoke', 'POST', body, mutating)).status, 400,
+        JSON.stringify(body))
+    }
+    const noHeader = await f.request('/approvals/revoke', 'POST', { ref },
+      { ...allowed, 'content-type': 'application/json' })
+    assert.equal(noHeader.status, 403)
+    const accepted = await f.request('/approvals/revoke', 'POST', { ref }, mutating)
+    assert.equal(accepted.status, 202)
+    assert.equal(accepted.json.ok, true)
+    assert.match(accepted.json.id, /^[a-f0-9-]{36}$/)
+    const file = path.join(f.stateDir, 'ops-control', 'requests', accepted.json.id + '.json')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    const raw = await readFile(file, 'utf8')
+    assert.ok(Buffer.byteLength(raw, 'utf8') <= 1024)
+    const data = JSON.parse(raw)
+    // Fixed, minimal mailbox contract: exactly what the Gateway revalidates.
+    assert.deepEqual(Object.keys(data).sort(), ['id', 'ref', 'ts', 'type', 'version'])
+    assert.equal(data.version, 1)
+    assert.equal(data.type, 'approval-revoke')
+    assert.equal(data.ref, ref)
+    assert.equal(data.id, accepted.json.id)
+    assert.ok(Number.isSafeInteger(data.ts) && data.ts > 0)
+    // The Web Admin never touches approvals.json / approval-audit.jsonl itself.
+    const entries = await (await import('node:fs/promises')).readdir(f.stateDir)
+    assert.deepEqual(entries.filter(name => name.startsWith('approvals.json')), [])
+  } finally { await f.close() }
+})
+
+test('approval timeout config accepts the raised 30-minute ceiling', () => {
+  assert.equal(validateConfig({ approvalTimeoutMs: 600000 }).approvalTimeoutMs, 600000)
+  assert.equal(validateConfig({ approvalTimeoutMs: 1800000 }).approvalTimeoutMs, 1800000)
+  assert.throws(() => validateConfig({ approvalTimeoutMs: 1800001 }), /approvalTimeoutMs/)
+  assert.throws(() => validateConfig({ approvalTimeoutMs: 4999 }), /approvalTimeoutMs/)
+})

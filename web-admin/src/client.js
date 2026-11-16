@@ -142,7 +142,7 @@ window.__ModuleLoader__.load({
       const [replyFormat, setReplyFormat] = useState('inherit')
       const [approvalCards, setApprovalCards] = useState(false)
       const [streamCards, setStreamCards] = useState(false)
-      const [approvalTimeout, setApprovalTimeout] = useState('90')
+      const [approvalTimeout, setApprovalTimeout] = useState('600')
       const [streamInterval, setStreamIntervalValue] = useState('800')
       const populate = useCallback(data => {
         setState(data); setHealth(data.health)
@@ -166,7 +166,7 @@ window.__ModuleLoader__.load({
         setReplyFormat(c.replyFormat || 'inherit')
         setApprovalCards(c.approvalCards === true)
         setStreamCards(c.streamCards === true)
-        setApprovalTimeout(String((c.approvalTimeoutMs || 90000) / 1000))
+        setApprovalTimeout(String((c.approvalTimeoutMs || 600000) / 1000))
         setStreamIntervalValue(String(c.streamIntervalMs || 800))
       }, [])
       const reload = useCallback(async () => {
@@ -337,7 +337,7 @@ window.__ModuleLoader__.load({
               onChange: e => setApprovalCards(e.target.checked) }),
             '启用飞书原生工具审批卡片（默认关闭）'),
           approvalCards && field('审批最长等待（秒）',
-            textInput(approvalTimeout, setApprovalTimeout, '90', { type: 'number', min: 5, max: 300 }),
+            textInput(approvalTimeout, setApprovalTimeout, '600', { type: 'number', min: 5, max: 1800 }),
             '必须将 DSH 工具审批策略改为 ask；超时或断线会拒绝，不会自动放行。'),
           h('label', { className: 'fga-check' },
             h('input', { type: 'checkbox', checked: streamCards,

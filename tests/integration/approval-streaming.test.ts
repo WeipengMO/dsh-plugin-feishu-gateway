@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { createGateway } from '../../src/index.js'
 import { resolveConfig } from '../../src/config.js'
 import { MockFeishuTransport } from '../../src/channel/mock-transport.js'
@@ -22,6 +25,13 @@ class SlowBridge extends MockSessionBridge {
     return super.waitForReply(sessionId, options)
   }
 }
+/** Keeps the owning turn alive longer than the multi-card approval scenario. */
+class VerySlowBridge extends MockSessionBridge {
+  override async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
+    await sleep(60_000, options.signal)
+    return super.waitForReply(sessionId, options)
+  }
+}
 async function boot(bridge: MockSessionBridge, config: Partial<GatewayConfig> = {}) {
   const { dir, cleanup } = await tempDir()
   cleanups.push(cleanup)
@@ -34,7 +44,7 @@ async function boot(bridge: MockSessionBridge, config: Partial<GatewayConfig> = 
   await gateway.start()
   const emit = (id: string, text: string, chatId = 'oc_one') =>
     t.emitMessage({ messageId: id, chatId, senderId: 'ou_alice', text })
-  return { gateway, bridge, t, emit }
+  return { gateway, bridge, t, emit, dir }
 }
 
 describe('Feishu callback and native DSH approval integration', () => {
@@ -212,6 +222,95 @@ describe('Feishu callback and native DSH approval integration', () => {
     const result = await b.gateway.answerApproval({ agent: { id: 'unowned' }, toolName: 'bash' },
       async () => 'rejected')
     expect(result).toBe('rejected')
+    await b.gateway.stop()
+  })
+})
+
+describe('Permanent approvals end-to-end through the Gateway', () => {
+  const bashRequest = (id: string, callId: string) => ({
+    agent: {
+      id,
+      session: {
+        deriveMessages: () => [{ role: 'assistant', content: [
+          { type: 'tool-call', id: callId, name: 'bash',
+            arguments: JSON.stringify({ command: 'lark-cli calendar +agenda --as user' }) },
+        ] }],
+      },
+    },
+    toolName: 'bash',
+    callId,
+  })
+  const cardButton = (card: Record<string, unknown>, decision: string) => {
+    const columns = ((card as any).body.elements.find((e: any) => e.tag === 'column_set').columns) as any[]
+    for (const column of columns) {
+      for (const element of column.elements) {
+        if (element?.behaviors?.[0]?.value?.decision === decision) return element
+      }
+    }
+    return undefined
+  }
+  const readApprovalModel = async (dir: string) => JSON.parse(
+    await readFile(path.join(dir, 'ops-approvals.json'), 'utf8'))
+
+  it('persists a permanent rule, auto-allows later matches and honors an operator revoke', async () => {
+    const b = await boot(new VerySlowBridge(), { approvalCards: true })
+    await b.emit('om_work', 'run tool')
+    await until(() => b.bridge.prompts.length === 1)
+    const sessionId = b.bridge.prompts[0]!.sessionId
+
+    const first = b.gateway.answerApproval(bashRequest(sessionId, 'c1'), async () => 'unavailable')
+    await until(() => b.gateway.health().pendingApprovals === 1)
+    const firstCard = b.t.interactiveCards[0]!
+    const permanent = cardButton(firstCard.card, 'allow-permanent')!
+    expect(permanent).toBeTruthy()
+    const event = {
+      botId: 'default', chatId: 'oc_one', actorOpenId: 'ou_alice',
+      messageId: firstCard.messageId,
+      value: permanent.behaviors[0].value,
+    }
+    expect((await b.t.emitCardAction(event)).toast.type).toBe('success')
+    expect(await first).toBe('allowed-once')
+    await until(() => b.t.patchedCards.length > 0)
+    expect(JSON.stringify(b.t.patchedCards.at(-1)!.card)).toContain('已永久允许')
+
+    await until(() => true)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const model = await readApprovalModel(b.dir)
+    expect(model.rules).toHaveLength(1)
+    expect(model.rules[0]).toMatchObject({ tool: 'bash', commandRoot: 'lark-cli', label: 'bash · lark-cli*' })
+    expect(JSON.stringify(model)).not.toContain('oc_one')
+
+    // Matching command root: no new card, allowed automatically.
+    expect(await b.gateway.answerApproval(bashRequest(sessionId, 'c2'), async () => 'unavailable'))
+      .toBe('allowed-once')
+    expect(b.t.interactiveCards).toHaveLength(1)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect((await readApprovalModel(b.dir)).rules[0].uses).toBe(1)
+
+    // Operator revoke travels through the validated ops-control mailbox.
+    const ruleRef = (await readApprovalModel(b.dir)).rules[0].ref
+    const requests = path.join(b.dir, 'ops-control', 'requests')
+    await mkdir(requests, { recursive: true, mode: 0o700 })
+    const id = randomUUID()
+    await writeFile(path.join(requests, id + '.json'), JSON.stringify({
+      version: 1, id, ts: Date.now(), type: 'approval-revoke', ref: ruleRef,
+    }), { mode: 0o600 })
+    expect(await b.gateway.pollOperatorCommands()).toBe(1)
+    const afterRevoke = await readApprovalModel(b.dir)
+    expect(afterRevoke.rules).toHaveLength(0)
+
+    // Revoked: the next matching request needs a fresh human card again.
+    const third = b.gateway.answerApproval(bashRequest(sessionId, 'c3'), async () => 'unavailable')
+    await until(() => b.t.interactiveCards.length === 2)
+    // The card message is delivered before its pending nonce is registered.
+    await until(() => b.gateway.health().pendingApprovals === 1)
+    const reject = cardButton(b.t.interactiveCards[1]!.card, 'reject')!
+    expect((await b.t.emitCardAction({
+      botId: 'default', chatId: 'oc_one', actorOpenId: 'ou_alice',
+      messageId: b.t.interactiveCards[1]!.messageId,
+      value: reject.behaviors[0].value,
+    })).toast.type).toBe('info')
+    expect(await third).toBe('rejected')
     await b.gateway.stop()
   })
 })

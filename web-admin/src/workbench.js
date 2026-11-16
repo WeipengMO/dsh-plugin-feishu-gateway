@@ -90,6 +90,9 @@ function Workbench() {
   const [state, setState] = useState(null)
   const [live, setLive] = useState(undefined)
   const [ops, setOps] = useState(null)
+  // Permanent tool authorizations + approval audit come from their own
+  // authoritative Gateway read model (never inferred from /ops events).
+  const [approvals, setApprovals] = useState(null)
   const [sectionTab, setSectionTab] = useState({
     conversations: 'tasks', channels: 'bots', analytics: 'usage', operations: 'alerts',
   })
@@ -103,11 +106,13 @@ function Workbench() {
   const load = useCallback(async () => {
     setUpdating(true)
     try {
-      const [data, operations] = await Promise.all([
+      const [data, operations, approvalRead] = await Promise.all([
         request('/state'), request('/ops').catch(() => null),
+        request('/approvals').catch(() => null),
       ])
       setState(data)
       setOps(operations)
+      setApprovals(approvalRead?.model ?? null)
       setLive(data.health?.health ?? null)
       setUpdatedAt(new Date())
       setError('')
@@ -124,9 +129,11 @@ function Workbench() {
       Promise.all([
         request('/health').catch(() => null),
         request('/ops').catch(() => null),
-      ]).then(([data, operations]) => {
+        request('/approvals').catch(() => null),
+      ]).then(([data, operations, approvalRead]) => {
         setLive(data?.health?.health ?? null)
         setOps(operations)
+        setApprovals(approvalRead?.model ?? null)
         setUpdatedAt(new Date())
       })
     }, 15000)
@@ -258,7 +265,8 @@ function Workbench() {
     // round trip. Rendered only when the workbench has a valid state.
     body = h(SchedulePanel, { state, onChanged: load })
   } else if (selected === 'conversations' || selected === 'analytics' || selected === 'operations') {
-    body = h(OpsPage, { kind: sectionTab[selected], ops, onConfig, onCommand })
+    body = h(OpsPage, { kind: sectionTab[selected], ops, approvals, onConfig, onCommand,
+      onApprovalsRefresh: load })
   } else {
     body = h(WbEmpty, { headline: '未知页面', description: '请选择左侧的管理功能。' })
   }

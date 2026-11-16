@@ -70,7 +70,7 @@ export const Config: ConfigValidator = Schema.object({
     .description('Answer DSH approval/request using authenticated one-shot Feishu cards. Requires DSH approval policy ask.'),
   streamCards: Schema.boolean().default(false)
     .description('Show optional CardKit streaming progress while final answer stays in durable Outbox.'),
-  approvalTimeoutMs: Schema.number().default(90_000)
+  approvalTimeoutMs: Schema.number().default(600_000)
     .description('Time limit for one interactive tool approval (ms). Timeout denies.'),
   streamIntervalMs: Schema.number().default(800)
     .description('CardKit update interval; max one update per interval, never per-token.'),
@@ -147,7 +147,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
     approvalCards: raw.approvalCards === true,
     streamCards: raw.streamCards === true,
-    approvalTimeoutMs: Math.max(5_000, Math.min(300_000, numberOr(raw.approvalTimeoutMs, 90_000))),
+    approvalTimeoutMs: Math.max(5_000, Math.min(1_800_000, numberOr(raw.approvalTimeoutMs, 600_000))),
     streamIntervalMs: Math.max(500, Math.min(5_000, numberOr(raw.streamIntervalMs, 800))),
     sendRetries: numberOr(raw.sendRetries, 3),
     sendRetryBaseDelayMs: numberOr(raw.sendRetryBaseDelayMs, 500),

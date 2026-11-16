@@ -26,10 +26,65 @@ function OpsTable({ columns, rows, empty }) {
         h('tr', { key: row.ref || row.ts + ':' + i }, columns.map(c =>
           h('td', { key: c.key }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
 }
-function OpsPage({ kind, ops, onConfig, onCommand }) {
+const APPROVAL_DECISION_LABELS = {
+  requested: '等待审批', 'allowed-once': '允许一次', 'allowed-permanent': '永久允许',
+  'auto-allowed': '自动允许', rejected: '已拒绝', 'timed-out': '超时',
+  cancelled: '已取消', unavailable: '不可用'
+}
+const APPROVAL_TONE_LABELS = { ok: ['allowed-once', 'allowed-permanent', 'auto-allowed'],
+  bad: ['rejected', 'timed-out', 'unavailable'] }
+function approvalDecisionTone(value) {
+  if (APPROVAL_TONE_LABELS.ok.includes(value)) return 'ok'
+  if (APPROVAL_TONE_LABELS.bad.includes(value)) return 'bad'
+  return 'neutral'
+}
+function approvalPillClass(tone) {
+  return tone === 'ok' ? 'fgw-pill fgw-pill-ok' : tone === 'bad' ? 'fgw-pill fgw-pill-bad' : 'fgw-pill'
+}
+function ApprovalDecisionBadge({ value }) {
+  const label = Object.prototype.hasOwnProperty.call(APPROVAL_DECISION_LABELS, value)
+    ? APPROVAL_DECISION_LABELS[value] : '未知状态'
+  return h('span', { className: approvalPillClass(approvalDecisionTone(value)) },
+    h('span', { className: 'fgw-dot' }), label)
+}
+function approvalCommandSummary(command) {
+  if (typeof command !== 'string' || !command) return '—'
+  return command.length > 80 ? command.slice(0, 80) + '…' : command
+}
+function approvalRuleLabel(rule) {
+  if (!rule) return '—'
+  if (typeof rule.label === 'string' && rule.label) return rule.label.length > 120
+    ? rule.label.slice(0, 120) : rule.label
+  const root = typeof rule.commandRoot === 'string' && rule.commandRoot ? ' · ' + rule.commandRoot + '*' : ''
+  return (rule.tool || '未知工具') + root
+}
+function approvalCountdownText(remainingMs) {
+  const total = Math.max(0, Math.floor(remainingMs / 1000))
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0')
+}
+/** Live remaining time; never negative and never schedules after unmount. */
+function ApprovalCountdown({ expiresAt }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [expiresAt])
+  if (!Number.isFinite(expiresAt)) return h('span', { className: 'fgw-muted' }, '—')
+  const remaining = expiresAt - now
+  if (remaining <= 0) return h('span', { className: 'fgw-pill fgw-pill-bad' },
+    h('span', { className: 'fgw-dot' }), '已过期')
+  return h('span', { className: 'fgw-muted' }, approvalCountdownText(remaining))
+}
+
+function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh }) {
   if (kind === 'sessions') return h(FeishuSessionsInventory, {})
   // Historical token metrics remain available when the Gateway is offline.
   if (kind === 'usage') return h(UsagePanel, {})
+  // Approvals are published in their own authoritative Gateway file; keep the
+  // tab usable even when legacy /ops telemetry is missing or stale.
+  if (kind === 'approvals') return h(ApprovalsPanel, { model: approvals,
+    onConfig, onRefresh: onApprovalsRefresh })
   if (!ops?.telemetryAvailable) return h(OpsUnavailable, {})
   const snapshot = ops.snapshot
   const summary = ops.summary ?? {}
@@ -76,11 +131,6 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
       label: '触发 Outbox 安全补发', onClick: () => onCommand('retry-outbox'),
     }),
     h(OpsNote, null, '仅针对已经入队的 Outbox 消息触发发送检查，不会再次执行 Agent，不会覆盖永久性失败的跳过规则。'))
-  if (kind === 'approvals') return h(React.Fragment, null,
-    h(WbBlock, { title: '审批审计', aside: '请求、批准一次、拒绝、取消或不可用' },
-      h(OpsTimeline, { events: summary.approvals ?? [] })),
-    h(OpsNote, null, '不在后台伪造审批决策或绕过 DSH 原生 ask 策略。审批卡的有效性仍由 bot/chat/actor/nonce 校验。'),
-    h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') }))
   // Token 用量趋势和历史贡献热图从独立的历史数据源加载。
   if (kind === 'alerts') return h(React.Fragment, null,
     h(WbBlock, { title: '当前健康告警', aside: '本地规则计算，非 AI 推断' },
@@ -113,6 +163,103 @@ function OpsPage({ kind, ops, onConfig, onCommand }) {
       h(OpsTimeline, { events: events.slice(0, 100) })),
     h(OpsNote, null, '该事件审计不等同于完整 systemd journal；完整调试日志可能含敏感数据，应由服务器授权运维人员检查。'))
   return h(OpsUnavailable, {})
+}
+
+/* Permanent tool authorizations + approval audit.
+ * Read-only model from the Gateway; the only write is a bounded revoke request
+ * queued in the operator mailbox. This component never decides or fabricates
+ * an approval, and it never echoes raw exception text. */
+function ApprovalsPanel({ model, onConfig, onRefresh }) {
+  const [busyRef, setBusyRef] = useState('')
+  const [notice, setNotice] = useState('')
+  const [revokeError, setRevokeError] = useState('')
+  const refresh = () => { if (typeof onRefresh === 'function') onRefresh() }
+  const revoke = async rule => {
+    const label = approvalRuleLabel(rule)
+    const confirmed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+      ? window.confirm('确认撤销永久授权「' + label + '」？\n撤销请求会写入 Gateway 邮箱队列，仅在 Gateway 处理后才会真正生效。')
+      : false
+    if (!confirmed) return
+    setBusyRef(rule.ref)
+    setNotice('')
+    setRevokeError('')
+    try {
+      await request('/approvals/revoke', 'POST', { ref: rule.ref })
+      setNotice('撤销请求已入队。只有在 Gateway 处理该请求后授权才会失效，请稍后刷新核对。')
+      refresh()
+    } catch {
+      // Never echo raw exception text; report one stable, actionable outcome.
+      setRevokeError('撤销请求未提交：管理接口拒绝了该操作，请刷新后确认授权状态。')
+    } finally {
+      setBusyRef('')
+    }
+  }
+  if (!model) return h(React.Fragment, null,
+    h(WbBlock, { title: '审批审计', aside: '请求、批准、永久授权与拒绝的真实记录' },
+      h(WbEmpty, { headline: '尚无审批读模型',
+        description: 'Gateway 尚未发布 ops-approvals.json。请确认独立飞书通道已启动并启用工具审批；管理后台不会显示伪造的审批或授权。' })),
+    h(OpsNote, null, '数据只来自 Gateway 发布的只读审批模型；本页不会伪造审批决策，也不会绕过 DSH 原生 ask 策略。'),
+    h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') }))
+  const available = model.available !== false
+  const pending = Array.isArray(model.pending) ? model.pending : []
+  const rules = Array.isArray(model.rules) ? model.rules : []
+  const records = Array.isArray(model.records) ? model.records : []
+  const timeoutMs = Number.isFinite(model.timeoutMs) ? model.timeoutMs : null
+  const waitMinutes = timeoutMs === null ? null : Math.max(0, Math.round(timeoutMs / 60000))
+  const recordLimit = Number.isFinite(model.recordLimit) ? model.recordLimit : 200
+  const reason = typeof model.reason === 'string' ? model.reason.slice(0, 200) : ''
+  const counted = list => available ? wbCount(list.length) : '—'
+  return h(React.Fragment, null,
+    h('div', { className: 'fgw-metrics fgw-approval-metrics' },
+      h(WbMetric, { title: '待审批数量', value: counted(pending), caption: '来自 Gateway 审批读模型' }),
+      h(WbMetric, { title: '永久授权数量', value: counted(rules), caption: '可由下方操作撤销' }),
+      h(WbMetric, { title: '审批等待时长（分钟）',
+        value: waitMinutes === null ? '—' : waitMinutes + ' 分钟',
+        caption: '由 Gateway 配置，本页只读展示' }),
+      h(WbMetric, { title: '最近审批条数', value: counted(records),
+        caption: '最多保留 ' + wbValue(recordLimit) + ' 条' })),
+    !available && h('div', { className: 'fgw-caution', role: 'status' },
+      '审批读模型当前不可用：', reason || 'Gateway 未提供原因', '。页面不会显示或推断任何审批状态。'),
+    h(WbBlock, { title: '待审批', aside: '剩余时间每秒刷新；超时由 Gateway 判定，Web 端不做决策' },
+      h(OpsTable, { rows: pending, empty: '当前没有等待中的审批请求',
+        columns: [
+          { key: 'tool', title: '工具', render: x => h('code', null, x.tool) },
+          { key: 'command', title: '命令摘要', render: x => approvalCommandSummary(x.command) },
+          { key: 'expiresAt', title: '剩余时间',
+            render: x => h(ApprovalCountdown, { expiresAt: x.expiresAt }) },
+        ] })),
+    h(WbBlock, { title: '永久授权', aside: '按工具 / 命令可执行根授权；撤销仅为向 Gateway 入队的请求' },
+      h(OpsTable, { rows: rules, empty: '暂无永久授权规则',
+        columns: [
+          { key: 'label', title: '范围', render: x => approvalRuleLabel(x) },
+          { key: 'createdByRef', title: '创建者',
+            render: x => x.createdByRef ? h('code', null, x.createdByRef) : '—' },
+          { key: 'lastUsedAt', title: '最近使用',
+            render: x => Number.isFinite(x.lastUsedAt) ? opsDate(x.lastUsedAt) : '尚未使用' },
+          { key: 'uses', title: '次数', render: x => wbCount(x.uses) },
+          { key: 'actions', title: '操作', render: x => h('button', { type: 'button',
+            className: 'fgw-refresh', disabled: Boolean(busyRef) || !available,
+            onClick: () => void revoke(x) }, busyRef === x.ref ? '提交中…' : '撤销') },
+        ] }),
+      busyRef && h('div', { className: 'fgw-caution', role: 'status' }, '正在提交撤销请求…'),
+      notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
+      revokeError && h('div', { className: 'fgw-alert', role: 'alert' }, revokeError)),
+    h(WbBlock, { title: '最近审批', aside: 'Gateway 记录的最新决策，最多展示 100 条' },
+      h(OpsTable, { rows: records.slice(0, 100), empty: '暂无审批记录',
+        columns: [
+          { key: 'ts', title: '时间', render: x => opsDate(x.ts) },
+          { key: 'tool', title: '工具', render: x => h('code', null, x.tool) },
+          { key: 'command', title: '命令摘要', render: x => approvalCommandSummary(x.command) },
+          { key: 'decision', title: '决策',
+            render: x => h(ApprovalDecisionBadge, { value: x.decision }) },
+          { key: 'elapsedMs', title: '耗时',
+            render: x => Number.isFinite(x.elapsedMs) ? wbAge(x.elapsedMs) : '—' },
+        ] })),
+    h(OpsNote, null, '撤销操作只是向 Gateway 运营商邮箱入队一条 approval-revoke 请求；只有在 Gateway 处理该请求后永久授权才真正失效，刷新前显示的仍是上一次发布的只读模型。'),
+    h(OpsNote, null, '本页不会在后台伪造审批决策或绕过 DSH 原生 ask 策略；审批卡的有效性仍由 bot / chat / actor / nonce 校验。'),
+    h('div', { className: 'fga-inline-actions' },
+      h(OpsAction, { label: '刷新审批数据', onClick: refresh, secondary: true }),
+      h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') })))
 }
 function OpsTimeline({ events }) {
   if (!events?.length) return h(WbEmpty, { headline: '暂无事件', description: '当前没有已记录的操作事件。' })

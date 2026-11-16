@@ -14,6 +14,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { readOpsEvents, readOpsSnapshot, readOpsResults, summarizeOps } from './ops-read.mjs'
 import { readScheduleModel, readScheduleResults } from './schedule-read.mjs'
+import { readApprovalsModel } from './approvals-read.mjs'
 import { validateSpec, previewOccurrences, specSummary, SCHEDULE_ACTIONS,
   SCHEDULE_NOTIFY, SCHEDULE_ACTOR, SCHEDULE_TASK_ID_RE, SCHEDULE_UUID_RE,
   TITLE_MAX, PROMPT_MAX, PREVIEW_MAX } from './schedule-spec.mjs'
@@ -168,7 +169,7 @@ export function validateConfig(input) {
     result[key] = input[key]
   }
   if (input.approvalTimeoutMs !== undefined)
-    result.approvalTimeoutMs = integer(input.approvalTimeoutMs, 'approvalTimeoutMs', 5000, 300000)
+    result.approvalTimeoutMs = integer(input.approvalTimeoutMs, 'approvalTimeoutMs', 5000, 1800000)
   if (input.streamIntervalMs !== undefined)
     result.streamIntervalMs = integer(input.streamIntervalMs, 'streamIntervalMs', 500, 5000)
   if (input.autoConnect !== undefined) {
@@ -497,6 +498,8 @@ async function credentialStatus(filename, bots) {
 const SCHEDULE_FIELDS = ['action', 'clientRef', 'taskId', 'title', 'prompt', 'spec', 'notify', 'delivery', 'expectedUpdatedAt']
 const SCHEDULE_COMMAND_MAX_BYTES = 8192
 const LEGACY_COMMAND_MAX_BYTES = 1024
+const APPROVAL_REVOKE_MAX_BYTES = 1024
+const APPROVAL_REF_RE = /^[a-f0-9]{16}$/
 const SESSION_BATCH_MAX_BYTES = 4096
 const SESSION_REF = /^[a-f0-9]{16}$/
 const SESSION_BOT_ID = /^[a-z][a-z0-9_-]{0,31}$/
@@ -664,6 +667,27 @@ export async function queueOperatorCommand(stateDir, body, maxBytes) {
   if (Buffer.byteLength(raw, 'utf8') > cap) throw httpError(413, 'operator command too large')
   await atomicPrivateWrite(path.join(dir, command.id + '.json'), raw)
   return { id: command.id, type: command.type }
+}
+
+// Permanent tool authorizations are owned by the Gateway. Web Admin only asks
+// it to revoke one rule through the existing operator mailbox; the Gateway
+// revalidates the request and owns approvals.json. A narrow writer keeps this
+// payload fixed ({version,id,ts,type,ref}), 0600, atomic and <= 1024 bytes.
+async function queueApprovalRevoke(stateDir, ref) {
+  if (typeof ref !== 'string' || !APPROVAL_REF_RE.test(ref))
+    throw httpError(400, 'invalid approval reference')
+  const command = { version: 1, id: randomUUID(), ts: Date.now(),
+    type: 'approval-revoke', ref }
+  await ensurePrivateDir(stateDir)
+  const root = path.join(stateDir, 'ops-control')
+  await ensurePrivateDir(root)
+  const dir = path.join(root, 'requests')
+  await ensurePrivateDir(dir)
+  const raw = JSON.stringify(command) + '\n'
+  if (Buffer.byteLength(raw, 'utf8') > APPROVAL_REVOKE_MAX_BYTES)
+    throw httpError(413, 'approval revoke command too large')
+  await atomicPrivateWrite(path.join(dir, command.id + '.json'), raw)
+  return command
 }
 
 async function agentProfileContext(stateDir) {
@@ -940,6 +964,23 @@ export function createAdminHandler(options = {}) {
           }
           const command = await queueOperatorCommand(stateDir, body)
           return json(res, 202, { ok: true, command, queued: true })
+        })
+      }
+      // --- Permanent tool authorizations: read model + revoke mailbox ---
+      // There is exactly one authority for approvals: the Gateway. GET only
+      // exposes its sanitized read model; POST only enqueues a bounded revoke
+      // request (never a local decision, never an execution in Web Admin).
+      if (req.method === 'GET' && route === PREFIX + '/approvals') {
+        return json(res, 200, { ok: true, model: await readApprovalsModel(stateDir) })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/approvals/revoke') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['ref'])
+          if (typeof body.ref !== 'string' || !APPROVAL_REF_RE.test(body.ref))
+            throw httpError(400, 'invalid approval reference')
+          const command = await queueApprovalRevoke(stateDir, body.ref)
+          return json(res, 202, { ok: true, id: command.id })
         })
       }
       // Schedule reads and previews require a trusted owner Peer.

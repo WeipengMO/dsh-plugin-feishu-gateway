@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { DedupIndex } from './inbox/dedup.js'
 import { FeishuApprovalManager, type ApprovalRequestLike, type ApprovalOutcome } from './channel/approval-manager.js'
+import { ApprovalStore } from './channel/approval-store.js'
 import { TaskProgressCard } from './channel/task-progress-card.js'
 import { CARD_NAMESPACE } from './channel/card-content.js'
 import { commandHelp, parseControlCommand, type ControlCommand } from './control/commands.js'
@@ -131,6 +132,9 @@ export class FeishuGateway {
   private readonly scheduledMessageIds = new Set<string>()
   private readonly activeTurns = new Map<string, ActiveTurn>()
   private readonly approvals: FeishuApprovalManager
+  /** Durable permanent authorizations + approval audit for the Web Admin. */
+  private readonly approvalStore: ApprovalStore
+  private approvalPublish: Promise<void> = Promise.resolve()
   private readonly rejected: Record<RejectReason, number>
   private ownerLock: StateDirOwnerLock | undefined
   private modelCatalog: { ts: number; incomplete: boolean; models: string[] } | undefined
@@ -149,6 +153,7 @@ export class FeishuGateway {
     this.ops = new OpsTelemetry(deps.config.stateDir)
     this.isolatedWorkspace = resolveFeishuWorkspace(deps.config)
     this.router = new MessageRouter(deps.config)
+    this.approvalStore = new ApprovalStore({ stateDir: deps.config.stateDir, logger: deps.logger })
     this.approvals = new FeishuApprovalManager(
       deps.config.approvalTimeoutMs,
       (owner, actor) => actor === owner.senderId &&
@@ -164,6 +169,7 @@ export class FeishuGateway {
       (botId) => this.transports.get(botId),
       deps.logger,
       (sessionId, state, botId) => this.audit({ kind: 'approval', state, session: sessionId, botId }),
+      { store: this.approvalStore, onChanged: () => { void this.publishApprovals() } },
     )
     for (const transport of deps.transports) this.transports.set(transport.botId, transport)
 
@@ -222,6 +228,7 @@ export class FeishuGateway {
       const pending = await this.inbox.open()
       await this.registry.open()
       const outboxPending = await this.outbox.open()
+      await this.approvalStore.load()
       await this.schedules.start()
       if (!this.bridge.available) {
         this.logger.warn('native DSH Sessions unavailable (%s); inbound messages will receive a diagnostic reply',
@@ -270,6 +277,7 @@ export class FeishuGateway {
       this.dedupSnapshot = await this.dedup.size()
       this.audit({ kind: 'system', state: 'started' })
       this.refreshOps()
+      void this.publishApprovals()
       this.opsTimer = setInterval(() => this.refreshOps(), 10000)
       this.opsTimer.unref?.()
       this.commandTimer = setInterval(() => this.runOperatorMailbox(), 1500)
@@ -331,6 +339,7 @@ export class FeishuGateway {
   async stop(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
+    await this.approvalPublish.catch(() => undefined)
     if (this.outboxRetryTimer) clearInterval(this.outboxRetryTimer)
     if (this.opsTimer) clearInterval(this.opsTimer)
     this.opsTimer = undefined
@@ -1105,6 +1114,20 @@ export class FeishuGateway {
       detail: 'applied=' + applied + ' skipped=' + skipped + ' total=' + batch.items.length }
   }
 
+  /** Publish the durable approval/permanent-authorization read model. */
+  private publishApprovals(): Promise<void> {
+    if (this.stopped) return this.approvalPublish
+    this.approvalPublish = this.approvalPublish.then(async () => {
+      if (this.stopped) return
+      try {
+        await this.approvalStore.publish(this.approvals.pendingViews(), this.config.approvalTimeoutMs)
+      } catch (error) {
+        this.logger.warn('approval read model publish failed: %s', String(error))
+      }
+    })
+    return this.approvalPublish
+  }
+
   private async executeOperatorCommand(command: OperatorCommand): Promise<OperatorResult['state'] | {
     readonly state: OperatorResult['state']; readonly detail?: string
   }> {
@@ -1118,6 +1141,14 @@ export class FeishuGateway {
       this.audit({ kind: 'system', state: `schedule-${command.schedule.action}` })
       const detail = outcome.message ?? outcome.taskId ?? outcome.state
       return { state: outcome.state, detail: `${outcome.state} ${detail}`.slice(0, 200) }
+    }
+    if (command.type === 'approval-revoke') {
+      if (!command.ref) return 'rejected'
+      const removed = await this.approvalStore.revoke(command.ref)
+      if (!removed) return 'not-found'
+      this.audit({ kind: 'approval', state: 'rule-revoked' })
+      await this.publishApprovals()
+      return { state: 'completed', detail: `revoked ${removed.label}`.slice(0, 200) }
     }
     if (command.type === 'batch-sessions') return this.executeSessionBatch(command)
     if (command.type === 'retry-outbox') {
@@ -1180,6 +1211,7 @@ export class FeishuGateway {
 
   private refreshOps(): void {
     if (this.startedAt === 0) return
+    void this.publishApprovals()
     const now = Date.now()
     if (this.bridge.listModels && !this.modelCatalogLoading && now - this.modelCatalogAttempt >= 60_000) {
       this.modelCatalogAttempt = now

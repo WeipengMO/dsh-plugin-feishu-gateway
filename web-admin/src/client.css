@@ -552,6 +552,11 @@
 .fgw-usage-metrics .fgw-metric { min-height:100px; padding:17px 18px; border-radius:12px; }
 .fgw-usage-metrics .fgw-metric-number { font-size:25px; }
 .fgw-usage-metrics .fgw-metric > .fgw-muted { font-size:11px; line-height:1.5; }
+.fgw-approval-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:0; }
+.fgw-approval-metrics .fgw-metric { min-height:100px; padding:17px 18px; border-radius:12px; }
+@media(max-width:1160px) {
+  .fgw-approval-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
 .fgw-usage-chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; min-width:0; }
 .fgw-usage-chart-card { min-width:0; padding:18px; border:1px solid var(--border,#8884); border-radius:14px; background:var(--card,transparent); display:flex; flex-direction:column; gap:15px; }
 .fgw-usage-chart-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }

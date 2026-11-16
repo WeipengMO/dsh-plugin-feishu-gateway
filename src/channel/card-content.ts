@@ -24,12 +24,58 @@ function button(label: string, value: Record<string, string>, type: 'primary' | 
   }
 }
 
-export function approvalCard(toolName: string, nonce: string, command?: string, reason?: string): Record<string, unknown> {
+export interface ApprovalCardOptions {
+  /** Absolute epoch ms when this card stops accepting decisions. */
+  readonly expiresAt?: number
+  /** Button text for the permanent allowance; omitting it hides that option. */
+  readonly permanentLabel?: string
+  /** Human-readable scope saved by the permanent allowance button. */
+  readonly permanentScope?: string
+  /** Remaining milliseconds for the countdown line; defaults to `expiresAt - now`. */
+  readonly remainingMs?: number
+}
+
+/** Render a bounded mm:ss countdown; never negative. */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  return String(Math.floor(total / 60)).padStart(2, '0') + ':' +
+    String(total % 60).padStart(2, '0')
+}
+
+export function approvalCard(
+  toolName: string,
+  nonce: string,
+  command?: string,
+  reason?: string,
+  options: ApprovalCardOptions = {},
+): Record<string, unknown> {
   const safeName = /^[A-Za-z0-9_.:/-]{1,96}$/.test(toolName) ? toolName : '受保护工具'
   // Indented Markdown code blocks preserve backticks in the command without
   // allowing a crafted fence to terminate the block and alter the card.
   const commandBlock = command === undefined ? undefined
     : '    ' + command.replace(/\n/g, '\n    ')
+  const remainingMs = options.remainingMs ??
+    (options.expiresAt === undefined ? undefined : options.expiresAt - Date.now())
+  const countdown = remainingMs === undefined
+    ? '超时、断线或取消均不批准。'
+    : '⏳ 剩余 **' + formatCountdown(remainingMs) + '** · 超时自动拒绝'
+  const decisionText = options.permanentLabel === undefined
+    ? '是否允许执行本次调用？' + countdown
+    : '是否允许执行本次调用？' + countdown + '\n永久允许范围：**' +
+      (options.permanentScope ?? options.permanentLabel) + '**，可在 Web Admin → 审批审计撤销。'
+  const columns: Record<string, unknown>[] = [
+    { tag: 'column', width: 'weighted', weight: 1, elements: [
+      button('仅允许本次', { kind: 'approval', nonce, decision: 'allow' }, 'primary'),
+    ] },
+  ]
+  if (options.permanentLabel !== undefined) {
+    columns.push({ tag: 'column', width: 'weighted', weight: 1, elements: [
+      button('永久允许 ' + options.permanentLabel, { kind: 'approval', nonce, decision: 'allow-permanent' }, 'primary'),
+    ] })
+  }
+  columns.push({ tag: 'column', width: 'weighted', weight: 1, elements: [
+    button('拒绝执行', { kind: 'approval', nonce, decision: 'reject' }, 'danger'),
+  ] })
   return {
     ...header('工具执行审批', 'orange'),
     body: { elements: [
@@ -40,26 +86,28 @@ export function approvalCard(toolName: string, nonce: string, command?: string, 
         { tag: 'markdown', content: '**待执行命令**' },
         { tag: 'markdown', content: commandBlock },
       ] : []),
-      { tag: 'markdown', content: '是否允许执行本次调用？超时、断线或取消均不批准。' },
-      { tag: 'column_set', flex_mode: 'none', columns: [
-        { tag: 'column', width: 'weighted', weight: 1, elements: [
-          button('仅允许本次', { kind: 'approval', nonce, decision: 'allow' }, 'primary'),
-        ] },
-        { tag: 'column', width: 'weighted', weight: 1, elements: [
-          button('拒绝执行', { kind: 'approval', nonce, decision: 'reject' }, 'danger'),
-        ] },
-      ] },
+      { tag: 'markdown', content: decisionText },
+      { tag: 'column_set', flex_mode: 'none', columns },
     ] },
   }
 }
 
-export function approvalResultCard(outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'): Record<string, unknown> {
-  const approved = outcome === 'allowed-once'
-  return {
-    ...header(approved ? '已批准本次执行' : '工具执行未获批准', approved ? 'green' : 'grey'),
-    body: { elements: [{ tag: 'markdown', content: approved
+export function approvalResultCard(
+  outcome: 'allowed-once' | 'allowed-permanent' | 'rejected' | 'cancelled' | 'unavailable',
+  permanentScope?: string,
+): Record<string, unknown> {
+  const approved = outcome === 'allowed-once' || outcome === 'allowed-permanent'
+  const title = outcome === 'allowed-permanent' ? '已永久允许执行'
+    : approved ? '已批准本次执行' : '工具执行未获批准'
+  const content = outcome === 'allowed-permanent'
+    ? '已保存永久授权' + (permanentScope ? '：' + permanentScope : '') +
+      '。\n同类请求此后自动批准；可在 Web Admin → 审批审计中撤销。'
+    : approved
       ? '仅授权刚才的单次工具调用。'
-      : '请求已拒绝、取消或过期；工具不会因此获得执行权限。' }] },
+      : '请求已拒绝、取消或过期；工具不会因此获得执行权限。'
+  return {
+    ...header(title, approved ? 'green' : 'grey'),
+    body: { elements: [{ tag: 'markdown', content }] },
   }
 }
 

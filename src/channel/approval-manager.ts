@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { withTimeout } from '../util/retry.js'
-import { approvalCard, approvalResultCard, CARD_NAMESPACE } from './card-content.js'
+import {
+  approvalCard, approvalResultCard, CARD_NAMESPACE,
+} from './card-content.js'
+import {
+  approvalRef, commandRoot, commandSummary,
+  type ApprovalPendingView, type ApprovalStore,
+} from './approval-store.js'
 import type { CardActionEvent, FeishuTransport, GatewayLogger } from '../types.js'
 
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
@@ -55,17 +61,36 @@ interface PendingApproval extends ApprovalOwner {
   readonly nonce: string
   readonly cardMessageId: string
   readonly expiresAt: number
+  readonly requestedAt: number
+  readonly toolName: string
+  readonly command: string | undefined
+  readonly reason: string | undefined
+  readonly permanentLabel: string | undefined
+  readonly permanentScope: string | undefined
+  readonly chatRef: string
   readonly resolve: (value: ApprovalOutcome) => void
   readonly timer: ReturnType<typeof setTimeout>
   readonly signal?: AbortSignal
   readonly abort?: () => void
   readonly transport: FeishuTransport
+  countdown?: ReturnType<typeof setInterval>
+  timedOut: boolean
+  permanent: boolean
+}
+
+interface ApprovalStoreHooks {
+  readonly store: ApprovalStore
+  readonly onChanged?: () => void
 }
 
 /**
- * Bridges DSH's approval/request waterfall to one-shot human decisions.
- * This manager NEVER changes the DSH approval policy. If the policy is never,
- * DSH won't dispatch an approval request and the card won't appear.
+ * Bridges DSH's approval/request waterfall to human decisions in Feishu.
+ *
+ * DSH can only grant one call at a time, so "permanent" is implemented here:
+ * a decision persisted by {@link ApprovalStore} scopes a narrow rule (tool +
+ * bash command root) and later matching requests are auto-allowed without a
+ * new card. This manager NEVER changes the DSH approval policy — if the policy
+ * is `never`, DSH does not dispatch requests and no card appears.
  */
 export class FeishuApprovalManager {
   private readonly pending = new Map<string, PendingApproval>()
@@ -80,6 +105,8 @@ export class FeishuApprovalManager {
     private readonly transportOf: (botId: string) => FeishuTransport | undefined,
     private readonly logger: GatewayLogger,
     private readonly onAudit?: (sessionId: string, state: string, botId: string) => void,
+    private readonly hooks?: ApprovalStoreHooks,
+    private readonly countdownIntervalMs = 5_000,
   ) {}
 
   get size(): number { return this.pending.size }
@@ -87,6 +114,19 @@ export class FeishuApprovalManager {
   private canAct(owner: ApprovalOwner, actor: string): boolean {
     return typeof this.allowedSenders === 'function'
       ? this.allowedSenders(owner, actor) : this.allowedSenders.has(actor)
+  }
+
+  /** Snapshot for the Web Admin read model; contains no raw chat/session ids. */
+  pendingViews(): ApprovalPendingView[] {
+    return [...this.pending.values()].map(pending => ({
+      ref: approvalRef(pending.nonce),
+      botId: pending.botId,
+      chatRef: pending.chatRef,
+      tool: pending.toolName,
+      command: commandSummary(pending.command),
+      requestedAt: pending.requestedAt,
+      expiresAt: pending.expiresAt,
+    }))
   }
 
   /** Return next() only for requests that DO NOT belong to this Feishu channel. */
@@ -99,18 +139,47 @@ export class FeishuApprovalManager {
     if (!this.canAct(owner, owner.senderId)) return 'rejected'
     const transport = this.transportOf(owner.botId)
     if (!transport?.sendInteractiveCard) return 'unavailable'
-    const nonce = randomUUID()
-    const initialEpoch = this.botEpoch.get(owner.botId) ?? 0
     const toolName = typeof req.toolName === 'string' ? req.toolName : '受保护工具'
     const command = approvalCommand(req)
+    const root = commandRoot(command)
+    // Permanent scope stays narrow: bash is scoped to the executable root;
+    // other tools are scoped to the tool name only. An unsafe/unknown tool
+    // name (or a bash command without a derivable root) has NO permanent
+    // option: it must never widen the allowlist through display text.
+    const safeTool = /^[A-Za-z0-9_.:@/-]{1,96}$/.test(toolName)
+    const permanentLabel = !safeTool ? undefined
+      : toolName === 'bash'
+        ? (root ? root.slice(0, 20) + '*' : undefined)
+        : toolName.slice(0, 20)
+    const permanentScope = permanentLabel === undefined ? undefined
+      : toolName === 'bash'
+        ? 'bash 中以 ' + root + ' 开头的命令'
+        : '工具 ' + toolName
+    const chatRef = approvalRef(owner.chatId)
+    const requestedAt = Date.now()
+
+    if (this.hooks) {
+      const matched = this.hooks.store.ruleFor(toolName, root)
+      if (matched) {
+        await this.autoAllow(matched.ref, req, owner, toolName, command, chatRef, matched.label)
+        return 'allowed-once'
+      }
+    }
+
+    const nonce = randomUUID()
+    const initialEpoch = this.botEpoch.get(owner.botId) ?? 0
     const rawReason = req.displayReason?.zh ?? req.displayReason?.en ?? req.reason
     const reason = typeof rawReason === 'string' && Buffer.byteLength(rawReason, 'utf8') <= 2000 ? rawReason : undefined
+    const expiresAt = requestedAt + this.timeoutMs
     let cardMessageId: string
     try {
       const result = await withTimeout(
         transport.sendInteractiveCard(
           { replyToMessageId: owner.replyToMessageId },
-          approvalCard(toolName, nonce, command, reason)),
+          approvalCard(toolName, nonce, command, reason, {
+            expiresAt, permanentLabel, ...(permanentScope ? { permanentScope } : {}),
+            remainingMs: this.timeoutMs,
+          })),
         Math.min(5_000, this.timeoutMs),
         req.signal,
       )
@@ -127,27 +196,132 @@ export class FeishuApprovalManager {
     if (!nowOwner || nowOwner.botId !== owner.botId ||
       nowOwner.chatId !== owner.chatId || nowOwner.senderId !== owner.senderId ||
       nowOwner.replyToMessageId !== owner.replyToMessageId) return 'cancelled'
+
     // A single request may only be granted ONCE. Every callback must match
     // nonce, chat id, app/bot, sender open_id and this message id.
     this.onAudit?.(id, 'requested', owner.botId)
+    void this.recordAudit({
+      ts: requestedAt, tool: toolName, command: commandSummary(command),
+      decision: 'requested', botId: owner.botId, chatRef, elapsedMs: null,
+    })
+    let settled: PendingApproval | undefined
     const result = await new Promise<ApprovalOutcome>(resolve => {
-      const timer = setTimeout(() => this.decide(nonce, 'unavailable'), this.timeoutMs)
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(nonce)
+        if (pending) pending.timedOut = true
+        this.decide(nonce, 'unavailable')
+      }, this.timeoutMs)
       timer.unref?.()
       const abort = () => this.decide(nonce, 'cancelled')
-      this.pending.set(nonce, {
-        ...owner, sessionId: id, nonce, cardMessageId, expiresAt: Date.now() + this.timeoutMs,
-        resolve, timer, signal: req.signal, abort, transport,
-      })
+      const pending: PendingApproval = {
+        ...owner, sessionId: id, nonce, cardMessageId, expiresAt, requestedAt,
+        toolName, command, reason, permanentLabel, permanentScope, chatRef,
+        resolve, timer, signal: req.signal, abort, transport, timedOut: false, permanent: false,
+      }
+      settled = pending
+      this.pending.set(nonce, pending)
       req.signal?.addEventListener('abort', abort, { once: true })
       if (req.signal?.aborted) this.decide(nonce, 'cancelled')
+      this.startCountdown(pending)
     })
-    this.onAudit?.(id, result, owner.botId)
+    const permanent = settled?.permanent === true
+    const timedOut = settled?.timedOut === true
+    this.pending.delete(nonce)
+    const decision = permanent ? 'allowed-permanent'
+      : result === 'allowed-once' ? 'allowed-once'
+        : result === 'rejected' ? 'rejected'
+          : timedOut ? 'timed-out' : result
+    this.onAudit?.(id, decision, owner.botId)
+    void this.recordAudit({
+      ts: Date.now(), tool: toolName, command: commandSummary(command), decision,
+      botId: owner.botId, chatRef, elapsedMs: Date.now() - requestedAt,
+    })
+    let ruleLabel: string | undefined
+    if (this.hooks) {
+      if (permanent) {
+        const rule = await this.rememberRule(toolName, root, owner.senderId, permanentScope)
+        ruleLabel = rule?.label
+      }
+      this.hooks.onChanged?.()
+    }
+    const outcome: 'allowed-once' | 'allowed-permanent' | 'rejected' | 'cancelled' | 'unavailable' =
+      permanent ? 'allowed-permanent' : result
     if (transport.updateInteractiveCard) {
-      void transport.updateInteractiveCard(cardMessageId, approvalResultCard(result)).catch(() => {
+      void transport.updateInteractiveCard(cardMessageId,
+        approvalResultCard(outcome, ruleLabel ?? permanentScope)).catch(() => {
         this.logger.warn('Feishu approval result card update failed')
       })
     }
     return result
+  }
+
+  /** Record and apply one automatic allowance from a persisted rule. */
+  private async autoAllow(
+    ruleRef: string,
+    req: ApprovalRequestLike,
+    owner: ApprovalOwner,
+    toolName: string,
+    command: string | undefined,
+    chatRef: string,
+    label: string,
+  ): Promise<void> {
+    const id = typeof req.agent?.id === 'string' ? req.agent.id
+      : typeof req.agent?.session?.id === 'string' ? req.agent.session.id : ''
+    const now = Date.now()
+    try {
+      await this.hooks?.store.touch(ruleRef, now)
+      await this.hooks?.store.record({
+        ts: now, tool: toolName, command: commandSummary(command), decision: 'auto-allowed',
+        botId: owner.botId, chatRef, ruleRef, elapsedMs: 0,
+      })
+    } catch {
+      this.logger.warn('recording automatic approval failed for %s', ruleRef)
+    }
+    this.onAudit?.(id, 'auto-allowed', owner.botId)
+    this.logger.info('auto-allowed %s for %s (%s)', toolName, owner.chatId, label)
+    this.hooks?.onChanged?.()
+  }
+
+  private async rememberRule(
+    toolName: string,
+    root: string | undefined,
+    createdBy: string,
+    scope: string | undefined,
+  ): Promise<{ label: string } | undefined> {
+    if (!this.hooks) return undefined
+    const rule = await this.hooks.store.remember({ tool: toolName, root, createdBy })
+    if (rule) {
+      this.logger.info('saved permanent approval %s for %s', rule.label, scope ?? rule.label)
+    }
+    return rule ? { label: rule.label } : undefined
+  }
+
+  private recordAudit(input: Parameters<ApprovalStore['record']>[0]): Promise<void> {
+    return this.hooks?.store.record(input).catch(() => {
+      this.logger.warn('approval audit write failed')
+    }) ?? Promise.resolve()
+  }
+
+  /** Repaint the card with a live countdown; stops with the pending approval. */
+  private startCountdown(pending: PendingApproval): void {
+    const transport = pending.transport
+    if (!transport.updateInteractiveCard || this.countdownIntervalMs <= 0) return
+    if (this.timeoutMs <= this.countdownIntervalMs) return
+    const tick = () => {
+      const current = this.pending.get(pending.nonce)
+      if (!current || this.disposed) return
+      const remainingMs = current.expiresAt - Date.now()
+      if (remainingMs <= 0) return
+      void transport.updateInteractiveCard!(pending.cardMessageId, approvalCard(
+        current.toolName, current.nonce, current.command, current.reason, {
+          expiresAt: current.expiresAt, remainingMs,
+          permanentLabel: current.permanentLabel,
+          ...(current.permanentScope ? { permanentScope: current.permanentScope } : {}),
+        })).catch(() => { /* the card may already be replaced; ignore */ })
+    }
+    const countdown = setInterval(tick, this.countdownIntervalMs)
+    countdown.unref?.()
+    pending.countdown = countdown
   }
 
   /** Non-blocking callback: no network or filesystem write in the 3-second path. */
@@ -165,17 +339,29 @@ export class FeishuApprovalManager {
       pending.signal?.aborted) {
       return { toast: { type: 'warning', content: '没有权限操作此审批卡片' } }
     }
-    if (event.value.decision !== 'allow' && event.value.decision !== 'reject') {
+    const decision = event.value.decision
+    if (decision !== 'allow' && decision !== 'reject' && decision !== 'allow-permanent') {
       return { toast: { type: 'warning', content: '无效审批操作' } }
     }
-    const allow = event.value.decision === 'allow'
-    this.decide(pending.nonce, allow ? 'allowed-once' : 'rejected')
-    return { toast: { type: allow ? 'success' : 'info', content: allow ? '已允许本次执行' : '已拒绝执行' } }
+    if (decision === 'allow-permanent' && pending.permanentLabel === undefined) {
+      return { toast: { type: 'warning', content: '该请求不支持永久授权' } }
+    }
+    if (decision === 'allow-permanent') pending.permanent = true
+    this.decide(pending.nonce, decision === 'reject' ? 'rejected' : 'allowed-once')
+    return {
+      toast: {
+        type: decision === 'reject' ? 'info' : 'success',
+        content: decision === 'allow-permanent'
+          ? '已永久允许：' + (pending.permanentScope ?? pending.permanentLabel)
+          : decision === 'allow' ? '已允许本次执行' : '已拒绝执行',
+      },
+    }
   }
 
   private decide(nonce: string, outcome: ApprovalOutcome): void {
     const pending = this.pending.get(nonce)
     if (!pending) return
+    if (pending.countdown) clearInterval(pending.countdown)
     this.pending.delete(nonce)
     clearTimeout(pending.timer)
     if (pending.abort) pending.signal?.removeEventListener('abort', pending.abort)
