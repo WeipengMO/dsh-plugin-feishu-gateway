@@ -1,121 +1,82 @@
 # DSH Feishu Gateway
 
-将飞书 / Lark 私聊接入 **DSH 原生 Session / Agent** 的独立 Cordis 插件；配套 Web Admin 提供通道状态和配置管理。没有第二套 Agent 或 LLM 服务，也不要求修改 DSH Core。
+让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-**当前代码 Gateway：`0.2.0-rc.16` · Admin：`0.2.0-rc.16`** · DSH `>=0.2.2-rc.1 <0.3.0-0` · Node.js `>=24.9.0`
+> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。本仓库当前仍有待验收的 [会话管理重构 PR #38](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/38)，请在测试环境验证后再部署。
 
-> **2026-11-15 实机验收结论**：原生 Session 复用、飞书消息收发、`/cancel`、CardKit 流式卡片与取消按钮、原生 `allowed-once` / `rejected` 工具审批，在现有单用户飞书私聊部署中通过。此处的实机结论来自部署侧记录，不等于 CI 自动验证真实租户。见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)。
+## 能做什么
 
-> **开发中的会话管理 UI（PR #38）**：新增「对话历史 / 已归档 / 飞书聊天关联 / 整理与清理」视图，支持 DSH 提供能力时恢复原生归档；技术 ID 默认隐藏、移动端列表使用卡片。**归档与解除关联都不等于删除**。真正的回收站、永久删除和定期历史清理由 [Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37) 追踪，目前尚未实现，不要把它们用于磁盘清理。详见 [会话管理 UI 与生命周期说明](docs/SESSION-CENTER-UX.md)。
+- **飞书聊天**：私聊与受控群聊、@ 触发、成员权限、按聊天隔离上下文、`/new`/`/cancel` 等命令。
+- **原生对话**：由 DSH 保存 Session 和历史；飞书端恢复上下文，后台可查看历史与关联、归档及（运行时支持时）恢复。
+- **任务和审批**：流式卡片、任务取消、DSH 原生工具审批、结果通知。
+- **自动化**：管理 DSH 原生定时任务，并把执行结果推送到授权的飞书聊天。
+- **管理后台**：模型与备用模型、机器人/群聊权限、Agent 档案、Token 用量、消息投递、代理及运行诊断。
+- **可靠性**：持久化 Inbox/Outbox、消息去重、保守重试与重启恢复；不自动重放可能已经产生副作用的任务。
 
-## 部署架构与隔离
+**尚不支持**：真正的 DSH 会话回收站、永久删除与按期限物理清理（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
 
-| DSH Profile | 只安装 | 作用 |
+## 快速开始
+
+环境要求：Node.js `>=24.9.0`、匹配 `package.json` 中 `engines.dsh` 的 DSH、pnpm，以及一个配置了机器人和长连接事件的飞书应用。
+
+| DSH Profile | 安装包 | 用途 |
 | --- | --- | --- |
-| `feishu-channel` | `dsh-plugin-feishu-gateway` | 飞书 WebSocket、消息路由、持久化、原生 Session、卡片与审批 |
-| `web` | `dsh-plugin-feishu-admin` | DSH Web「飞书通道」设置和受保护管理 API；**不运行 Gateway** |
+| `feishu-channel` | `dsh-plugin-feishu-gateway` | 常驻 WebSocket、原生 Agent/Session、消息与定时任务投递 |
+| `web` | `dsh-plugin-feishu-admin` | DSH Web 侧栏「飞书管理」和受认证保护的管理 API |
 
-飞书专用身份与记忆隔离需要 **Gateway `0.2.0-rc.7` 和 Web Admin `0.2.0-rc.7`**；只升级 Web Admin 会显示运维遥测不可用（旧版 Gateway 不产生匿名事件）。不要把 Gateway 安装进 `web`；升级后的客户端热加载不保证 Web 服务端代码也已换代，服务端仍缓存旧代码时可能对新增字段返回 400。应在确认维护窗口并保存状态后重启相应服务，然后验证配置读写。
+**两个插件必须装在各自的 Profile；不要把 Gateway 安装到 `web`。**
 
-持久化的 **Inbox、Outbox、Session 绑定**和环境变量凭据在升级时保留，不要清空 `stateDir`。同一 `stateDir` 只允许一个 Gateway 进程持有。
-
-## 已实现
-
-- 飞书长连接和白名单私聊、收发消息、去重与持久化 Inbox/Outbox、崩溃后保守恢复。
-- 通过 DSH `ctx.agents` 创建、复用和恢复原生 Session；不另建模型/工具执行引擎。
-- `/help`、`/status`、`/cancel`、`/new` 私聊控制命令；`/cancel` 不回滚已经执行的外部操作。
-- 入站纯文本型 `post` 富文本；可选 `post/md` Markdown 回复。图片和文件双向传输仍未实现。
-- DSH Web 管理面板：白名单、模型、机器人、回复格式、凭据写入、通道健康和独立服务重启。
-- **模型选择**：从飞书 Gateway Host 的完整模型目录统一搜索主模型，不必先选 Provider；备用模型支持标签式多选与移除（最多 8 个），按添加顺序逐个尝试。仅在本轮尚未执行任何工具时才允许切换重试，旧单 Fallback 配置仍兼容。飞书 `/models` 会列出 Gateway Host 可发现的所有模型，长列表分段投递。
-- **飞书运维控制中心（Gateway rc.7 / Admin rc.7）**：DSH 左侧栏可查看实时任务、消息生命周期、Session 绑定、原生审批审计、Token 用量、连接诊断与本地告警；确认后取消正在执行的任务或触发安全 Outbox 补发，并可以在高级配置里修改机器人、模型、白名单、审批卡片、重试和连接参数。Settings → 飞书 Gateway 只管理写入凭据。通过同机私有运维事件/命令队列与现有 DSH 认证 API 协作，不新增 Agent / LLM 调用。详见 [完整操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)。
-- **飞书独立身份与记忆管理（rc.7 / rc.7）**：飞书管理 → Agent 档案，采用双栏文件导航与专注 Markdown 编辑器（源码行号、当前行高亮、Markdown 语法着色、光标位置、空格缩进），以编辑/预览/版本历史/加载配置标签页切换（参考 OpenClaw 的 Files 操作方式）；支持 SOUL/IDENTITY/USER/TOOLS/MEMORY/AGENTS.md 及按日记忆的编辑、历史版本、恢复、加载开关与上下文字节预算。复用 DSH 原生 AGENTS.local.md 指令加载，保存后新 Session 生效，保留用户原有本地规则，不增加额外 LLM 调用。飞书 Session 使用独立 cwd，**不会再将飞书档案写入普通 DSH 工作目录**。旧共享托管区块支持备份后明确确认清除，旧飞书会话需 /new 切换。详见 [Agent 隔离与迁移手册](docs/AGENT-PROFILE-ISOLATION.md) 和 [档案管理手册](docs/AGENT-PROFILE-MANAGER.md)。
-- 可选 CardKit 流式任务卡片、取消按钮、DSH 原生工具审批卡片。**0.2.0-rc.2 起，Card 模式成功时直接在原卡片显示最终完整答案与模型/Token/速度/用时底栏，不再额外发送相同的文本；完成后取消按钮自动消失。`0.2.0-rc.3` 起，底栏按行展示模型、**Token 总用量**、速度和用时；速度根据 DSH 已有的输出 Token 与流式生成时长计算，不额外请求模型，缺少有效时长则隐藏速度。`0.2.0-rc.4` 起，底栏使用 **12px 灰色辅助信息**，与原样的回答正文形成视觉区分。** 如卡片创建/更新失败或超出卡片大小限制，回退到 DurableOutbox 文本回复。
-- **定时任务（Issue #19，开发分支）**：「飞书管理 → 定时任务」桥接 DSH 原生 `ctx.schedule` 任务（一次性 / 间隔 / 每日 / 每周 / 每月 / Cron，显式时区与下次触发预览），经跨 Profile `ops-control` 命令邮箱下发；Gateway 只做管理命令桥与飞书投递旁路（`schedule-delivery.json`），执行结果经 Outbox 投递到已授权私聊 / 群，并提供原生投递回执 + 执行台账（状态 / 耗时 / Token / Session 引用 / 错误摘要）与审计。不另建 Cron 引擎或 Agent / LLM，不绕开白名单、群策略与 DSH 原生工具审批。详见 [定时任务功能说明](docs/SCHEDULED-TASKS.md)。
-
-## 当前已验收的运行配置
-
-| 设置 | 值 |
-| --- | --- |
-| `streamCards` | `true` |
-| `approvalCards` | `true` |
-| `streamIntervalMs` | `800` |
-| `approvalTimeoutMs` | `90000` |
-| `feishu-channel` 的原生审批插件及 preset | **`ask`** |
-| Agent 沙箱 | **`workspace-write`**；正常工作区内工具无需逐次审批 |
-| 触发审批的操作 | 需要提升沙箱权限并触发 DSH 原生 `approval/request` 的操作 |
-
-源码中的两个卡片开关**默认仍为 `false`**，上述 `true` 是此次部署的显式管理配置，不是全局默认变更。审批决策由原生 DSH 控制：只授权当前请求的 `allowed-once`，拒绝或超时不放行；卡片只是入口，不能绕过原生策略。审批卡片显示工具、原生授权原因及可可靠关联的完整 Bash 命令；命令无法完整展示时会明确提示，仍由用户决定是否批准。命令和原因会显示在发起请求的飞书聊天中。
-
-**本分支（rc.9 → rc.11）：**rc.9 修复了 `https-proxy-agent@5` 的 CommonJS 导入错误（Gateway 启动即崩溃），并在 CI 中增加 ESM 运行时导入冒烟检查；rc.10/rc.11 在此基础上优化代理配置流程——可在 **DSH Web → 飞书管理 → 模型与配置 → 网络代理** 直接输入/测试/保存代理地址（含认证代理，地址明文显示、不做遮挡，也不再需要填写环境变量名），支持从旧环境变量文件一键导入、清除与「保存并重启飞书通道」，无需再手工编辑 Linux 配置文件。代理 URL 保存在 `stateDir/network-proxy.json`（0600），任何 API、页面和日志都不回显原文。详见 [代理配置流程](docs/PROXY-CONFIG-FLOW.md) 与 [可靠性及代理部署说明](docs/RELIABILITY-AND-PROXY.md)。
-
-操作说明：[审批与流式卡片](docs/APPROVAL-STREAMING.md) · [Web Admin](docs/WEB-ADMIN.md) · [飞书通道](docs/FEISHU-CHANNEL.md)。
-
-## Issue #16：飞书 Session 批量管理（rc.16 候选）
-
-在「飞书管理 → Session 管理」可以从当前页面选择最多 20 条未运行的绑定，
-预览并二次确认**批量归档 / 飞书解绑**。Web Admin 使用 30 秒内有效的一次性
-确认令牌；真正执行由独占 Gateway 在对应 Session 队列中重新核对版本、
-未完成消息、待发 Outbox、审批和运行状态。可能出现部分成功与跳过，需要查看
-「告警中心」中的操作结果。
-
-**该操作不删除 DSH 原生 Session/消息正文**。受影响绑定大小只是 JSON
-条目的估计，不是实际回收磁盘大小。历史 Inbox/日志压缩及自动保留策略尚未实现，
-Issue #16 继续保持 Open。参见 [Session 生命周期管理](docs/SESSION-LIFECYCLE.md)。
-
-## Issue #34：飞书原生会话命名与工作区归位（开发分支）
-
-开发分支 `feat/issue-34-feishu-session-organization`、[PR #35](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/35) 提供 Gateway 原生 Session 语义化标题、Web「飞书会话」工作区自动归位、历史/孤儿台账、原生归档预览与二次确认。整理默认关闭；启用后仅自动归位当前绑定和仍被活动任务引用的 Session，历史孤儿需逐条确认，不删除或续接 DSH 原生历史。管理端可按机器人、会话类型、状态、孤儿和 UTC 日期筛选，原生 ID 默认脱敏。
-
-**此功能尚未发布，也未完成真实双 Profile 的端到端验收。** 请先核对干运行预览，再决定是否开启；升级顺序为 Gateway → Web Admin。详见 [飞书原生 Session 归位、迁移与回滚](docs/FEISHU-SESSION-ORGANIZATION.md)。
-
-## 构建、验收与安装
+在仓库根目录构建并安装**当前检出的源码版本**：
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm run verify
-pnpm run test:coverage
 pnpm run pack
-```
 
-当前发布版的两个安装包：
+GATEWAY_VERSION=$(node -p "require('./package.json').version")
+ADMIN_VERSION=$(node -p "require('./web-admin/package.json').version")
+dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-$GATEWAY_VERSION.tgz"
+dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-$ADMIN_VERSION.tgz"
 
-- `dist/dsh-plugin-feishu-gateway-0.2.0-rc.16.tgz`
-- `dist/dsh-plugin-feishu-admin-0.2.0-rc.16.tgz`
-
-首次安装时分别安装到各自 Profile；已装旧版 Gateway 的用户需要**同时升级 Gateway 与 Web Admin**（rc.10 的管理端 API 依赖新的管理服务端）。不要把 Gateway 安装到 Web：
-
-```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-0.2.0-rc.16.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-0.2.0-rc.16.tgz"
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-**rc.9–rc.12 的代理配置界面与 Issue #19 定时任务页面尚未在真实 DSH Web/飞书租户复验**；先使用隔离测试环境验证 CONNECT 预检、保存/清除/导入与重启流程，再安排生产升级。**安装命令本身不代表运行服务已更新。** 应检查实际 DSH Host / Web 服务端已重启加载新包、通道已连接、Web 配置保存成功。不可在未安排维护窗口时随意重启有在途任务的服务。
+**安装包更新不等于常驻服务已重启加载。** 首次配置飞书 App ID/Secret、白名单、权限、长连接和系统服务的完整步骤见 **[首次部署](docs/GETTING-STARTED.md)**。已经部署过的用户请直接阅读 **[升级和运维](docs/OPERATIONS.md)**。
 
-GitHub [CI](.github/workflows/ci.yml) 执行类型检查、构建、Mock 单元/集成、安全测试、覆盖率与打包；**CI 不接入真实飞书租户**。历史实机验收记录见 [0.2.0-rc.1 验收快照](docs/ACCEPTANCE-0.2.0-rc.1.md)，卡片行为见 [0.2.0-rc.2 交付说明](docs/CARD-DELIVERY-0.2.0-rc.2.md)，新版底栏参见 [0.2.0-rc.3 说明](docs/CARD-FOOTER-0.2.0-rc.3.md)；灰色小字见 [0.2.0-rc.4 说明](docs/CARD-FOOTER-0.2.0-rc.4.md)；运维工作台见 [rc.5 操作手册](docs/OPERATIONS-CONTROL-CENTER-V2.md)；身份与记忆管理见 [rc.6 操作手册](docs/AGENT-PROFILE-MANAGER.md)。
+## 管理界面怎么用
 
-## Issue #17：历史 Token 用量分析（开发分支）
+在 DSH Web 左侧打开 **飞书管理**：
 
-新增独立的每日脱敏用量账本，支持历史日历热图、可切换时区的趋势、模型/机器人/用户/聊天/Session 筛选及聚合 CSV；原有滚动审计不承担历史统计。缺失 usage 的任务单独显示，不填造 0。Gateway 环境变量 DSH_FEISHU_USAGE_RETENTION_DAYS 可设置 7–730 天的留存期（默认 365）。部署和验收步骤见 [历史用量分析说明](docs/TOKEN-USAGE-ANALYTICS.md)。此项目前位于 Issue #17 开发分支，尚未经真实飞书租户验收或正式发布。
+| 入口 | 管理内容 |
+| --- | --- |
+| 总览 | Gateway 连接状态、运行摘要 |
+| 会话与消息 | 实时任务、消息投递、**会话管理** |
+| 定时任务 | 创建、暂停、运行、删除任务及查看执行历史 |
+| 接入与权限 | 机器人、群聊、成员白名单和工具执行策略 |
+| Agent 档案 | 飞书专用身份、指令、记忆文件与历史版本 |
+| 用量与审计 | Token 统计、模型用量与工具审批记录 |
+| 运维与诊断 | 告警、连接和结构化日志 |
+| 模型与连接 | 主模型、多个备用模型、代理和消息卡片选项 |
 
-## Issue #19：DSH 原生定时任务与执行历史（开发分支）
+「会话管理」将 **DSH 历史** 与 **飞书聊天关联** 分开：归档是隐藏、恢复是重新显示、解除关联是让飞书下一条消息创建新对话。回收站和永久删除尚未实现，详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
 
-在「飞书管理 → 定时任务」新增 Web Admin 页面：桥接 DSH 原生 `ctx.schedule` 定时任务，把执行结果投递到已授权的飞书私聊或群，并提供执行历史与审计。任务定义、重复规则、暂停/恢复/立即执行/删除与持久投递历史**全部由 DSH 原生 Host 服务拥有**，Gateway 只做跨 Profile 命令桥与飞书投递旁路，不另建 Cron 引擎、Agent 或 LLM。功能说明、接口与验证清单见 [定时任务功能说明](docs/SCHEDULED-TASKS.md)。此功能位于 **Issue #19 开发分支（P2）**；**2026-11-16 已在真实 DSH/飞书部署完成 9 项实机验收（9/9 通过，见 [实机验收报告](docs/ACCEPTANCE-ISSUE-19.md)）**，尚未正式发布；CI 仅运行 Mock 测试，不能当作实机 PASS，也不改变上文 rc.11 发布版与历史实机验收结论。
+飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
 
-## 安全边界与剩余工作
+## 安全与升级原则
 
-私聊只接收白名单 `open_id`；默认拒绝群聊；App Secret 通过环境变量注入且 Web Admin 不回显。部署时请保护 `~/.dsh/feishu-channel.env` 和 `stateDir`，并维持最小权限。
+- 飞书私聊只允许授权的 `open_id`；群聊默认关闭，需要显式配置策略和成员白名单。
+- App Secret 仅由受控环境变量或管理端写入，不能进入 Git；Admin 不回显。
+- Gateway 与 Web Admin 在同机同用户部署时协作，**同一状态目录只允许一个 Gateway owner**。
+- 正在执行、等待审批、存在未投递消息或被活动定时任务引用的会话，不得通过后台强制执行破坏性清理。
+- 提交到 GitHub 或 CI 通过不会更新服务器进程；升级前先保存状态并安排维护窗口。
 
-**仍待实机验证**：审批超时、重复点击、审批中取消、陌生人或跨聊天卡片点击（已存在模拟/集成测试，不能替代真实租户）。**已知问题**：飞书 WebSocket 初次握手失败可能无法自行恢复，需要健康看门狗/重连兜底。本地规则监控已上线候选版；主动飞书告警通知与 WS 自动恢复仍需后续开发。
+本仓库有历史真实部署验收记录（例如定时任务 9/9），但 **GitHub CI 主要使用 Mock 与本地安全测试**，不能直接证明每个新分支都已通过真实租户与 DSH Web 的端到端验收。
 
-更多文档：[架构](docs/ARCHITECTURE.md) · [兼容性](docs/COMPATIBILITY.md) · [飞书开发者后台](docs/FEISHU-APP.md) · [测试 Harness](docs/E2E.md) · [后续路线图（含历史计划）](docs/ROADMAP-v0.2.0.md)。
+## 文档导航
 
-开发早期的完整调查和测试过程保留在 [research/](research/) 与 [历史 README](docs/archive/README-v0.1.0-history.md)，请勿把其历史状态当作当前验收结论。
+**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md)
 
-MIT License。
+历史版本变更、早期架构设计与验收快照集中在 [历史资料](docs/archive/README.md)，**不应作为当前版本的安装指令**。
 
-
-### Group chat policy (Issue #18)
-
-Group chats default to disabled. Configure the allowed group IDs, trusted sender open_ids, @only/auto replies and native Session isolation from **飞书管理 → 群聊管理**. See [Group chat guide](docs/GROUP-CHAT.md) for permission requirements and operational notes.
+MIT License.
