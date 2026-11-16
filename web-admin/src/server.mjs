@@ -495,6 +495,9 @@ async function credentialStatus(filename, bots) {
 const SCHEDULE_FIELDS = ['action', 'clientRef', 'taskId', 'title', 'prompt', 'spec', 'notify', 'delivery', 'expectedUpdatedAt']
 const SCHEDULE_COMMAND_MAX_BYTES = 8192
 const LEGACY_COMMAND_MAX_BYTES = 1024
+const SESSION_BATCH_MAX_BYTES = 4096
+const SESSION_REF = /^[a-f0-9]{16}$/
+const SESSION_BOT_ID = /^[a-z][a-z0-9_-]{0,31}$/
 const SCHEDULE_BOT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/
 const SCHEDULE_OU_RE = /^ou_[A-Za-z0-9_-]{2,128}$/
 const SCHEDULE_OC_RE = /^oc_[A-Za-z0-9_-]{2,128}$/
@@ -568,15 +571,68 @@ export function validateScheduleCommand(input) {
   return result
 }
 
+export function validateSessionBatch(value) {
+  if (!object(value)) throw httpError(400, 'batch must be an object')
+  exactKeys(value, ['action', 'items'])
+  if (value.action !== 'archive' && value.action !== 'unlink')
+    throw httpError(400, 'invalid batch action')
+  if (!Array.isArray(value.items) || value.items.length < 1 || value.items.length > 20)
+    throw httpError(400, 'batch size must be 1..20')
+  const seen = new Set()
+  const items = value.items.map(item => {
+    if (!object(item)) throw httpError(400, 'invalid batch item')
+    exactKeys(item, ['ref', 'chatRef', 'botId', 'expectedLastActiveAt'])
+    if (typeof item.ref !== 'string' || !SESSION_REF.test(item.ref) ||
+      typeof item.chatRef !== 'string' || !SESSION_REF.test(item.chatRef) ||
+      typeof item.botId !== 'string' || !SESSION_BOT_ID.test(item.botId) ||
+      !Number.isSafeInteger(item.expectedLastActiveAt) ||
+      item.expectedLastActiveAt < 0 || item.expectedLastActiveAt > 1e13)
+      throw httpError(400, 'invalid batch item reference or activity version')
+    const key = item.botId + ':' + item.chatRef
+    if (seen.has(key)) throw httpError(400, 'duplicate batch binding')
+    seen.add(key)
+    return { ref: item.ref, chatRef: item.chatRef, botId: item.botId,
+      expectedLastActiveAt: item.expectedLastActiveAt }
+  })
+  return { action: value.action, items }
+}
+
+/** Browser preflight is advisory. Owner Gateway verifies again before every mutation. */
+async function previewSessionBatch(stateDir, batch) {
+  const snapshot = await readOpsSnapshot(stateDir)
+  if (!snapshot || snapshot.stale || snapshot.stats.pendingApprovals ||
+    snapshot.stats.outboxPending || snapshot.stats.inboxPending)
+    throw httpError(409, 'pending tasks, approvals or delivery; retry when idle')
+  let totalBytes = 0
+  for (const item of batch.items) {
+    const report = await querySessions(stateDir, parseSessionQuery(
+      new URLSearchParams({ session: item.ref, pageSize: '100' })))
+    const matches = report.items.filter(row =>
+      row.sessionRef === item.ref && row.chatRef === item.chatRef &&
+      row.botId === item.botId && row.lastActiveAt === item.expectedLastActiveAt)
+    if (!report.runtimeFresh || matches.length !== 1 || matches[0].status === 'active' ||
+      (batch.action === 'archive' && matches[0].status === 'archived'))
+      throw httpError(409, 'Session is active, stale, missing or changed; refresh')
+    totalBytes += matches[0].estimatedBindingBytes
+  }
+  return { count: batch.items.length, estimatedBindingBytes: totalBytes }
+}
+
 export async function queueOperatorCommand(stateDir, body, maxBytes) {
   const isSchedule = object(body) && body.type === 'schedule'
+  const isBatch = object(body) && body.type === 'batch-sessions'
   const cap = Number.isInteger(maxBytes) && maxBytes > 0
-    ? maxBytes : (isSchedule ? SCHEDULE_COMMAND_MAX_BYTES : LEGACY_COMMAND_MAX_BYTES)
+    ? maxBytes : (isSchedule ? SCHEDULE_COMMAND_MAX_BYTES :
+      isBatch ? SESSION_BATCH_MAX_BYTES : LEGACY_COMMAND_MAX_BYTES)
   let command
   if (isSchedule) {
     exactKeys(body, ['type', 'schedule'])
     command = { version: 1, id: randomUUID(), ts: Date.now(), type: 'schedule',
       actor: SCHEDULE_ACTOR, schedule: validateScheduleCommand(body.schedule) }
+  } else if (isBatch) {
+    exactKeys(body, ['type', 'batch'])
+    command = { version: 1, id: randomUUID(), ts: Date.now(), type: 'batch-sessions',
+      batch: validateSessionBatch(body.batch) }
   } else {
   exactKeys(body, ['type', 'ref', 'expectedLastActiveAt'])
   const sessionAction = body.type === 'archive-session' || body.type === 'unbind-session'
@@ -714,6 +770,21 @@ export function createAdminHandler(options = {}) {
         const report = await querySessions(stateDir, parseSessionQuery(params))
         return json(res, 200, { ok: true, report })
       }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/batch/preview') {
+        const body = await readBody(req)
+        const batch = validateSessionBatch(body)
+        const summary = await previewSessionBatch(stateDir, batch)
+        const token = randomUUID()
+        const expiresAt = Date.now() + 30_000
+        for (const [k, v] of sessionPreviews) {
+          if (v.expiresAt <= Date.now()) sessionPreviews.delete(k)
+        }
+        if (sessionPreviews.size >= 100) sessionPreviews.clear()
+        sessionPreviews.set(token, { type: 'batch-sessions', batch, expiresAt })
+        return json(res, 200, { ok: true, preview: {
+          token, expiresAt, action: batch.action, ...summary, nativeSessionPreserved: true,
+        } })
+      }
       if (req.method === 'POST' && route === PREFIX + '/sessions/preview') {
         const body = await readBody(req)
         exactKeys(body, ['type', 'ref', 'expectedLastActiveAt'])
@@ -760,6 +831,12 @@ export function createAdminHandler(options = {}) {
             throw httpError(409, 'Session confirmation expired; preview again')
           // Recheck the activity version before enqueue; owner Gateway checks
           // once more under its per-chat queue and exclusive stateDir lock.
+          if (request.type === 'batch-sessions') {
+            await previewSessionBatch(stateDir, request.batch)
+            const command = await queueOperatorCommand(stateDir,
+              { type: 'batch-sessions', batch: request.batch })
+            return json(res, 202, { ok: true, queued: true, command })
+          }
           const report = await querySessions(stateDir,
             parseSessionQuery(new URLSearchParams({ session: request.ref })))
           if (!report.runtimeFresh ||

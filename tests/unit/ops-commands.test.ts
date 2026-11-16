@@ -107,6 +107,63 @@ describe('Session lifecycle commands', () => {
   })
 })
 
+describe('bounded bulk Session commands', () => {
+  const item = { ref: 'a'.repeat(16), chatRef: 'b'.repeat(16),
+    botId: 'default', expectedLastActiveAt: 1_700_000_000_000 }
+  async function writeBatch(folder: string, payload: unknown): Promise<string> {
+    const id = randomUUID()
+    await writeFile(path.join(folder, id + '.json'), JSON.stringify({
+      version: 1, id, ts: Date.now(), type: 'batch-sessions', batch: payload,
+    }), { mode: 0o600 })
+    return id
+  }
+
+  it('executes only a strictly validated hashed batch, once', async () => {
+    const { dir, folder } = await setup()
+    try {
+      const id = await writeBatch(folder, { action: 'unlink', items: [item] })
+      const calls: string[] = []
+      expect(await processOperatorCommands(dir, async cmd => {
+        calls.push(cmd.type + ':' + cmd.batch?.action + ':' + cmd.batch?.items.length)
+        return { state: 'completed', detail: 'applied=1 skipped=0 total=1' }
+      })).toBe(1)
+      expect(calls).toEqual(['batch-sessions:unlink:1'])
+      expect(await processOperatorCommands(dir, async () => 'completed')).toBe(0)
+      const result = JSON.parse(await readFile(path.join(dir, 'ops-control', 'results', id + '.json'), 'utf8'))
+      expect(result).toMatchObject({ type: 'batch-sessions', state: 'completed',
+        detail: 'applied=1 skipped=0 total=1' })
+      expect(JSON.stringify(result)).not.toContain(item.chatRef)
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+
+  it('rejects duplicates, malformed fields, oversized arrays and unknown actions', async () => {
+    const { dir, folder } = await setup()
+    try {
+      const bad = [
+        { action: 'delete-native', items: [item] },
+        { action: 'unlink', items: [] },
+        { action: 'archive', items: Array(21).fill(item) },
+        { action: 'unlink', items: [item, item] },
+        { action: 'archive', items: [{ ...item, chatRef: 'oc_secret' }] },
+        { action: 'archive', items: [{ ...item, expectedLastActiveAt: -1 }] },
+        { action: 'archive', items: [{ ...item, workspace: '/tmp' }] },
+        { action: 'archive', items: [item], force: true },
+      ]
+      const ids: string[] = []
+      for (const payload of bad) ids.push(await writeBatch(folder, payload))
+      let executed = 0
+      expect(await processOperatorCommands(dir, async () => { executed += 1; return 'completed' }))
+        .toBe(bad.length)
+      expect(executed).toBe(0)
+      for (const id of ids) {
+        const result = JSON.parse(await readFile(path.join(dir, 'ops-control', 'results', id + '.json'), 'utf8'))
+        expect(result.type).toBe('batch-sessions')
+        expect(result.state).toBe('rejected')
+      }
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+})
+
 describe('native schedule operator commands', () => {
   const valid = () => ({
     action: 'create',
