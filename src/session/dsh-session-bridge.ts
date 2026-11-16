@@ -220,6 +220,43 @@ export class DshSessionBridge implements SessionBridge {
     return Object.keys(agentOptions).length > 0 ? agentOptions : undefined
   }
 
+  /** Use only the live owned Session; never reopen persistent logs from the Web host. */
+  titleSource(sessionId: string): 'user' | 'automatic' | 'unknown' {
+    try {
+      if (!this.handles.has(sessionId)) return 'unknown'
+      const port = this.ctx.get('sessionTitle') as { get?: (session: unknown) => { source?: { kind?: string } | string } } | undefined
+      const store = this.ctx.get('sessions') as { get?: (id: string) => unknown } | undefined
+      const session = store?.get?.(sessionId)
+      if (!session || typeof port?.get !== 'function') return 'unknown'
+      const source = port.get(session)?.source
+      return (source === 'user' || (typeof source === 'object' && source?.kind === 'user'))
+        ? 'user' : 'automatic'
+    } catch { return 'unknown' }
+  }
+
+  async title(sessionId: string, value: string): Promise<boolean> {
+    if (!this.handles.has(sessionId)) return false
+    try {
+      const port = this.ctx.get('sessionTitle') as {
+        get?: (session: unknown) => { source?: { kind?: string } | string }
+        rename?: (session: unknown, title: string) => Promise<unknown>
+      } | undefined
+      const store = this.ctx.get('sessions') as { get?: (id: string) => unknown } | undefined
+      const session = store?.get?.(sessionId)
+      if (!session || !port?.get || typeof port.rename !== 'function') {
+        this.logger.warn('DSH sessionTitle service unavailable; retaining automatic session title')
+        return false
+      }
+      const source = port.get(session)?.source
+      if (source === 'user' || (typeof source === 'object' && source?.kind === 'user')) return false
+      await port.rename(session, value)
+      return true
+    } catch {
+      this.logger.warn('native session title write failed; Feishu conversation remains usable')
+      return false
+    }
+  }
+
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
     if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()

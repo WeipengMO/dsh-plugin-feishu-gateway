@@ -118,6 +118,8 @@ export interface FeishuTransport {
   connect(handlers: FeishuEventHandlers): Promise<void>
   close(): Promise<void>
   sendText(target: OutboundTarget): Promise<SendReceipt>
+  lookupChatName?(chatId: string): Promise<string | undefined>
+  lookupUserName?(openId: string): Promise<string | undefined>
   /** All card methods are optional; older transports keep working. */
   sendInteractiveCard?(target: { replyToMessageId: string }, card: Record<string, unknown>): Promise<FeishuCardHandle>
   updateInteractiveCard?(messageId: string, card: Record<string, unknown>): Promise<void>
@@ -289,6 +291,8 @@ export interface SessionBridge {
   listModels?(): Promise<ModelCatalog>
   currentModel?(sessionId: string): { provider: string; model: string } | undefined
   selectModel?(sessionId: string, provider: string, model: string): void
+  titleSource?(sessionId: string): 'user' | 'automatic' | 'unknown'
+  title?(sessionId: string, value: string): Promise<boolean>
   /** Queue one user turn on a live Session. */
   submit(sessionId: string, text: string, signal: AbortSignal): Promise<void>
   /** Wait for the turn to settle and collect the assistant's reply text. */

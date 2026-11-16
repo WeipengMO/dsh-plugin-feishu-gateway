@@ -19,6 +19,16 @@ export class MockSessionBridge implements SessionBridge {
   readonly unavailableReason = undefined
 
   readonly created: Array<{ sessionId: string; cwd: string; route?: AgentRoute }> = []
+  readonly titles = new Map<string, string>()
+  readonly manuallyTitled = new Set<string>()
+  titleSource(sessionId: string): 'user' | 'automatic' {
+    return this.titles.has(sessionId) || this.manuallyTitled.has(sessionId) ? 'user' : 'automatic'
+  }
+  async title(sessionId: string, value: string): Promise<boolean> {
+    if (this.titleSource(sessionId) === 'user') return false
+    this.titles.set(sessionId, value)
+    return true
+  }
   readonly resumed: string[] = []
   readonly resumedRoutes: Array<{ sessionId: string; route: AgentRoute }> = []
   readonly prompts: Array<{ sessionId: string; text: string }> = []

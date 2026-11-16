@@ -183,7 +183,7 @@ export class FeishuGateway {
       stateDir: deps.config.stateDir,
       now: () => Date.now(),
       isStopped: () => this.stopped,
-      ensureTaskSession: (clientRef) => this.ensureTaskSession(clientRef),
+      ensureTaskSession: (clientRef, title) => this.ensureTaskSession(clientRef, title),
       releaseTaskSession: (sessionId) => this.releaseTaskSession(sessionId),
       validateFeishuTarget: (target) => this.validateScheduleTarget(target),
       recordUsage: (value) => this.ops.recordUsage(value),
@@ -575,7 +575,7 @@ export class FeishuGateway {
           const existing = this.registry.get(key)
           let current: string | undefined
           if (existing) {
-            const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+            const sessionId = await this.ensureSession(key, record.botId, record.chatId, record.senderId, record.chatType)
             const selected = this.bridge.currentModel?.(sessionId)
             if (selected) current = selected.provider + '/' + selected.model
           }
@@ -610,7 +610,7 @@ export class FeishuGateway {
             } else if (!this.bridge.selectModel) {
               reply = '当前 DSH Host 不支持会话模型切换。'
             } else {
-              const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+              const sessionId = await this.ensureSession(key, record.botId, record.chatId, record.senderId, record.chatType)
               this.bridge.selectModel(sessionId, found.provider, found.model)
               reply = '当前会话已切换模型：' + found.provider + '/' + found.model + '\n下次请求生效；其他聊天和定时任务不受影响。'
             }
@@ -707,7 +707,7 @@ export class FeishuGateway {
         return
       }
 
-      const sessionId = await this.ensureSession(key, record.botId, record.chatId)
+      const sessionId = await this.ensureSession(key, record.botId, record.chatId, record.senderId, record.chatType)
       activeSessionId = sessionId
       turn.sessionId = sessionId
       this.audit({ kind: 'task', state: 'session-ready', botId: record.botId,
@@ -878,11 +878,12 @@ export class FeishuGateway {
    * `session/event` reaches our plugin-level listener (verified for Sessions
    * created through `ctx.agents.create`) and the answer can reach Feishu.
    */
-  private async ensureTaskSession(clientRef: string): Promise<string> {
+  private async ensureTaskSession(clientRef: string, title?: string): Promise<string> {
     const existing = this.taskSessions.get(clientRef)
     if (existing) return existing
     const sessionId = `${sessionIdFor('schedule', clientRef)}-${newId('session')}`
     await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent)
+    await this.setNativeTitle(sessionId, '飞书定时·' + (title?.trim() || clientRef.slice(-8)))
     this.taskSessions.set(clientRef, sessionId)
     this.restoredTaskSessions.add(sessionId)
     this.logger.info('reserved native session %s for scheduled task %s', sessionId, clientRef)
@@ -913,6 +914,7 @@ export class FeishuGateway {
         this.restoredTaskSessions.has(sessionId)) continue
       try {
         await this.bridge.resume(sessionId, this.config.agent)
+        await this.setNativeTitle(sessionId, '飞书定时·' + (task.title || sessionId.slice(-8)))
         this.restoredTaskSessions.add(sessionId)
       } catch (error) {
         this.logger.debug('cannot restore scheduled task session %s: %s', sessionId, String(error))
@@ -973,7 +975,42 @@ export class FeishuGateway {
     return fail('invalid chat type')
   }
 
-  private async ensureSession(key: string, botId: string, chatId: string): Promise<string> {
+  private async setNativeTitle(sessionId: string, title: string): Promise<void> {
+    if (!this.bridge.title || this.bridge.titleSource?.(sessionId) === 'user') return
+    // DSH's sessionTitle service enforces its own configured maxTitleBytes.
+    let safe = title.replace(/[\\u0000-\\u001f\\u007f]/g, ' ').replace(/\\s+/g, ' ').trim()
+    while (Buffer.byteLength(safe, 'utf8') > 120) safe = safe.slice(0, -1)
+    if (!safe) return
+    try { await this.bridge.title(sessionId, safe) }
+    catch { this.logger.warn('Feishu Session title unavailable; continuing normally') }
+  }
+
+  private async setChatTitle(sessionId: string, botId: string, chatId: string,
+    senderId?: string, chatType?: 'p2p' | 'group'): Promise<void> {
+    if (!this.bridge.title || this.bridge.titleSource?.(sessionId) === 'user') return
+    const group = chatType === 'group' ||
+      (chatType === undefined && this.config.groups.some(item => item.chatId === chatId))
+    const transport = this.transports.get(botId)
+    let name: string | undefined
+    if (group) {
+      name = this.config.groups.find(item => item.chatId === chatId)?.name?.trim()
+      if (!name) {
+        try { name = await transport?.lookupChatName?.(chatId) }
+        catch { /* Feishu permission dependent */ }
+      }
+      await this.setNativeTitle(sessionId, '飞书群·' +
+        (this.transports.size > 1 ? botId + '·' : '') + (name || chatId.slice(-6)))
+    } else {
+      if (senderId) {
+        try { name = await transport?.lookupUserName?.(senderId) }
+        catch { /* Feishu permission dependent */ }
+      }
+      await this.setNativeTitle(sessionId, '飞书·私聊·' + (name || chatId.slice(-6)))
+    }
+  }
+
+  private async ensureSession(key: string, botId: string, chatId: string,
+    senderId?: string, chatType?: 'p2p' | 'group'): Promise<string> {
     const existing = this.registry.get(key)
     if (!existing) {
       const sessionId = `${sessionIdFor(botId, chatId)}-${newId('session')}`
@@ -983,6 +1020,7 @@ export class FeishuGateway {
         throw new Error(`cannot create native DSH Session: ${String(error)}`)
       }
       await this.registry.bind(key, sessionId, Date.now(), this.isolatedWorkspace)
+      await this.setChatTitle(sessionId, botId, chatId, senderId, chatType)
       return sessionId
     }
     // Legacy Sessions were created in the shared DSH workspace. Never resume
@@ -999,6 +1037,7 @@ export class FeishuGateway {
       // recovery decision. Keep the original binding for diagnosis / retry.
       throw new SessionResumeError(existing.sessionId, error)
     }
+    await this.setChatTitle(existing.sessionId, botId, chatId, senderId, chatType)
     return existing.sessionId
   }
 
