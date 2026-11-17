@@ -343,7 +343,7 @@ export class DshSessionBridge implements SessionBridge {
     const engine = this.nativeCompaction()
     if (!engine || this.disposed) throw new Error('DSH compaction service unavailable')
     const handle = this.handles.get(sessionId)
-    if (!handle || this.agents?.get?.(sessionId) !== handle.agent) {
+    if (!handle || (typeof this.agents?.get === 'function' && this.agents.get(sessionId) !== handle.agent)) {
       throw new Error('DSH Session is not owned by this Gateway')
     }
     if (signal.aborted) throw signal.reason ?? new Error('compaction cancelled')
