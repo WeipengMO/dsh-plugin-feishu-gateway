@@ -102,6 +102,7 @@ function FeishuRecycleHub() {
 function FeishuNativeSessionLedger({ mode = 'history' }) {
   const [query, setQuery] = useState({ status: mode === 'archive' ? 'archived' : mode === 'trash' ? 'trashed' : 'current', type: 'all', bot: '', from: '', to: '', search: '', orphan: false, page: 1 })
   const [reveal, setReveal] = useState(false)
+  const [searchDraft,setSearchDraft] = useState('')
   const [showAdvanced,setShowAdvanced] = useState(false)
   const [report, setReport] = useState(null)
   const [plan, setPlan] = useState(null)
@@ -250,7 +251,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       h(WbBlock, { title: mode === 'archive'?'已归档的对话':mode==='trash'?'回收站中的对话':'对话历史',
       aside: mode==='trash'?'可恢复，当前不能永久删除':mode==='archive'?'归档不会释放磁盘空间':'只显示未归档、未移入回收站的 DSH 对话' },
       h('form', { className: 'fgw-session-filters fgw-session-filters-native',
-        onSubmit: e => { e.preventDefault(); void refresh() } },
+        onSubmit: e => { e.preventDefault(); setQuery(old=>({...old,search:searchDraft,page:1})); if(searchDraft===query.search) void refresh() } },
         mode === 'all' && h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
           h('select', { className: 'fga-input', value: query.status,
             onChange: e => filter('status', e.target.value) },
@@ -271,8 +272,8 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           h('input', { className: 'fga-input', type: 'date', value: query.to,
             onChange: e => filter('to', e.target.value) })),
         h('label', { className: 'fgw-session-filter' }, h('span', null, '搜索对话或定时任务'),
-          h('input', { className: 'fga-input', value: query.search, maxLength:128,
-            onChange: e => filter('search',e.target.value), placeholder: '会话名称、任务名称或引用' })),
+          h('input', { className: 'fga-input', value: searchDraft, maxLength:128,
+            onChange: e => setSearchDraft(e.target.value), placeholder: '会话名称、任务名称或引用' })),
         h('label', { className: 'fga-check fgw-session-filter-extra' },
           h('input', { type: 'checkbox', checked: query.orphan,
             onChange: e => filter('orphan', e.target.checked) }), '仅看不再关联的历史'),
