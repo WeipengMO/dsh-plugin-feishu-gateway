@@ -598,7 +598,7 @@ test('archived status never hides an active native writer from batch restore or 
   const activeRef=createHash('sha256').update(ORPHAN).digest('hex').slice(0,16)
   await json(f.stateDir,'ops-runtime.json',{
     version:1,ts:Date.now(),workspace:f.cwd,isolatedAgent:true,
-    tasks:[{session:activeRef,status:'running'}],status:'ok',stats:{},transport:{}
+    tasks:[{ref:activeRef,botId:'default',session:activeRef,phase:'running'}],status:'ok',stats:{},transport:{}
   })
   const services={...f.native,deleter:{
     inspect:async()=>({live:false}),delete:async()=>{throw Error('must not run')}
