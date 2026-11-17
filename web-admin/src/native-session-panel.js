@@ -192,78 +192,86 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
     } catch (e) { setError(e.message || String(e)) }
     finally { setBusy(false) }
   }
-  const runNow = async () => {
-    if (!settings?.enabled || !plan?.available ||
-      !window.confirm('整理飞书工作区？\n只更新侧栏显示，不删除聊天记录；仍被使用的会话会跳过。')) return
-    setBusy(true)
-    try {
-      const result = await request('/sessions/organizer/run', 'POST', {})
-      setNotice('整理完成：归入工作区 ' + (result.report.attached || 0) +
-        '，隐藏旧会话 ' + (result.report.archived || 0) +
-        '，跳过 ' + (result.report.skipped?.length || 0) + '。')
-      void refresh()
-    } catch (e) { setError(e.message || String(e)) }
-    finally { setBusy(false) }
+  const [dialog,setDialog]=useState(null)
+  const [dialogBusy,setDialogBusy]=useState(false)
+  const [dialogError,setDialogError]=useState('')
+  const ask=info=>{setDialogError('');setDialog(info)}
+  const confirm=async()=>{
+    if(!dialog||dialogBusy)return
+    setDialogBusy(true);setDialogError('')
+    try{await dialog.onConfirm();setDialog(null)}
+    catch(e){setDialogError(e.message||String(e))}
+    finally{setDialogBusy(false)}
   }
-  const archive = async row => {
-    if (!row.orphan || row.status !== 'unbound') return
+  const runNow=()=>{
+    if(!settings?.enabled||!plan?.available)return
+    ask({title:'整理飞书工作区',confirmLabel:'执行整理',
+      description:'将符合条件的会话归入飞书工作区，必要时隐藏不再关联的历史。',
+      note:'操作只改变侧栏显示，不会删除聊天记录；正在使用的会话会跳过。',
+      onConfirm:async()=>{
+        const result=await request('/sessions/organizer/run','POST',{})
+        setNotice('整理完成：归入工作区 '+(result.report.attached||0)+
+          '，隐藏旧会话 '+(result.report.archived||0)+'，跳过 '+(result.report.skipped?.length||0)+'。')
+        await refresh()
+      }})
+  }
+  const archive=async row=>{
+    if(!row.orphan||row.status!=='unbound'||busy)return
     setBusy(true)
-    try {
-      // Reveal native IDs only for an explicit management action, never in
-      // ordinary list results or the visible UI.
-      const lookup = await request('/sessions/ledger?' + new URLSearchParams({
-        status: 'unbound', search: row.sessionRef, reveal: '1', pageSize: '25'
+    try{
+      const lookup=await request('/sessions/ledger?'+new URLSearchParams({
+        status:'unbound',search:row.sessionRef,reveal:'1',pageSize:'25'
       }).toString())
-      const native = lookup.report?.items?.find(x => x.sessionRef === row.sessionRef && x.orphan)
-      if (!native?.sessionId) throw Error('历史记录已变更，请刷新重试')
-      const { preview } = await request('/sessions/native/preview', 'POST', { sessionId: native.sessionId })
-      if (!window.confirm('归档这段 DSH 对话？\n会话：' + (row.sessionTitle || row.sessionRef) +
-        '\n引用：' + preview.sessionRef +
-        '\n历史记录不会删除，也不会节省磁盘空间。如果 DSH 提供恢复接口，可以从“已归档”中恢复。')) {
-        setNotice('已取消原生 Session 归档')
-        return
-      }
-      const result = await request('/sessions/native/archive', 'POST', { token: preview.token })
-      setNotice('已从侧栏隐藏：' + result.result.sessionRef + '（数据未删除）')
-      void refresh()
-    } catch (e) { setError(e.message || String(e)) }
-    finally { setBusy(false) }
-  }
-  const trash = async row => {
-    if (!row.orphan || !report?.canTrash || busy) return
-    setBusy(true)
-    try {
-      const { preview }=await request('/sessions/trash/preview','POST',{sessionRef:row.sessionRef})
-      if (!window.confirm('移入回收站？\\n对话：'+(row.sessionTitle||row.scheduleTitle||'未命名')+
-        '\\nDSH 会话会从常用列表隐藏，但原始历史仍保留。可从回收站恢复。\\n此操作不会释放磁盘空间。')) return
-      const result=await request('/sessions/trash/move','POST',{token:preview.token})
-      setNotice('已移入回收站：'+result.result.sessionRef+'（历史未删除）')
-      void refresh()
-    } catch(e){setError(e.message||String(e))}
+      const native=lookup.report?.items?.find(x=>x.sessionRef===row.sessionRef&&x.orphan)
+      if(!native?.sessionId)throw Error('历史记录已变更，请刷新重试')
+      const {preview}=await request('/sessions/native/preview','POST',{sessionId:native.sessionId})
+      ask({title:'归档对话',confirmLabel:'归档',
+        description:'将「'+(row.sessionTitle||row.scheduleTitle||'未命名对话')+'」从常用列表隐藏。',
+        note:'历史记录仍会保留，不会释放磁盘空间。之后可在“已归档”中恢复。',
+        onConfirm:async()=>{
+          const result=await request('/sessions/native/archive','POST',{token:preview.token})
+          setNotice('已归档：'+result.result.sessionRef+'（历史记录已保留）')
+          await refresh()
+        }})
+    }catch(e){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
-  const recover=async row=>{
-    if (row.status!=='trashed'||busy) return
-    if(!window.confirm('从回收站恢复「'+(row.sessionTitle||'未命名对话')+'」？\\n聊天记录本来就没有删除。恢复后不会自动重新关联飞书聊天。'))return
-    setBusy(true)
-    try {
-      const {result}=await request('/sessions/trash/restore','POST',{sessionRef:row.sessionRef})
-      setNotice(result.target==='archived'?'已恢复到「已归档」':'已恢复到「对话历史」')
-      void refresh()
-    } catch(e){setError(e.message||String(e))}
-    finally{setBusy(false)}
+  const restore= row=>{
+    if(!report?.canRestore||busy||!['archived','trashed'].includes(row.status))return
+    ask({title:'恢复对话',confirmLabel:'恢复',
+      description:'将「'+(row.sessionTitle||row.scheduleTitle||'未命名对话')+'」恢复到正常对话列表。',
+      note:'不会自动重新建立之前已经解除的飞书聊天关联。',
+      onConfirm:async()=>{
+        if(row.status==='trashed'){
+          await request('/sessions/trash/restore','POST',{sessionRef:row.sessionRef})
+        }else{
+          await request('/sessions/native/restore','POST',{sessionRef:row.sessionRef})
+        }
+        setNotice('对话已恢复：'+(row.sessionTitle||row.scheduleTitle||row.sessionRef))
+        await refresh()
+      }})
   }
-  const restore = async row => {
-    if (row.status !== 'archived' || !report?.canRestore) return
-    if (!window.confirm('恢复归档的「' + (row.sessionTitle || row.scheduleTitle || '未命名对话') +
-      '」？\\n恢复后它会重新出现在 DSH 的会话列表中，不会重新建立已经解除的飞书聊天关联。')) return
+  const deleteArchived=async row=>{
+    if(!row.orphan||!report?.canDelete||busy)return
     setBusy(true)
-    try {
-      const result = await request('/sessions/native/restore', 'POST', { sessionRef: row.sessionRef })
-      setNotice('已恢复到 DSH 会话列表：' + result.result.sessionRef)
-      void refresh()
-    } catch (e) { setError(e.message || String(e)) }
-    finally { setBusy(false) }
+    try{
+      const {preview}=await request('/sessions/native/delete/preview','POST',{sessionRef:row.sessionRef})
+      const title=row.sessionTitle||row.scheduleTitle||'未命名对话'
+      ask({title:'永久删除对话',confirmLabel:'永久删除',danger:true,
+        description:'即将永久删除「'+title+'」的 DSH 原生会话记录。',
+        detail:preview.estimatedBytes===null?
+          '会话历史、关联的投影与工作区索引将由删除服务处理。':
+          '预计删除数据：'+(preview.estimatedBytes/1024).toFixed(1)+' KiB（实际以删除结果为准）',
+        note:'删除无法撤销。此操作不会清除飞书服务器已经发送的消息。',
+        onConfirm:async()=>{
+          const {result}=await request('/sessions/native/delete','POST',{token:preview.token})
+          setNotice('永久删除完成'+(result.bytesRemoved!=null?
+            '，实际清理 '+(result.bytesRemoved/1024).toFixed(1)+' KiB':'')+
+            (result.indexCleanupPending?'（部分辅助索引需检查）':''))
+          await refresh()
+        }})
+    }catch(e){setError(e.message||String(e))}
+    finally{setBusy(false)}
   }
   const formatDate = ts => Number.isFinite(ts) && ts > 0 ? opsDate(ts) : '—'
   return h(React.Fragment, null,
@@ -299,7 +307,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       h(OpsNote, null, '已有旧工作区中的会话不会强制迁移；手动恢复的会话不会被自动重复隐藏。')),
     mode !== 'maintenance' && h('div',{className:'fgw-session-list', 'data-expanded':showAdvanced?'yes':'no'},
       h(WbBlock, { title: mode === 'archive'?'已归档的对话':mode==='trash'?'回收站中的对话':'对话历史',
-      aside: mode==='trash'?'可恢复，当前不能永久删除':mode==='archive'?'归档不会释放磁盘空间':'只显示未归档、未移入回收站的 DSH 对话' },
+      aside: mode==='archive'?'选择恢复，或在安全删除服务可用时永久删除':'只显示未归档的 DSH 对话' },
       h('form', { className: 'fgw-session-filters fgw-session-filters-native',
         onSubmit: e => { e.preventDefault(); setQuery(old=>({...old,search:searchDraft,page:1})); if(searchDraft===query.search) void refresh() } },
         mode === 'all' && h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
@@ -355,22 +363,20 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             h('span',{className:'fgw-muted'},'最近活动未记录（创建：'+formatDate(x.createdAt)+'）')},
           {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unknown:'状态待确认',unbound:'未关联',archived:'已归档',trashed:'回收站'})[x.status]||'未知')},
           {key:'actions',title:'操作',render:x=>h('div',{className:'fgw-session-row-actions'},
-            x.status==='trashed'?
-              h('button',{type:'button',className:'fgw-refresh',disabled:busy,
-                onClick:()=>void recover(x)},'恢复'):
-            x.status==='archived'?
-              h('button',{type:'button',className:'fgw-refresh',disabled:busy||!report?.canRestore,
-                title:report?.canRestore?'恢复到 DSH 会话列表':'DSH 暂无恢复接口',
-                onClick:()=>void restore(x)},'恢复'):
-            x.orphan&&x.status==='unbound'?
-              h('button',{type:'button',className:'fgw-refresh',disabled:busy,
-                onClick:()=>void archive(x)},'归档'):null,
-            x.status!=='trashed'&&x.orphan&&['unbound','archived'].includes(x.status)?
-              h('button',{type:'button',className:'fgw-refresh',
-                disabled:busy||!report?.canTrash,
-                title:report?.canTrash?'将此会话放入可恢复的回收站':'当前 DSH 无法安全恢复会话',
-                onClick:()=>void trash(x)},'移入回收站'):null,
-            x.status==='trashed'&&h('span',{className:'fgw-muted',title:'DSH 尚无可用的永久删除接口'},'永久删除不可用'))}
+            mode==='archive'?
+              h(React.Fragment,null,
+                h('button',{type:'button',className:'fgw-refresh',
+                  disabled:busy||!report?.canRestore,
+                  title:report?.canRestore?'恢复到正常对话列表':'DSH 暂无可用的恢复接口',
+                  onClick:()=>restore(x)},'恢复'),
+                h('button',{type:'button',className:'fgw-refresh fgw-archive-delete',
+                  disabled:busy||!report?.canDelete||!x.orphan||x.type==='schedule',
+                  title:!report?.canDelete?'未安装支持的 DSH 安全删除服务':
+                    !x.orphan?'仍有关联，不能删除':'永久删除 DSH 会话',
+                  onClick:()=>void deleteArchived(x)},'删除')):
+              x.orphan&&x.status==='unbound'?
+                h('button',{type:'button',className:'fgw-refresh',disabled:busy,
+                  onClick:()=>void archive(x)},'归档'):'—')}
         ] }),
       report?.available && h('div',{className:'fgw-session-pages'},
         h('span',null,'共 '+wbCount(report.total)+' 条 · 第 '+query.page+'/'+Math.max(1,Math.ceil(report.total/25))+' 页'),
@@ -379,5 +385,8 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         h('button',{className:'fgw-refresh',type:'button',
           disabled:busy||query.page>=Math.ceil(report.total/25),
           onClick:()=>setQuery(x=>({...x,page:x.page+1}))},'下一页')))),
-    mode === 'maintenance' && h(OpsNote,null,'这些设置只调整工作区显示方式，不会删除原生聊天历史。'))
+    mode === 'maintenance' && h(OpsNote,null,'这些设置只调整工作区显示方式，不会删除原生聊天历史。'),
+    dialog&&h(FeishuSessionModal,{key:dialog.title+String(dialog.description),
+      dialog,busy:dialogBusy,error:dialogError,
+      onCancel:()=>setDialog(null),onConfirm:()=>void confirm()}))
 }
