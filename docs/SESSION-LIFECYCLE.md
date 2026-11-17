@@ -26,13 +26,13 @@
 ## 删除安全流程
 
 1. 仅对已经归档、没有飞书绑定且不属于定时任务的会话开放。Gateway 快照过期、有待处理消息或审批、原生活跃写入者仍存在时拒绝。
-2. `POST /sessions/native/delete/preview` 通过服务端索引解析哈希引用，使用 `sessionAdmin.inspect` 预览；只返回脱敏信息和 30 秒有效令牌。
+2. `POST /sessions/native/delete/preview` 通过服务端索引解析会话引用，并调用可选 `workspaceRegistry.archivedSessionMetadata()` 确认仍处于归档状态；只返回脱敏信息和 30 秒有效令牌。当前 archive-manager 不提供容量估计，因此不展示虚构的预估字节数。
 3. 前端显示页面内危险确认弹窗，勾选不可恢复后才提交。
-4. `POST /sessions/native/delete` 一次性消费令牌，再次检查全部状态，执行 `sessionAdmin.delete(id, { force:false, backup:false })`。只有支持的存储所有者才能负责完整日志、投影缓存、归档与工作区索引的一致性清理。
+4. `POST /sessions/native/delete` 一次性消费令牌，重新检查会话状态及活动 Agent，再调用 `@michengai/dsh-archive-manager` 扩展的 `workspaceRegistry.deleteSession(id)`。必须收到 `{ deleted: true }`，原生日志和 Workspace 等清理由该插件实现。
 5. 若删除服务提供 `presentSessionIds()`，额外检查日志已不在原生持久化中；写入脱敏审计记录；旧暂存索引同步清理。
 6. 不能仅依赖 Web 的过期快照断言安全，也不会使用 `fs.rm` 直接操作未知后端的存储目录。
 
-可选删除服务从 Web Host 的 `ctx.get('sessionAdmin')` 检测；不要求用户安装特定来源的插件，**但运行时未提供相容服务时必须安全降级**。社区插件与部署兼容性需要独立验收。
+**插件是可选的。** Web Admin 检查 `ctx.get('workspaceRegistry')` 上是否同时存在 `archivedSessionMetadata`、`deleteArchivedSessions` 与 `deleteSession`，这三个方法来自 [@michengai/dsh-archive-manager](https://github.com/MichengAI/dsh-archive-manager) 的 workspaceRegistry 扩展。没有安装或服务未加载时返回 `canDelete:false`，UI 将删除按钮置灰；其他会话功能正常使用。只能在 **DSH Web `web` Profile** 中加载才会被当前管理端发现。
 
 ## API 与设置
 
