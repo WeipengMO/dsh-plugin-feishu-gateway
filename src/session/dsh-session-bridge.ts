@@ -325,10 +325,14 @@ export class DshSessionBridge implements SessionBridge {
 
   /** Availability means the host has a compaction backend, NOT that auto=true was verified. */
   compactionStatus(sessionId?: string): SessionCompactionStatus {
-    const observed = sessionId ? this.compactionObserved.get(sessionId) : undefined
+    const snapshots = sessionId
+      ? [this.compactionObserved.get(sessionId)].filter((value): value is ObservedCompaction => value !== undefined)
+      : [...this.compactionObserved.values()]
+    const observed = [...snapshots].sort((a, b) => b.at - a.at)[0]
+    const total = snapshots.reduce((sum, value) => sum + value.count, 0)
     return {
       available: !this.disposed && Boolean(this.nativeCompaction()),
-      completedInProcess: observed?.count ?? 0,
+      completedInProcess: total,
       ...(observed ? {
         lastCompletedAt: observed.at,
         lastShadowedItems: observed.shadowedItems,
