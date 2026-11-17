@@ -20,7 +20,9 @@ import { validateSpec, previewOccurrences, specSummary, SCHEDULE_ACTIONS,
   TITLE_MAX, PROMPT_MAX, PREVIEW_MAX } from './schedule-spec.mjs'
 import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession, restoreNativeSession,
-  organizationSettings, saveOrganizationSettings } from './session-organizer.mjs'
+  organizationSettings, saveOrganizationSettings, retentionSettings, saveRetentionSettings,
+  previewRetention, previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
+  autoArchiveExpiredSessions } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
@@ -883,7 +885,7 @@ export function createAdminHandler(options = {}) {
           (params.get('search') || '').length > 128 ||
           (bot !== '' && !/^[a-z][a-z0-9_-]{0,31}$/.test(bot)) ||
           !validDay(from) || !validDay(to) || (from && to && from > to) ||
-          !['all', 'active', 'idle', 'unknown', 'unbound', 'archived'].includes(params.get('status') || 'all') ||
+          !['all', 'current', 'active', 'idle', 'unknown', 'unbound', 'archived', 'trashed'].includes(params.get('status') || 'all') ||
           !['all', 'p2p', 'group', 'schedule'].includes(params.get('type') || 'all') ||
           !['0', '1'].includes(params.get('reveal') || '0') ||
           !['0', '1'].includes(params.get('orphan') || '0')) throw httpError(400, 'invalid native Session query')
@@ -931,7 +933,7 @@ export function createAdminHandler(options = {}) {
           if (value.expiresAt <= Date.now()) nativePreviews.delete(key)
         }
         if (nativePreviews.size > 100) nativePreviews.clear()
-        nativePreviews.set(token, { sessionId: row.sessionId, expiresAt: Date.now() + 30_000 })
+        nativePreviews.set(token, { action: 'archive', sessionId: row.sessionId, expiresAt: Date.now() + 30_000 })
         return json(res, 200, { ok: true, preview: { token, expiresAt: Date.now() + 30_000,
           sessionRef: row.sessionRef, sessionTitle: row.sessionTitle,
           legacy: row.legacy, nativeHistoryPreserved: true } })
@@ -944,7 +946,7 @@ export function createAdminHandler(options = {}) {
             throw httpError(400, 'invalid confirmation token')
           const pending = nativePreviews.get(body.token)
           nativePreviews.delete(body.token)
-          if (!pending || pending.expiresAt <= Date.now()) throw httpError(409, 'confirmation expired')
+          if (!pending || pending.action !== 'archive' || pending.expiresAt <= Date.now()) throw httpError(409, 'confirmation expired')
           const result = await archiveNativeSession(stateDir, sessionServices(), pending.sessionId)
           return json(res, 200, { ok: true, result })
         })
@@ -954,6 +956,53 @@ export function createAdminHandler(options = {}) {
           const body = await readBody(req)
           exactKeys(body, ['sessionRef'])
           const result = await restoreNativeSession(stateDir, sessionServices(), body.sessionRef)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      // DSH has no portable persistence.delete(). Recycle bin only tracks
+      // reversible native archives; permanent deletion is intentionally absent.
+      if (req.method === 'GET' && route === PREFIX + '/sessions/retention') {
+        const report = await previewRetention(stateDir, sessionServices())
+        return json(res, 200, { ok: true, report })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/sessions/retention/settings') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          const settings = await saveRetentionSettings(stateDir, body)
+          return json(res, 200, { ok: true, settings })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/trash/preview') {
+        const body = await readBody(req)
+        exactKeys(body, ['sessionRef'])
+        const report = await previewTrashSession(stateDir, sessionServices(), body.sessionRef)
+        const token = randomUUID()
+        const expiresAt = Date.now() + 30_000
+        for (const [key,value] of nativePreviews) if (value.expiresAt <= Date.now())
+          nativePreviews.delete(key)
+        if (nativePreviews.size >= 100) nativePreviews.clear()
+        nativePreviews.set(token, { action: 'trash', sessionRef: report.sessionRef, expiresAt })
+        return json(res, 200, { ok: true, preview: { ...report, token, expiresAt } })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/trash/move') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['token'])
+          if (typeof body.token !== 'string' || !/^[0-9a-f-]{36}$/.test(body.token))
+            throw httpError(400, 'invalid confirmation token')
+          const pending = nativePreviews.get(body.token)
+          nativePreviews.delete(body.token)
+          if (!pending || pending.action !== 'trash' || pending.expiresAt <= Date.now())
+            throw httpError(409, 'confirmation expired')
+          const result = await moveNativeSessionToTrash(stateDir, sessionServices(), pending.sessionRef)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/trash/restore') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['sessionRef'])
+          const result = await restoreNativeSessionFromTrash(stateDir, sessionServices(), body.sessionRef)
           return json(res, 200, { ok: true, result })
         })
       }
@@ -1301,16 +1350,24 @@ export function apply(ctx, config = {}) {
         requestAdmission: typeof connection.admit === 'function' ? req => connection.admit(req) : undefined }) })
     ctx.logger.info('feishu-admin: management API registered on authenticated DSH Web')
     let running = false
+    let lastRetentionRun = 0
+    const stateDir = config.stateDir || path.join(config.home || os.homedir(),
+      '.dsh', 'feishu-channel-state')
+    const sessionServices = () => ({ registry: ctx.get('workspaceRegistry'),
+      persistence: ctx.get('sessionPersistence'), query: ctx.get('sessionQuery') })
     const interval = setInterval(() => {
       if (running) return
       running = true
-      void organizationSettings(config.stateDir || path.join(config.home || os.homedir(),
-        '.dsh', 'feishu-channel-state')).then(settings =>
-        settings.enabled ? reconcileSessionOrganization(
-          config.stateDir || path.join(config.home || os.homedir(), '.dsh', 'feishu-channel-state'),
-          { registry: ctx.get('workspaceRegistry'), persistence: ctx.get('sessionPersistence'),
-            query: ctx.get('sessionQuery') }, { dryRun: false }) : undefined)
-        .catch(() => ctx.logger.warn('Feishu session organization unavailable; Gateway left unaffected'))
+      void (async () => {
+        const settings = await organizationSettings(stateDir)
+        if (settings.enabled) await reconcileSessionOrganization(stateDir, sessionServices(), { dryRun: false })
+        // Retention checks once per hour, not on every 15-second UI tick.
+        // Never deletes native Session logs, even for expired trash entries.
+        if (Date.now() - lastRetentionRun >= 3600000) {
+          lastRetentionRun = Date.now()
+          await autoArchiveExpiredSessions(stateDir, sessionServices())
+        }
+      })().catch(() => ctx.logger.warn('Feishu Session maintenance unavailable; history unchanged'))
         .finally(() => { running = false })
     }, 15000)
     interval.unref?.()

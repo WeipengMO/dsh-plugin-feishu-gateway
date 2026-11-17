@@ -14,13 +14,13 @@ const WORKBENCH_NAV = [
   ['advanced', '模型与连接', '⚙'],
 ]
 const WORKBENCH_TABS = {
-  conversations: [['tasks', '实时任务'], ['messages', '消息投递'], ['sessions', '会话管理']],
+  conversations: [['sessions', '会话管理'], ['tasks', '实时任务'], ['messages', '消息投递']],
   channels: [['bots', '机器人'], ['groups', '群聊管理'], ['security', '安全与权限']],
   analytics: [['usage', 'Token 用量'], ['approvals', '审批审计']],
   operations: [['alerts', '告警中心'], ['diagnostics', '连接与日志']],
 }
 const WORKBENCH_DESCRIPTIONS = {
-  conversations: '查看正在运行的任务、消息发送情况和历史对话。',
+  conversations: '管理对话历史、查看正在运行的任务和消息投递情况。',
   automation: '管理 DSH 原生定时任务、运行记录和飞书通知。',
   channels: '统一管理机器人、群聊、白名单与工具执行权限。',
   'agent-profile': '管理飞书 Agent 的独立工作区身份和记忆。',
@@ -94,7 +94,7 @@ function Workbench() {
   // authoritative Gateway read model (never inferred from /ops events).
   const [approvals, setApprovals] = useState(null)
   const [sectionTab, setSectionTab] = useState({
-    conversations: 'tasks', channels: 'bots', analytics: 'usage', operations: 'alerts',
+    conversations: 'sessions', channels: 'bots', analytics: 'usage', operations: 'alerts',
   })
   const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
@@ -308,8 +308,6 @@ function Workbench() {
           !tabs.length && h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected])),
         h('div', { className: 'fgw-top-actions' },
           selected !== 'agent-profile' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
-          selected !== 'advanced' && selected !== 'agent-profile' && h('button', { className: 'fgw-refresh fgw-ops-cta', type: 'button',
-            onClick: () => onConfig('settings') }, '模型与连接'),
           selected !== 'agent-profile' && selected !== 'automation' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
