@@ -1,5 +1,7 @@
 # 版本兼容性分析
 
+> **版本兼容性参考**：下文环境和依赖版本是记录时的快照，并非最新 npm 发布或生产部署状态。当前要求以 [Gateway](../package.json) 和 [Admin](../web-admin/package.json) 的 `engines` 为准，当前安装流程见 [首次部署](GETTING-STARTED.md)。不要通过版本豁免忽略真实不兼容问题。
+
 > 目标：说明本插件与当前 DSH 运行时、Node、Cordis、飞书 SDK 的兼容边界，以及
 > **如何在不使用 `allow-version` 的前提下通过官方兼容性检查**。
 
