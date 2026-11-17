@@ -953,3 +953,11 @@
  .fgw-retention-grid{grid-template-columns:minmax(0,1fr)}
  .fgw-retention-toggle{grid-column:1}
 }
+
+.fgw-retention-preview{padding:10px 13px;border:1px solid var(--border,#8883);border-radius:9px;font-size:12px}
+.fgw-retention-preview>summary{cursor:pointer;font-weight:600;line-height:1.5}
+.fgw-retention-preview ul{list-style:none;padding:6px 0 0;margin:0;display:grid;gap:0}
+.fgw-retention-preview li{padding:9px 0;border-bottom:1px solid var(--border,#8882);display:flex;justify-content:space-between;align-items:center;gap:8px 20px;flex-wrap:wrap}
+.fgw-retention-preview li:last-child{border:0}
+.fgw-retention-preview strong{font-weight:600;overflow-wrap:anywhere}
+.fgw-retention-preview span{font-size:11px}
