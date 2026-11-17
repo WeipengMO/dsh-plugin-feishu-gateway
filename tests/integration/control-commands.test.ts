@@ -147,7 +147,7 @@ describe('native Feishu control commands', () => {
     const original=t.bridge.created[0]!.sessionId
     await t.send('/compact', 'om_busy')
     await t.gateway.whenIdle()
-    expect(t.transport.sent.at(-1)?.text).toContain('正在进行')
+    expect(t.transport.sent.at(-1)?.text).toContain('压缩在进行')
     expect(t.bridge.disposedSessions).not.toContain(original)
     await t.send('followup', 'om_followup')
     await t.gateway.whenIdle()
