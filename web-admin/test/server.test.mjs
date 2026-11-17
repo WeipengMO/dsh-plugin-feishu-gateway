@@ -1373,3 +1373,72 @@ test('without real deletion capability the permanent-delete preview is unavailab
     assert.equal(result.status,501)
   }finally{await f.close();await rm(dir,{recursive:true,force:true})}
 })
+
+test('native batch archive and restore require login, CSRF, one-time tokens, and safe selections', async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),'dsh-native-batch-'))
+  const stateDir=path.join(dir,'state'), cwd=path.join(stateDir,'workspace')
+  const ids=['feishu-default-batch-001','feishu-default-batch-002','feishu-default-batch-bound']
+  const snapshots=ids.map(id=>({header:{id,cwd,createdAt:Date.now()-86400000}}))
+  const archived=[]
+  const registry={
+    archivedSessionIds:archived,
+    list:()=>[],resolveByPath:async()=>null,
+    create:async()=>({id:'workspace',sessionIds:[],attachSession:async()=>{}}),
+    archiveSession:async id=>{if(!archived.includes(id))archived.push(id)},
+    unarchiveSession:async id=>{const index=archived.indexOf(id);if(index>=0)archived.splice(index,1)}
+  }
+  await mkdir(cwd,{recursive:true})
+  await writeFile(path.join(stateDir,'sessions.json'),JSON.stringify({
+    bindings:{'default:oc_test':{
+      sessionId:ids[2],createdAt:Date.now(),lastActiveAt:Date.now()
+    }}
+  }))
+  await writeFile(path.join(stateDir,'ops-runtime.json'),JSON.stringify({
+    version:1,ts:Date.now(),workspace:cwd,isolatedAgent:true,tasks:[],
+    status:'ok',stats:{},transport:{}
+  }))
+  const f=await fixture({stateDir,sessionServices:{
+    registry,persistence:{list:async()=>snapshots},
+    query:{readTitle:async id=>'Conversation '+id.slice(-3)}
+  }})
+  try{
+    const current=await f.request('/sessions/ledger?status=current')
+    assert.equal(current.status,200)
+    assert.equal(current.json.report.canArchive,true)
+    const items=current.json.report.items
+    const safe=items.filter(x=>x.orphan).map(x=>x.sessionRef)
+    const bound=items.find(x=>!x.orphan).sessionRef
+    assert.equal(safe.length,2)
+    const input={action:'archive',sessionRefs:[...safe,bound]}
+    assert.equal((await f.request('/sessions/native/batch/preview','POST',input,{})).status,401)
+    assert.equal((await f.request('/sessions/native/batch/preview','POST',input,allowed)).status,403)
+    assert.equal((await f.request('/sessions/native/batch/preview','POST',
+      {action:'archive',sessionRefs:[safe[0],safe[0]]},mutating)).status,400)
+    const preview=await f.request('/sessions/native/batch/preview','POST',input,mutating)
+    assert.equal(preview.status,200)
+    assert.equal(preview.json.preview.requested,3)
+    assert.equal(preview.json.preview.eligible,2)
+    assert.equal(preview.json.preview.skipped,1)
+    const token=preview.json.preview.token
+    assert.match(token,/^[0-9a-f-]{36}$/)
+    const moved=await f.request('/sessions/native/batch/execute','POST',{token},mutating)
+    assert.equal(moved.status,200)
+    assert.equal(moved.json.result.succeeded,2)
+    assert.equal(moved.json.result.failed,0)
+    assert.equal(archived.length,2)
+    assert.equal(snapshots.length,3)
+    assert.equal((await f.request('/sessions/native/batch/execute','POST',{token},mutating)).status,409)
+    const listing=await f.request('/sessions/ledger?status=archived')
+    assert.equal(listing.json.report.total,2)
+    const recovery=await f.request('/sessions/native/batch/preview','POST',
+      {action:'restore',sessionRefs:safe},mutating)
+    assert.equal(recovery.status,200)
+    assert.equal(recovery.json.preview.eligible,2)
+    const restored=await f.request('/sessions/native/batch/execute','POST',
+      {token:recovery.json.preview.token},mutating)
+    assert.equal(restored.status,200)
+    assert.equal(restored.json.result.succeeded,2)
+    assert.equal(archived.length,0)
+    assert.equal(snapshots.length,3)
+  }finally{await f.close();await rm(dir,{recursive:true,force:true})}
+})
