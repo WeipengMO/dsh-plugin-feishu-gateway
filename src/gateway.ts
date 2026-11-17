@@ -518,12 +518,12 @@ export class FeishuGateway {
     // A cancellation or status request MUST bypass the current chat's Agent
     // queue, otherwise a 5-minute turn would block the very control used to
     // stop or inspect it. /new remains serialized behind current work.
-    if (command === 'cancel' || command === 'status' || command === 'help') {
+    if (command === 'cancel' || command === 'status' || command === 'help' || command === 'context') {
       await this.dispatchControl(record, command)
       return
     }
     await this.enqueue(record.botId, record.chatId, () =>
-      command === 'new' || command === 'model' || command === 'models'
+      command === 'new' || command === 'model' || command === 'models' || command === 'compact'
         ? this.dispatchControl(record, command) : this.dispatch(record), this.scopeKey(record))
   }
 
@@ -583,6 +583,73 @@ export class FeishuGateway {
           `待发送回复：${health.outbox.pending}`,
           `当前已绑定会话：${this.registry.get(key) ? '是' : '否'}`,
         ].join('\n')
+      } else if (command === 'context') {
+        const bound = this.registry.get(key)
+        const status = this.bridge.compactionStatus?.(bound?.sessionId)
+        reply = [
+          'DSH 上下文压缩',
+          '原生压缩引擎：' + (status?.available ? '可用' : '未检测到'),
+          status?.available
+            ? '自动触发：由 DSH compaction-basic 根据模型上下文与输出预留决定（飞书不重复设阈值）。'
+            : '自动压缩：未确认启用；请在 Gateway 所属 DSH Profile 中检查 dsh-compaction-basic。',
+          bound
+            ? '当前聊天：已有 DSH 会话'
+            : '当前聊天：尚未创建会话',
+          status?.lastCompletedAt
+            ? '本次 Gateway 启动后已观察到 ' + status.completedInProcess +
+              ' 次完整压缩；最近一次：' + new Date(status.lastCompletedAt).toISOString() +
+              '，替换历史项 ' + (status.lastShadowedItems ?? 0) + ' 个。'
+            : '本次 Gateway 启动后尚未观察到该会话完成压缩；不代表历史上从未压缩。',
+          '手动触发：/compact（仅已有会话；不影响其他聊天）。',
+          '说明：累计模型用量不等于当前上下文占用；原生历史日志会保留。',
+        ].join('\n')
+      } else if (command === 'compact') {
+        const bound = this.registry.get(key)
+        const status = this.bridge.compactionStatus?.(bound?.sessionId)
+        if (!bound) {
+          reply = '当前聊天尚未创建 DSH 会话，没有可压缩的历史。先发送普通消息，再使用 /compact。'
+        } else if (!status?.available || !this.bridge.compactNow) {
+          reply = '此 DSH Profile 未检测到原生 compaction 后端。请检查 @deepseek-ai/dsh-compaction-basic 是否已加载；飞书不会生成替代摘要。'
+        } else {
+          // Per-chat queue serializes this against Feishu turns; DSH's own
+          // compactNow() admission lock also rejects concurrent scheduled
+          // turns or compactions. No second Agent turn is created.
+          const sessionId = await this.ensureSession(key, record.botId, record.chatId,
+            record.senderId, record.chatType)
+          const signalController = new AbortController()
+          const onStop = () => signalController.abort(new Error('gateway stopping'))
+          const timeout = setTimeout(() => signalController.abort(new Error('compaction timed out')),
+            Math.max(30_000, Math.min(this.config.replyTimeoutMs, 180_000)))
+          this.abortController.signal.addEventListener('abort', onStop, { once: true })
+          try {
+            const result = await this.bridge.compactNow(sessionId, signalController.signal)
+            reply = result.outcome === 'nothing-to-compact'
+              ? '当前没有足够的旧历史可以安全压缩，未修改会话。'
+              : '已完成 DSH 原生上下文压缩：替换 ' + (result.shadowedItems ?? 0) +
+                ' 个旧历史项。原始日志仍保留，最近对话继续可用。' +
+                (result.shadowedTokens !== undefined
+                  ? '\n压缩前被替换区域估算约 ' + result.shadowedTokens +
+                    ' tokens（不等于净节省量）。' : '')
+          } catch (error) {
+            const code = (error as { code?: unknown })?.code
+            if (code === 'busy') reply = '当前会话仍有 Agent 任务或压缩在进行，无法同时压缩。请在任务结束后重试。'
+            else if (code === 'cancelled' || signalController.signal.aborted)
+              reply = '压缩已取消或超时；请使用 /context 查看状态，再决定是否重试。'
+            else if (code === 'changed')
+              reply = '压缩期间会话历史发生变化。本次没有替换旧历史，请稍后重试。'
+            else if (code === 'summary')
+              reply = '压缩模型未能产生有效摘要，DSH 没有用不可靠摘要替换历史。'
+            else if (code === 'commit' || code === 'persistence')
+              reply = '压缩保存阶段出现异常，会话可能已有部分变更；请检查 DSH 会话历史，不要立即重复执行。'
+            else {
+              this.logger.warn('native session compaction failed: %s', String(error))
+              reply = 'DSH 原生压缩未完成，请检查 Gateway Host 的压缩服务和模型日志。'
+            }
+          } finally {
+            clearTimeout(timeout)
+            this.abortController.signal.removeEventListener('abort', onStop)
+          }
+        }
       } else if (command === 'models') {
         const extra = record.text.trim().replace(/^\/models\s*/i, '').trim()
         if (extra) {
