@@ -1154,3 +1154,95 @@
 .fgw-skills button:focus-visible{outline:2px solid var(--ring,#5282dd);outline-offset:2px;}
 @media(max-width:850px){.fgw-skills-summary{align-items:flex-start;flex-direction:column;gap:11px;}.fgw-skills-shell{grid-template-columns:minmax(170px,220px) minmax(0,1fr);}}
 @media(max-width:600px){.fgw-skills-shell{display:flex;flex-direction:column;height:auto;min-height:580px;}.fgw-skills-rail{height:270px;flex:none;border-right:0;border-bottom:1px solid var(--border,#8884);}.fgw-skills-shell:not(.show-list) .fgw-skills-rail{display:none;}.fgw-skills-shell.show-list .fgw-skills-main{display:none;}.fgw-skills-main{min-height:540px;flex:1;}.fgw-skills-mobile-list{display:block;align-self:flex-start;margin:10px 12px 0;padding:7px 10px;border:1px solid var(--border,#8884);border-radius:8px;background:transparent;color:inherit;font-size:11px!important;}.fgw-skills-document-head{padding:14px;align-items:flex-start;flex-wrap:wrap;}.fgw-skills-actions{justify-content:flex-end;width:100%;}.fgw-skills-heading h2{font-size:16px;}.fgw-skills-document-foot{padding:10px 14px;}.fgw-skills-editor-tabs{padding:0 14px;}}
+
+
+/* Admin layout polish: consistent alignment at browser zoom and compact model controls. */
+/* The host can resize the workbench without changing the browser viewport.
+   Use the actual content column, not the outer window, for responsive behavior. */
+.fgw-content{container-type:inline-size;overflow-x:hidden}
+.fgw-content > *{
+  width:100%;
+  max-width:var(--fgw-page-max,1280px);
+  margin-inline:auto;
+}
+/* Both had margin:0 shorthands that overrode the shared centered page frame. */
+.fgw-content > .fgw-shortcuts,
+.fgw-content > .fgw-approval-metrics{margin-inline:auto}
+.fgw-content > .fgw-shortcuts{margin-bottom:24px}
+
+/* Model routing has one clear hierarchy: a two-column route editor, then the
+   preset selector. The additional connection settings stay below it. */
+.fga-model-heading{margin-bottom:1px;align-items:center}
+.fga-model-route-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:stretch;
+  gap:14px;
+  min-width:0;
+}
+.fga-model-card{
+  min-width:0;
+  padding:19px;
+  border:0;
+  border-radius:12px;
+  background:color-mix(in srgb,var(--muted,#8882) 47%,var(--card,transparent));
+  gap:12px;
+}
+.fga-model-route-grid > .fga-model-card{height:100%}
+.fga-model-card-head{align-items:baseline;flex-wrap:wrap}
+.fga-model-card-head strong{font-size:14px;font-weight:670}
+.fga-model-select,.fga-model-search{max-width:100%}
+.fga-model-tag{border:0;background:var(--muted,#8882)}
+.fga-model-multiselect{align-content:flex-start;min-width:0}
+.fga-model-preset{
+  max-width:800px;
+  padding:5px 0 0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+}
+.fga-model-preset .fga-model-select{max-width:800px}
+.fga-model-preset .fga-hint{max-width:780px}
+.fgw-advanced .fga-divider{display:none}
+.fgw-advanced .fga-settings-group{
+  margin:18px 0 0;
+  padding:0;
+  font-size:14px;
+  font-weight:670;
+  line-height:1.5;
+}
+.fgw-advanced .fga-section > .fga-field,
+.fgw-advanced .fga-section > .fga-proxy-status{max-width:880px}
+.fgw-advanced .fga-section > .fga-fields-row{max-width:1000px}
+.fgw-advanced .fga-section > .fga-hint{max-width:880px}
+
+/* Container width reflects both DSH sidebars and browser zoom. */
+@container (max-width:1000px){
+  .fgw-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fgw-two-column,.fgw-usage-chart-grid{grid-template-columns:minmax(0,1fr)}
+  .fgw-usage-primary-fields{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3){grid-column:auto}
+}
+@container (max-width:840px){
+  .fga-model-route-grid{grid-template-columns:minmax(0,1fr)}
+  .fgw-usage-facets{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .fgw-usage-metrics,.fgw-approval-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (max-width:650px){
+  .fgw-shortcuts,.fgw-grid-cards,.fgw-flow{grid-template-columns:minmax(0,1fr)}
+  .fgw-hero{flex-direction:column;align-items:flex-start}
+  .fgw-hero-status{align-items:flex-start}
+  .fgw-topbar{flex-wrap:wrap;align-items:flex-start}
+  .fgw-top-actions{width:100%;justify-content:space-between}
+  .fgw-usage-primary-fields,.fgw-usage-facets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3){grid-column:auto}
+}
+@container (max-width:410px){
+  .fgw-metrics,.fgw-usage-metrics,.fgw-approval-metrics{grid-template-columns:minmax(0,1fr)}
+  .fgw-usage-primary-fields,.fgw-usage-facets{grid-template-columns:minmax(0,1fr)}
+  .fgw-top-actions{flex-wrap:wrap}
+  .fga-model-card{padding:14px}
+  .fga-model-multiselect{flex-direction:column;align-items:stretch}
+  .fga-model-tag-label{max-width:100%}
+  .fga-model-add{flex:1 1 auto;max-width:none}
+}
