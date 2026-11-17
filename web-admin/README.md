@@ -13,6 +13,7 @@
 | --- | --- |
 | 首次安装两个 Profile | [首次部署](../docs/GETTING-STARTED.md) |
 | 管理台各入口 | [Web 管理说明](../docs/WEB-ADMIN.md) |
+| Skills 技能库 | [飞书专属 Skills](../docs/FEISHU-SKILLS.md) |
 | 会话归档、关联、回收站规划 | [会话管理](../docs/SESSION-CENTER-UX.md) |
 | 升级、服务、代理与排障 | [运维手册](../docs/OPERATIONS.md) |
 | API / 安全 / 测试 | [开发说明](../docs/DEVELOPMENT.md)、[技术架构](../docs/ARCHITECTURE.md) |
@@ -20,6 +21,7 @@
 ## 源码及构建
 
 - `src/server.mjs`：受认证保护的管理 API。
+- `src/skills-manager.mjs`、`src/skills-panel.js`：飞书专用 SKILL.md 管理，不读写 DSH 全局 Skills。
 - `src/client.js`、`src/workbench.js`、`src/*-panel.js`、`src/client.css`：DSH Web 前端。
 - `src/session-organizer.mjs`、`src/session-read.mjs`：原生 DSH 历史与飞书关联的不同只读 / 管理路径。
 - `test/*.test.mjs`：权限、数据脱敏、管理命令和前端静态回归。

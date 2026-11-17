@@ -28,6 +28,8 @@ import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNati
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
   restoreAgentFile, saveAgentSettings, applyAgentProfile, detachLegacyOverlay } from './agent-profile.mjs'
+import { listFeishuSkills, readFeishuSkill, saveFeishuSkill, setFeishuSkillEnabled,
+  deleteFeishuSkill, syncFeishuSkills } from './skills-manager.mjs'
 import { readExecPolicy, writeExecPolicy, normalizeExecPolicy, defaultProfilePath,
   EXEC_MODES, APPROVAL_POLICIES, EXEC_OVERLAY_FILE } from './exec-policy.mjs'
 
@@ -1197,6 +1199,45 @@ export function createAdminHandler(options = {}) {
           return
         }
         return json(res, 200, { ok: true, report })
+      }
+      // Feishu-owned Skills only: never writes DSH global skills/config.
+      // The same owner admission as scheduling protects mutable instructions.
+      if (route === PREFIX + '/skills' || route.startsWith(PREFIX + '/skills/'))
+        authorizeSchedule(req, admit, req.method === 'GET' ? 'view' : 'edit')
+      if (req.method === 'GET' && route === PREFIX + '/skills') {
+        return json(res, 200, { ok: true, catalog: await listFeishuSkills(await agentProfileContext(stateDir)) })
+      }
+      if (req.method === 'GET' && route === PREFIX + '/skills/file') {
+        const name = new URL(req.url ?? '', 'http://localhost').searchParams.get('name')
+        return json(res, 200, { ok: true, skill: await readFeishuSkill(await agentProfileContext(stateDir), name) })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/skills/file') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['name', 'content', 'expectedRevision'])
+          return json(res, 200, { ok: true, result: await saveFeishuSkill(await agentProfileContext(stateDir), body) })
+        })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/skills/enabled') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['name', 'enabled', 'expectedRevision'])
+          return json(res, 200, { ok: true, result: await setFeishuSkillEnabled(await agentProfileContext(stateDir), body) })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/skills/delete') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['name', 'expectedRevision'])
+          return json(res, 200, { ok: true, result: await deleteFeishuSkill(await agentProfileContext(stateDir), body) })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/skills/sync') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, [])
+          return json(res, 200, { ok: true, result: await syncFeishuSkills(await agentProfileContext(stateDir)) })
+        })
       }
       if (req.method === 'GET' && route === PREFIX + '/agent-profile') {
         return json(res, 200, { ok: true, profile: await listAgentFiles(await agentProfileContext(stateDir)) })
