@@ -472,7 +472,7 @@ function onlyRow(data, ref) {
 }
 function eligibleToTrash(data, row) {
   // A possibly stale Gateway cannot prove absence of a new binding or writer.
-  if (data.runtime.stale || row.bound || !row.orphan || data.activeTasks[row.id] ||
+  if (data.runtime.stale || row.bound || !row.orphan || row.type === 'schedule' || data.activeTasks[row.id] ||
     row.status === 'active' || row.status === 'unknown' ||
     data.runtime.stats?.pendingApprovals || data.runtime.stats?.outboxPending ||
     data.runtime.stats?.inboxPending) throw Object.assign(
