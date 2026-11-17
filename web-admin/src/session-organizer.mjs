@@ -264,6 +264,9 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
       typeof services.registry?.unarchiveSession === 'function',
     canDelete: !data.runtime.stale && typeof services.deleter?.inspect === 'function' &&
       typeof services.deleter?.delete === 'function',
+    deleteUnavailableReason: data.runtime.stale ? '飞书通道状态未确认，暂时不能删除。' :
+      typeof services.deleter?.delete === 'function' ? null :
+      '未检测到 @michengai/dsh-archive-manager 的删除功能。可选安装至 DSH Web 的 web Profile；未安装不影响其他功能。',
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
 export function reconcileSessionOrganization(stateDir, services, options = {}) {
@@ -623,6 +626,65 @@ export function autoArchiveExpiredSessions(stateDir, services, now = Date.now())
 }
 
 /**
+ * Optional integration with @michengai/dsh-archive-manager.
+ *
+ * The plugin augments the existing DSH workspaceRegistry rather than
+ * providing a separate "sessionAdmin" service. Its real interface is:
+ *   archivedSessionMetadata(): { items: [{ sessionId, createdAt }] }
+ *   deleteArchivedSessions(target)
+ *   deleteSession(sessionId): { deleted: true }
+ *
+ * We require the full signature to avoid accidentally enabling the dangerous
+ * action because an unrelated extension exposes a same-named method.
+ * These functions are not called during capability detection.
+ */
+export function archiveManagerDeleteAvailable(registry) {
+  return typeof registry?.archivedSessionMetadata === 'function' &&
+    typeof registry?.deleteArchivedSessions === 'function' &&
+    typeof registry?.deleteSession === 'function'
+}
+
+export function createArchiveManagerDeleter(registry, persistence, sessions) {
+  if (!archiveManagerDeleteAvailable(registry)) return null
+  return {
+    isLive: sessionId => {
+      // dsh-archive-manager itself can detach a live session before removing
+      // it. The Feishu Admin never intentionally permits that behaviour.
+      if (typeof sessions?.get !== 'function') return false
+      return sessions.get(sessionId) !== undefined
+    },
+    async inspect(sessionId) {
+      if (typeof sessions?.get === 'function' && sessions.get(sessionId) !== undefined)
+        throw Object.assign(new Error('会话正在执行，不能删除'), { status: 409 })
+      const metadata = await registry.archivedSessionMetadata()
+      if (!Array.isArray(metadata?.items) ||
+        !metadata.items.some(row => row?.sessionId === sessionId))
+        throw Object.assign(new Error('此会话已不在归档中，请刷新重试'), { status: 409 })
+      // This plugin does not report bytes; do not invent an estimate.
+      return { live: false }
+    },
+    async delete(sessionId, options) {
+      if (options?.force !== false || options?.backup !== false)
+        throw Object.assign(new Error('unsafe delete options'), { status: 400 })
+      if (typeof sessions?.get === 'function' && sessions.get(sessionId) !== undefined)
+        throw Object.assign(new Error('会话正在执行，不能删除'), { status: 409 })
+      const result = await registry.deleteSession(sessionId)
+      if (result?.deleted !== true)
+        throw Object.assign(new Error('归档管理插件未确认删除成功'), { status: 503 })
+      return { deleted: true }
+    },
+    async presentSessionIds() {
+      // Physical deletion in the archive-manager already verifies persistence
+      // using stat/location. A second indexed list read is only a guard.
+      if (typeof persistence?.list !== 'function') return null
+      const result = await persistence.list()
+      const entries = Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : []
+      return new Set(entries.map(item => item?.header?.id ?? item?.id).filter(id => typeof id === 'string'))
+    },
+  }
+}
+
+/**
  * Permanent Session deletion is only supported through a runtime service
  * which owns the DSH persistence, workspace, projection and live-agent cleanup.
  * Never guess storage paths, rm logs, or represent archive/unlink as delete.
@@ -631,7 +693,7 @@ function deletionService(services) {
   const deleter = services.deleter
   if (!deleter || typeof deleter.inspect !== 'function' ||
     typeof deleter.delete !== 'function') {
-    throw Object.assign(new Error('当前 DSH 未提供可用的安全删除服务'), { status: 501 })
+    throw Object.assign(new Error('未检测到 @michengai/dsh-archive-manager 删除功能，请确认已安装在 web Profile 并启用'), { status: 501 })
   }
   return deleter
 }
