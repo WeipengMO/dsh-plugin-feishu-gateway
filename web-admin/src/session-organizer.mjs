@@ -203,6 +203,21 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
   const page = Number.isInteger(query.page) && query.page > 0 && query.page < 100000 ? query.page : 1
   const pageSize = Number.isInteger(query.pageSize) && query.pageSize > 0 &&
     query.pageSize <= 100 ? query.pageSize : 25
+  // A user searches visible conversation titles, not opaque Session hashes.
+  // Bound cost to protect large persistence stores; no agent/session resume.
+  const titleSearchLimited = Boolean(search && data.records.length > 1000)
+  const searchedTitles = new Map()
+  if (search && !titleSearchLimited && typeof services.query?.readTitle === 'function') {
+    for (let offset = 0; offset < data.records.length; offset += 16) {
+      await Promise.all(data.records.slice(offset, offset + 16).map(async row => {
+        try {
+          const value = await services.query.readTitle(row.id)
+          const title = typeof value === 'string' ? value : value?.title
+          if (typeof title === 'string') searchedTitles.set(row.id, title.slice(0,150))
+        } catch { /* title lookup is optional, never resume a Session */ }
+      }))
+    }
+  }
   const filtered = data.records.filter(row =>
     (status === 'all' ||
       (status === 'current' ? !row.archived && !trash.items[row.id] :
@@ -213,15 +228,15 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     (!query.orphanOnly || row.orphan) &&
     (!query.bot || row.botId === query.bot) &&
     row.lastActiveAt >= from && row.lastActiveAt <= to &&
-    (!search || [row.idRef, row.botId, row.chatRef, row.scheduleTitle,
+    (!search || [row.idRef, row.botId, row.chatRef, row.scheduleTitle, searchedTitles.get(row.id),
       settings.revealNames && reveal ? row.chatName : null,
       reveal ? row.id : null].some(v => String(v || '').toLowerCase().includes(search))))
     .sort((a,b) => b.lastActiveAt - a.lastActiveAt || a.id.localeCompare(b.id))
   const items = []
   for (const row of filtered.slice((page-1)*pageSize, page*pageSize)) {
-    let sessionTitle = null
+    let sessionTitle = searchedTitles.get(row.id) || null
     try {
-      if (typeof services.query?.readTitle === 'function') {
+      if (!sessionTitle && typeof services.query?.readTitle === 'function') {
         const title = await services.query.readTitle(row.id)
         if (typeof title === 'string') sessionTitle = title.slice(0, 150)
         else if (typeof title?.title === 'string') sessionTitle = title.title.slice(0, 150)
@@ -241,7 +256,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
   }
   return { available: true, workspaceTitle: data.workspace?.title || null,
     workspaceId: data.workspace?.id || null, settings, total: filtered.length,
-    page, pageSize, items, canRestore: typeof services.registry?.unarchiveSession === 'function', nativeCount: data.records.length,
+    page, pageSize, items, titleSearchLimited, canRestore: typeof services.registry?.unarchiveSession === 'function', nativeCount: data.records.length,
     orphanCount: data.records.filter(row => row.orphan).length,
     archivedCount: data.records.filter(row => row.archived && !trash.items[row.id]).length,
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
