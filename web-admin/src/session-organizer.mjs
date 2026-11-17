@@ -756,3 +756,107 @@ export function permanentlyDeleteNativeSession(stateDir, services, sessionRef) {
       indexCleanupPending }
   })
 }
+
+/** Batch operations never share raw Session IDs with the browser. A small
+ * selection is previewed first, then each action revalidates at execution. */
+const NATIVE_BATCH_LIMIT = 20
+const NATIVE_BATCH_ACTIONS = new Set(['archive', 'restore', 'delete'])
+export function validateNativeSessionBatch(input) {
+  if (!isObj(input) || Object.keys(input).some(key => !['action','sessionRefs'].includes(key)) ||
+    !NATIVE_BATCH_ACTIONS.has(input.action) || !Array.isArray(input.sessionRefs) ||
+    input.sessionRefs.length < 1 || input.sessionRefs.length > NATIVE_BATCH_LIMIT ||
+    input.sessionRefs.some(ref => !validRef(ref)) ||
+    new Set(input.sessionRefs).size !== input.sessionRefs.length)
+    throw Object.assign(new Error('请选择 1–20 条不重复的对话记录'), { status: 400 })
+  return { action: input.action, sessionRefs: [...input.sessionRefs] }
+}
+function batchRowReason(action, row, data, trash, services) {
+  if (!row) return '会话不存在或已发生变化'
+  if (data.runtime.stale) return '飞书运行状态待确认，请稍后刷新'
+  if (data.runtime.stats?.pendingApprovals || data.runtime.stats?.inboxPending ||
+      data.runtime.stats?.outboxPending) return '仍有审批或消息正在处理'
+  if (action === 'archive') {
+    if (row.archived || trash.items[row.id]) return '已经归档'
+    if (row.bound) return '仍与飞书聊天关联，请先解除关联'
+    if (row.type === 'schedule' || data.activeTasks[row.id]) return '定时任务会话暂不支持手动归档'
+    if (!row.orphan || row.status !== 'unbound') return '会话仍在运行或状态未知'
+    return null
+  }
+  if (!row.archived) return '不是已归档的对话'
+  if (row.status === 'active' || data.activeTasks[row.id]) return '会话正在使用'
+  if (action === 'restore') {
+    if (typeof services.registry?.unarchiveSession !== 'function')
+      return '当前 DSH 无法恢复归档'
+    return null
+  }
+  if (row.bound || !row.orphan) return '仍与飞书聊天关联，请先解除关联'
+  if (row.type === 'schedule') return '定时任务会话暂不支持删除'
+  if (typeof services.deleter?.inspect !== 'function' || typeof services.deleter?.delete !== 'function')
+    return '未检测到 @michengai/dsh-archive-manager 删除接口'
+  return null
+}
+export async function previewNativeSessionBatch(stateDir, services, input) {
+  const { action, sessionRefs } = validateNativeSessionBatch(input)
+  const data = await sourceData(stateDir, services.persistence, services.registry)
+  if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
+  const trash = await readTrash(stateDir)
+  const eligibleRefs = []
+  const skipped = []
+  for (const ref of sessionRefs) {
+    const matches = data.records.filter(row => row.idRef === ref)
+    if (matches.length !== 1) {
+      skipped.push({ sessionRef: ref, reason: '会话不存在或引用不唯一' })
+      continue
+    }
+    const row = matches[0]
+    const reason = batchRowReason(action, row, data, trash, services)
+    if (reason) { skipped.push({ sessionRef: ref, reason }); continue }
+    if (action === 'delete') {
+      try {
+        await previewNativePermanentDelete(stateDir, services, ref)
+      } catch (error) {
+        skipped.push({ sessionRef: ref, reason: error.message || '不符合删除条件' })
+        continue
+      }
+    }
+    eligibleRefs.push(ref)
+  }
+  return { action, requested: sessionRefs.length, eligible: eligibleRefs.length,
+    skipped: skipped.length, eligibleRefs, skippedItems: skipped, limit: NATIVE_BATCH_LIMIT,
+    nativeHistoryPreserved: action !== 'delete' }
+}
+export async function executeNativeSessionBatch(stateDir, services, input) {
+  const { action, sessionRefs } = validateNativeSessionBatch(input)
+  const succeededRefs = []
+  const failedItems = []
+  for (const ref of sessionRefs) {
+    try {
+      // Resolve refs against the latest native catalog for every action.
+      const data = await sourceData(stateDir, services.persistence, services.registry)
+      if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
+      const row = onlyRow(data, ref)
+      const trash = await readTrash(stateDir)
+      const reason = batchRowReason(action, row, data, trash, services)
+      if (reason) throw Object.assign(new Error(reason), { status: 409 })
+      if (action === 'archive') {
+        await archiveNativeSession(stateDir, services, row.id)
+      } else if (action === 'restore') {
+        if (trash.items[row.id]) {
+          const result = await restoreNativeSessionFromTrash(stateDir, services, ref)
+          if (result.target === 'archived')
+            await restoreNativeSession(stateDir, services, ref)
+        } else {
+          await restoreNativeSession(stateDir, services, ref)
+        }
+      } else {
+        await permanentlyDeleteNativeSession(stateDir, services, ref)
+      }
+      succeededRefs.push(ref)
+    } catch (error) {
+      failedItems.push({ sessionRef: ref, reason: String(error.message || '操作未完成').slice(0, 160) })
+    }
+  }
+  return { action, requested: sessionRefs.length, succeeded: succeededRefs.length,
+    failed: failedItems.length, succeededRefs, failedItems,
+    nativeHistoryPreserved: action !== 'delete' }
+}
