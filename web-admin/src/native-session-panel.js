@@ -36,7 +36,7 @@ function FeishuSessionModal({ dialog, busy, error, onCancel, onConfirm }) {
         dialog.note&&h('p',{className:'fgw-muted'},dialog.note),
         dialog.danger&&h('label',{className:'fgw-session-modal-ack'},
           h('input',{type:'checkbox',checked:ack,disabled:busy,onChange:e=>setAck(e.target.checked)}),
-          h('span',null,'我了解删除后无法恢复这段 DSH 对话'))),
+          h('span',null,'我了解删除后无法恢复所选 DSH 对话'))),
       error&&h('p',{className:'fgw-caution',role:'alert'},error),
       h('div',{className:'fgw-session-modal-actions'},
         h('button',{type:'button',className:'fgw-refresh',disabled:busy,onClick:onCancel},'取消'),
