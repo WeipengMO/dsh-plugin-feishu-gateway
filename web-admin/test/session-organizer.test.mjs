@@ -318,3 +318,13 @@ test('trash age is previewed but physical deletion is impossible', async t => {
   assert.equal(report.physicalDeleteAvailable, false)
   assert.equal(f.snapshots.length, 4)
 })
+
+test('normal history search finds human-readable DSH conversation titles without raw IDs', async t => {
+  const f = await fixture(t)
+  const result = await sessionOrganizationInventory(f.stateDir, f.native,
+    { status: 'current', search: 'title for 000' })
+  assert.equal(result.total, 1)
+  assert.equal(result.titleSearchLimited, false)
+  assert.equal(result.items[0].sessionTitle, 'title for 000')
+  assert.ok(!('sessionId' in result.items[0]))
+})
