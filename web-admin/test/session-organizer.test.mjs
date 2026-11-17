@@ -295,6 +295,8 @@ test('auto archive acts only on tracked reliable last activity, skips unknown an
   })
   const preview = await previewRetention(f.stateDir, f.native, now)
   assert.equal(preview.candidates, 1)
+  assert.deepEqual(preview.candidatePreview.map(row=>row.title), ['title for 000'])
+  assert.ok(preview.candidatePreview.every(row=>!('sessionId' in row)))
   assert.ok(preview.skippedUnknownActivity >= 1)
   assert.equal(preview.physicalDeleteAvailable, false)
   const result = await autoArchiveExpiredSessions(f.stateDir, f.native, now)
