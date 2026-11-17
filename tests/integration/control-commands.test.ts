@@ -90,6 +90,71 @@ describe('native Feishu control commands', () => {
     await t.gateway.stop()
   })
 
+  it('/compact uses native Session maintenance, is idempotent, and never injects a fake summary turn', async () => {
+    const t = await setup()
+    await t.send('/compact', 'om_empty_compact')
+    await t.gateway.whenIdle()
+    expect(t.transport.sent.at(-1)?.text).toContain('尚未创建')
+    expect(t.bridge.created).toHaveLength(0)
+    await t.send('keep this project context', 'om_original')
+    await t.gateway.whenIdle()
+    const nativeId=t.bridge.created[0]!.sessionId
+    await t.send('/context', 'om_context')
+    await t.gateway.whenIdle()
+    expect(t.transport.sent.at(-1)?.text).toContain('原生压缩引擎：可用')
+    expect(t.transport.sent.at(-1)?.text).toContain('DSH compaction-basic')
+    await t.send('/compact', 'om_compact_once')
+    await t.send('/compact', 'om_compact_once')
+    await t.gateway.whenIdle()
+    expect(t.bridge.manualCompactions).toEqual([nativeId])
+    expect(t.bridge.prompts).toHaveLength(1)
+    expect(t.transport.sent.at(-1)?.text).toContain('已完成 DSH 原生上下文压缩')
+    expect(t.transport.sent.at(-1)?.text).toContain('不等于净节省量')
+    await t.send('continue my work', 'om_continue')
+    await t.gateway.whenIdle()
+    expect(t.bridge.created).toHaveLength(1)
+    expect(t.bridge.prompts[1]?.sessionId).toBe(nativeId)
+    await t.gateway.stop()
+  })
+
+  it('/context and /compact fail safely when the native DSH compaction service is unavailable', async () => {
+    class MissingCompaction extends MockSessionBridge {
+      override compactionStatus() { return { available: false, completedInProcess: 0 } }
+      override async compactNow(): Promise<never> { throw new Error('should not be called') }
+    }
+    const t = await setup(new MissingCompaction())
+    await t.send('hello', 'om_pre')
+    await t.gateway.whenIdle()
+    await t.send('/context', 'om_context_missing')
+    await t.gateway.whenIdle()
+    expect(t.transport.sent.at(-1)?.text).toContain('未检测到')
+    await t.send('/compact', 'om_missing')
+    await t.gateway.whenIdle()
+    expect(t.transport.sent.at(-1)?.text).toContain('未检测到原生 compaction 后端')
+    expect(t.bridge.prompts).toHaveLength(1)
+    await t.gateway.stop()
+  })
+
+  it('native compaction busy errors do not retire or reset a healthy Session', async () => {
+    class BusyCompaction extends MockSessionBridge {
+      override async compactNow(): Promise<never> {
+        throw Object.assign(new Error('busy'), { code: 'busy' })
+      }
+    }
+    const t = await setup(new BusyCompaction())
+    await t.send('work', 'om_work')
+    await t.gateway.whenIdle()
+    const original=t.bridge.created[0]!.sessionId
+    await t.send('/compact', 'om_busy')
+    await t.gateway.whenIdle()
+    expect(t.transport.sent.at(-1)?.text).toContain('压缩在进行')
+    expect(t.bridge.disposedSessions).not.toContain(original)
+    await t.send('followup', 'om_followup')
+    await t.gateway.whenIdle()
+    expect(t.bridge.created).toHaveLength(1)
+    await t.gateway.stop()
+  })
+
   it('/new rotates Session without destroying native DSH history or calling the LLM', async () => {
     const t = await setup()
     await t.send('first', 'om_first')

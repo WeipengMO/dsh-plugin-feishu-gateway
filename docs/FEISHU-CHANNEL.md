@@ -16,8 +16,10 @@ Gateway 将被授权的飞书消息交给 **DSH 原生 Agent/Session**，再通�
 | `/cancel` / `/stop` | 请求停止当前聊天正在执行的任务 | 已执行的工具副作用不能回滚 |
 | `/models` | 展示飞书 Gateway Host 可发现的所有模型 | 可发现不等于已验证可调用 |
 | `/model provider/model` | 为当前聊天选择模型 | 其他聊天与 DSH 默认模型不受影响 |
+| `/context` | 查看当前聊天的 DSH 原生上下文压缩状态 | 不创建会话，不以累计 Token 用量估算上下文 |
+| `/compact` | 手动调用 DSH 原生引擎压缩旧历史 | 需已有 Session 和原生后端；任务占用时不能强制压缩 |
 
-模型路由、多个备用模型以及 Token 统计详见 [模型与用量](USAGE-AND-MODELS.md)。
+模型路由、多个备用模型以及 Token 统计详见 [模型与用量](USAGE-AND-MODELS.md)。上下文自动压缩的触发逻辑与 Codex/DSH 设计对照见 [上下文压缩](CONTEXT-COMPACTION.md)；它和历史归档、文件清理不是同一件事。
 
 ## 聊天、历史和群聊
 

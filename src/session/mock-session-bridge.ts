@@ -1,5 +1,6 @@
 import type {
   AgentRoute, ModelCatalog, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions,
+  SessionCompactionStatus, SessionCompactionResult,
 } from '../types.js'
 import { sleep } from '../util/retry.js'
 import { SessionTurnFailure } from './turn-failure.js'
@@ -42,6 +43,21 @@ export class MockSessionBridge implements SessionBridge {
     this.titles.set(sessionId, value)
     return true
   }
+  readonly manualCompactions: string[] = []
+  /** Simulates an optional native compaction service; DSH owns automatic policy. */
+  compactionStatus(sessionId?: string): SessionCompactionStatus {
+    const count = sessionId === undefined ? this.manualCompactions.length :
+      this.manualCompactions.filter(id => id === sessionId).length
+    return { available: true, completedInProcess: count }
+  }
+  async compactNow(sessionId: string, signal: AbortSignal): Promise<SessionCompactionResult> {
+    this.assertLive()
+    if (signal.aborted) throw signal.reason ?? new Error('cancelled')
+    if (!this.live.has(sessionId)) throw new Error('unknown session')
+    this.manualCompactions.push(sessionId)
+    return { outcome: 'compacted', shadowedItems: 4, shadowedTokens: 1500 }
+  }
+
   readonly resumed: string[] = []
   readonly resumedRoutes: Array<{ sessionId: string; route: AgentRoute }> = []
   readonly prompts: Array<{ sessionId: string; text: string }> = []

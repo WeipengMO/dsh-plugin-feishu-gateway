@@ -17,6 +17,7 @@
 | 功能 | 主要说明 | 进一步参考 |
 | --- | --- | --- |
 | 会话历史、归档与关联 | [会话管理](SESSION-CENTER-UX.md) | [关联与工作区的技术边界](SESSION-LIFECYCLE.md)、[工作区整理](FEISHU-SESSION-ORGANIZATION.md) |
+| 上下文自动压缩和手动 `/compact` | [上下文压缩](CONTEXT-COMPACTION.md) | [飞书聊天命令](FEISHU-CHANNEL.md) |
 | 定时任务 | [定时任务](SCHEDULED-TASKS.md) | [Schedule API 合约](SCHEDULE-API-CONTRACT.md) |
 | 群聊与 @ | [群聊管理](GROUP-CHAT.md) | [飞书权限](FEISHU-APP.md) |
 | 模型 / 多模型回退 | [模型及用量](USAGE-AND-MODELS.md) | [历史用量](TOKEN-USAGE-ANALYTICS.md) |

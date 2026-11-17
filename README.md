@@ -7,7 +7,7 @@
 ## 能做什么
 
 - **飞书聊天**：私聊与受控群聊、@ 触发、成员权限、按聊天隔离上下文、`/new`、`/cancel` 等命令。
-- **原生对话**：由 DSH 保存 Session 和历史；飞书端恢复上下文，后台可查看历史与关联、归档及（运行时支持时）恢复。
+- **原生对话与上下文压缩**：由 DSH 保存 Session 和历史；Gateway 复用 DSH 原生上下文自动压缩，并提供飞书 `/context`、`/compact` 查询与手动触发，后台可查看状态。历史归档/恢复与上下文压缩是不同功能。
 - **任务和审批**：流式卡片、任务取消、DSH 原生工具审批、结果通知。
 - **自动化**：管理 DSH 原生定时任务，并把执行结果推送到授权的飞书聊天。
 - **管理后台**：模型与备用模型、机器人/群聊权限、Agent 档案、Token 用量、消息投递、代理及运行诊断。
@@ -21,7 +21,7 @@
 
 | DSH Profile | 安装包 | 用途 |
 | --- | --- | --- |
-| `feishu-channel` | `dsh-plugin-feishu-gateway` | 常驻 WebSocket、原生 Agent/Session、消息与定时任务投递 |
+| `feishu-channel` | `dsh-plugin-feishu-gateway` | 常驻 WebSocket、原生 Agent/Session、上下文压缩命令、消息与定时任务投递 |
 | `web` | `dsh-plugin-feishu-admin` | DSH Web 侧栏「飞书管理」和受认证保护的管理 API |
 
 **两个插件必须装在各自的 Profile；不要把 Gateway 安装到 `web`。**
@@ -65,6 +65,10 @@ dsh --profile web --dump-config
 
 
 > **可选增强**：永久删除已归档 DSH 对话需要在 **`web` Profile** 安装并启用 `@michengai/dsh-archive-manager`。没安装时「删除」按钮为灰色，归档、恢复和飞书消息功能不受影响。具体步骤见 [会话管理指南](docs/SESSION-CENTER-UX.md)。
+
+## 自动上下文压缩
+
+DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早对话，并在确认溢出后尝试恢复；Gateway 不会另造一个按累计 Token 用量触发的摘要引擎。飞书发送 `/context` 可查看当前 Session 的压缩能力，发送 `/compact` 可调用 DSH 原生手动压缩；Web Admin 会话管理底部也提供只读状态。自动触发阈值应在 **`feishu-channel` Profile** 的 DSH 压缩后端中配置，而非 Web Admin。详见 [上下文压缩与触发策略](docs/CONTEXT-COMPACTION.md)。
 
 ## 安全与升级原则
 

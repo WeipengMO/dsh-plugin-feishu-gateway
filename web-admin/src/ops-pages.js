@@ -78,7 +78,9 @@ function ApprovalCountdown({ expiresAt }) {
 }
 
 function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh }) {
-  if (kind === 'sessions') return h(FeishuSessionCenter, {})
+  if (kind === 'sessions') return h(FeishuSessionCenter, {
+    compaction: ops?.snapshot?.compaction, compactionStale: ops?.snapshot?.stale === true,
+  })
   // Historical token metrics remain available when the Gateway is offline.
   if (kind === 'usage') return h(UsagePanel, {})
   // Approvals are published in their own authoritative Gateway file; keep the

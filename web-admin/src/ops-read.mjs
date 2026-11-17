@@ -154,6 +154,19 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
       doc.sharedProjectWorkspace.length <= 4096 && !doc.sharedProjectWorkspace.includes('\0') ?
       { sharedProjectWorkspace: path.normalize(doc.sharedProjectWorkspace) } : {}),
     status: safeLabel(doc.status) ?? 'unknown',
+    ...(doc.compaction && typeof doc.compaction === 'object' &&
+      typeof doc.compaction.available === 'boolean' ? {
+      compaction: {
+        available: doc.compaction.available,
+        completedInProcess: safeNum(doc.compaction.completedInProcess) ?? 0,
+        ...(safeNum(doc.compaction.lastCompletedAt) !== undefined ?
+          { lastCompletedAt: safeNum(doc.compaction.lastCompletedAt) } : {}),
+        ...(safeNum(doc.compaction.lastShadowedItems) !== undefined ?
+          { lastShadowedItems: safeNum(doc.compaction.lastShadowedItems) } : {}),
+        ...(safeNum(doc.compaction.lastShadowedTokens) !== undefined ?
+          { lastShadowedTokens: safeNum(doc.compaction.lastShadowedTokens) } : {}),
+      },
+    } : {}),
     ...(safeModelCatalog(doc.modelCatalog) ? { modelCatalog: safeModelCatalog(doc.modelCatalog) } : {}),
     ...(safeRoute(doc.agentRoute, true) ? { agentRoute: safeRoute(doc.agentRoute, true) } : {}),
     ...(safeRoute(doc.profileDefaultRoute) ? { profileDefaultRoute: safeRoute(doc.profileDefaultRoute) } : {}),
