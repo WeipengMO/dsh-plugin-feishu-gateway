@@ -6,7 +6,7 @@ function FeishuSessionModal({ dialog, busy, error, onCancel, onConfirm }) {
   const panel = React.useRef(null)
   React.useEffect(()=>{
     const previous = document.activeElement
-    panel.current?.focus()
+    panel.current?.querySelector('button')?.focus()
     return ()=>previous?.focus?.()
   },[])
   const onKeys = event=>{
@@ -243,7 +243,11 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       note:'不会自动重新建立之前已经解除的飞书聊天关联。',
       onConfirm:async()=>{
         if(row.status==='trashed'){
-          await request('/sessions/trash/restore','POST',{sessionRef:row.sessionRef})
+          const {result}=await request('/sessions/trash/restore','POST',{sessionRef:row.sessionRef})
+          // A legacy trash entry may have been archived before it was moved:
+          // "恢复" in today's single archive view must always make it visible.
+          if(result.target==='archived')
+            await request('/sessions/native/restore','POST',{sessionRef:row.sessionRef})
         }else{
           await request('/sessions/native/restore','POST',{sessionRef:row.sessionRef})
         }
