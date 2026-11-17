@@ -771,4 +771,35 @@ describe('model directory and fallback rescue', () => {
     expect(snapshot.profileDefaultRoute).toEqual({ provider: 'magpie', model: 'group/deepseek' })
     await gateway.stop()
   })
+
+  it('binds the configured Agent preset to new Sessions and publishes the roster', async () => {
+    const { gateway, transport, bridge, stateDir } = await harness(
+      { agentPreset: 'planner' },
+      'ok',
+      { presetCatalog: { incomplete: false, defaultId: 'standard', presets: [
+        { id: 'standard', isDefault: true },
+        { id: 'planner', name: 'Planner' },
+      ] } },
+    )
+    await transport.emitMessage(alice({ messageId: 'om_preset' }))
+    await gateway.whenIdle()
+    expect(bridge.created[0]?.preset).toBe('planner')
+    const readSnapshot = async () => {
+      try { return JSON.parse(await readFile(path.join(stateDir, 'ops-runtime.json'), 'utf8')) as any }
+      catch { return undefined }
+    }
+    let snapshot = await readSnapshot()
+    for (let attempt = 0; attempt < 100 && !snapshot?.agentPresets?.presets; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      snapshot = await readSnapshot()
+    }
+    expect(snapshot.agentPresets).toEqual({
+      ts: expect.any(Number), incomplete: false, defaultId: 'standard',
+      presets: [
+        { id: 'standard', isDefault: true },
+        { id: 'planner', name: 'Planner', isDefault: false },
+      ],
+    })
+    await gateway.stop()
+  })
 })

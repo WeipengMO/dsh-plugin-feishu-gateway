@@ -147,6 +147,10 @@ export class FeishuGateway {
   } | undefined
   private modelCatalogAttempt = 0
   private modelCatalogLoading = false
+  /** DSH Agent preset roster published for the Web Admin working-mode selector. */
+  private presetCatalog: OpsSnapshot['agentPresets'] | undefined
+  private presetCatalogAttempt = 0
+  private presetCatalogLoading = false
   private startedAt = 0
   private processed = 0
   private errors = 0
@@ -1022,7 +1026,7 @@ export class FeishuGateway {
     const existing = this.taskSessions.get(clientRef)
     if (existing) return existing
     const sessionId = `${sessionIdFor('schedule', clientRef)}-${newId('session')}`
-    await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent)
+    await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent, this.config.agentPreset)
     await this.setNativeTitle(sessionId, '飞书定时·' + (title?.trim() || clientRef.slice(-8)))
     this.taskSessions.set(clientRef, sessionId)
     this.restoredTaskSessions.add(sessionId)
@@ -1155,7 +1159,7 @@ export class FeishuGateway {
     if (!existing) {
       const sessionId = `${sessionIdFor(botId, chatId)}-${newId('session')}`
       try {
-        await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent)
+        await this.bridge.create(sessionId, this.isolatedWorkspace, this.config.agent, this.config.agentPreset)
       } catch (error) {
         throw new Error(`cannot create native DSH Session: ${String(error)}`)
       }
@@ -1407,6 +1411,31 @@ export class FeishuGateway {
       }).catch(() => this.logger.warn('model catalog unavailable'))
         .finally(() => { this.modelCatalogLoading = false })
     }
+    if (this.bridge.listPresets && !this.presetCatalogLoading && now - this.presetCatalogAttempt >= 60_000) {
+      this.presetCatalogAttempt = now
+      this.presetCatalogLoading = true
+      void withTimeout(this.bridge.listPresets(), 20_000).then(result => {
+        if (!result.timedOut && !this.stopped) {
+          // The Gateway re-sanitizes the Host roster: only id/display/broken
+          // survive, bounded, so the admin read model can never receive raw
+          // service objects or arbitrary text.
+          this.presetCatalog = {
+            ts: Date.now(),
+            incomplete: result.value.incomplete === true,
+            ...(result.value.defaultId ? { defaultId: result.value.defaultId } : {}),
+            presets: result.value.presets.slice(0, 100).map(preset => ({
+              id: preset.id,
+              ...(preset.name ? { name: preset.name.slice(0, 100) } : {}),
+              ...(preset.description ? { description: preset.description.slice(0, 200) } : {}),
+              isDefault: preset.isDefault === true,
+              ...(preset.broken ? { broken: preset.broken.slice(0, 200) } : {}),
+            })),
+          }
+          this.refreshOps()
+        }
+      }).catch(() => this.logger.warn('agent preset roster unavailable'))
+        .finally(() => { this.presetCatalogLoading = false })
+    }
     const health = this.health()
     const snapshot: OpsSnapshot = {
       version: 1, ts: Date.now(), status: health.status,
@@ -1414,6 +1443,7 @@ export class FeishuGateway {
       sharedProjectWorkspace: this.config.workspace,
       isolatedAgent: true,
       ...(this.modelCatalog ? { modelCatalog: this.modelCatalog } : {}),
+      ...(this.presetCatalog ? { agentPresets: this.presetCatalog } : {}),
       ...(this.bridge.compactionStatus ? { compaction: this.bridge.compactionStatus() } : {}),
       ...(this.routeSnapshot() ? { agentRoute: this.routeSnapshot() } : {}),
       ...(this.profileDefaultRoute() ? { profileDefaultRoute: this.profileDefaultRoute() } : {}),

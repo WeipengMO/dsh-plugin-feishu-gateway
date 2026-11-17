@@ -46,6 +46,13 @@ describe('resolveConfig', () => {
     expect(normalizeAgentRoute(undefined)).toEqual({})
   })
 
+  it('passes through a trimmed agent preset id and omits an empty one', () => {
+    expect(resolveConfig({ agentPreset: 'planner' }).agentPreset).toBe('planner')
+    expect(resolveConfig({ agentPreset: '  ' }).agentPreset).toBeUndefined()
+    expect(resolveConfig({ agentPreset: '' }).agentPreset).toBeUndefined()
+    expect(resolveConfig({}).agentPreset).toBeUndefined()
+  })
+
   it('normalizes ordered fallback arrays and ignores duplicates or primary route', () => {
     const config = resolveConfig({ agent: {
       provider: 'magpie', model: 'primary',

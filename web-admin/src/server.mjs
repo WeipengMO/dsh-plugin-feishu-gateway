@@ -37,7 +37,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy',
+const CFG_KEYS = ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'agentPreset', 'replyTimeoutMs', 'networkProxy',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 // The proxy URL is a write-only secret: stored in its own 0600 file, never in
@@ -193,6 +193,18 @@ export function validateConfig(input) {
       agent.fallback = { provider: fallback.provider, model: fallback.model }
     }
     result.agent = agent
+  }
+  if (input.agentPreset !== undefined) {
+    // null or "" is an explicit clear (empty string stored); a non-empty id must
+    // match the exact preset charset shared with the Gateway Host.
+    if (input.agentPreset === null || input.agentPreset === '') {
+      result.agentPreset = ''
+    } else if (typeof input.agentPreset === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(input.agentPreset)) {
+      result.agentPreset = input.agentPreset
+    } else {
+      throw httpError(400, 'invalid agentPreset')
+    }
   }
   if (input.replyTimeoutMs !== undefined) result.replyTimeoutMs = integer(input.replyTimeoutMs, 'replyTimeoutMs', 5000, 1800000)
   if (input.networkProxy !== undefined) {
@@ -839,6 +851,7 @@ export function createAdminHandler(options = {}) {
           // Explicit selections for the admin form; null means "unknown", never
           // a fabricated default route.
           modelCatalog: snapshot?.modelCatalog ?? null,
+          agentPresets: snapshot?.agentPresets ?? null,
           agentRoute: snapshot?.agentRoute ?? null,
           profileDefaultRoute: snapshot?.profileDefaultRoute ?? null,
           modelDirectoryStale: snapshot ? snapshot.stale === true : null })

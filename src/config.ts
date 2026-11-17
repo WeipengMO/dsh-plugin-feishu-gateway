@@ -138,7 +138,8 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     workspace,
     ...(typeof raw.agentWorkspace === 'string' && raw.agentWorkspace.trim() ?
       { agentWorkspace: raw.agentWorkspace } : {}),
-    ...(typeof raw.agentPreset === 'string' && raw.agentPreset ? { agentPreset: raw.agentPreset } : {}),
+    ...(typeof raw.agentPreset === 'string' && raw.agentPreset.trim()
+      ? { agentPreset: raw.agentPreset.trim() } : {}),
     agent: normalizeAgentRoute(raw.agent),
     stateDir,
     dedupTtlMs: numberOr(raw.dedupTtlMs, 24 * 60 * 60 * 1000),

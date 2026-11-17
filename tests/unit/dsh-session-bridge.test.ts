@@ -666,3 +666,110 @@ describe('DSH native Session compaction port', () => {
     await bridge.dispose()
   })
 })
+
+describe('DshSessionBridge DSH Agent preset binding', () => {
+  function presetService(overrides: Record<string, unknown> = {}) {
+    const mounts: Array<{ ctx: unknown; id?: string }> = []
+    return {
+      mounts,
+      service: {
+        defaultId: 'standard',
+        resolve: async (id?: string) => ({ id: id ?? 'standard' }),
+        mount: async (agentCtx: unknown, id?: string) => {
+          mounts.push({ ctx: agentCtx, id })
+          return { id: id ?? 'standard' }
+        },
+        presetForSession: () => null,
+        remoteExportList: async () => ({ presets: [{ id: 'standard', isDefault: true }] }),
+        ...overrides,
+      },
+    }
+  }
+
+  it('records and composes an explicit preset when creating a Session', async () => {
+    const { ctx, fake, bridge } = setup()
+    const { mounts, service } = presetService()
+    ctx.services.set('agentPresets', service)
+    await bridge.create('s-preset', '/workspace', undefined, 'standard')
+    expect(fake.created[0]).toMatchObject({
+      sessionId: 's-preset',
+      meta: { cwd: '/workspace', agentPreset: 'standard' },
+    })
+    const setupFn = (fake.created[0] as { setup?: (c: unknown) => Promise<void> }).setup
+    expect(typeof setupFn).toBe('function')
+    const agentCtx = { scoped: true }
+    await setupFn!(agentCtx)
+    expect(mounts).toEqual([{ ctx: agentCtx, id: 'standard' }])
+  })
+
+  it('stays usable without a preset when the configured preset is unknown', async () => {
+    const { ctx, fake, bridge } = setup()
+    ctx.services.set('agentPresets', {
+      resolve: async () => { throw new Error('agent-preset/not-found') },
+      mount: async () => ({ id: 'x' }),
+    })
+    await bridge.create('s-ghost', '/workspace', undefined, 'ghost')
+    expect((fake.created[0] as { meta: Record<string, unknown> }).meta).toEqual({ cwd: '/workspace' })
+    expect(fake.created[0]).not.toHaveProperty('setup')
+  })
+
+  it('does not compose a preset when none is configured (opt-in)', async () => {
+    const { ctx, fake, bridge } = setup()
+    const { mounts, service } = presetService()
+    ctx.services.set('agentPresets', service)
+    await bridge.create('s-bare', '/workspace')
+    expect((fake.created[0] as { meta: Record<string, unknown> }).meta).toEqual({ cwd: '/workspace' })
+    expect(fake.created[0]).not.toHaveProperty('setup')
+    expect(mounts).toHaveLength(0)
+  })
+
+  it('publishes a sanitized roster for the admin selector', async () => {
+    const { ctx, bridge } = setup()
+    const { service } = presetService({
+      remoteExportList: async () => ({ presets: [
+        { id: 'standard', name: '标准', description: 'default preset', isDefault: true },
+        { id: 'ptc', broken: 'missing plugin', isDefault: false },
+        { id: 'bad id', name: 'rejected', isDefault: false },
+        { id: 'standard', name: 'duplicate', isDefault: false },
+      ] }),
+    })
+    ctx.services.set('agentPresets', service)
+    expect(await bridge.listPresets()).toEqual({
+      presets: [
+        { id: 'standard', name: '标准', description: 'default preset', isDefault: true },
+        { id: 'ptc', isDefault: false, broken: 'missing plugin' },
+      ],
+      defaultId: 'standard',
+      incomplete: false,
+    })
+  })
+
+  it('reports an incomplete roster when the Host has no preset service', async () => {
+    const { bridge } = setup()
+    expect(await bridge.listPresets()).toEqual({ presets: [], incomplete: true })
+  })
+
+  it('rebuilds the recorded preset when cold-resuming a Session', async () => {
+    const { ctx, fake, bridge } = setup()
+    const { mounts, service } = presetService({ presetForSession: () => 'ptc' })
+    ctx.services.set('agentPresets', service)
+    await bridge.resume('s-resume')
+    const options = fake.resumed[0] as { resumeSessionId?: string; setup?: (c: unknown, a: unknown) => Promise<void> }
+    expect(options.resumeSessionId).toBe('s-resume')
+    expect(typeof options.setup).toBe('function')
+    const agentCtx = { scoped: true }
+    await options.setup!(agentCtx, { session: { id: 's-resume' } })
+    expect(mounts).toEqual([{ ctx: agentCtx, id: 'ptc' }])
+  })
+
+  it('keeps a preset-free Session preset-free on cold resume', async () => {
+    const { ctx, fake, bridge } = setup()
+    const { mounts, service } = presetService({ presetForSession: () => null })
+    ctx.services.set('agentPresets', service)
+    await bridge.resume('s-plain')
+    const options = fake.resumed[0] as { setup?: (c: unknown, a: unknown) => Promise<void> }
+    expect(typeof options.setup).toBe('function')
+    await options.setup!({ scoped: true }, { session: { id: 's-plain' } })
+    expect(mounts).toHaveLength(0)
+  })
+})

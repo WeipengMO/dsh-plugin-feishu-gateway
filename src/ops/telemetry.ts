@@ -57,6 +57,23 @@ export interface OpsSnapshot {
       readonly models: readonly { readonly id: string; readonly name?: string }[]
     }[]
   }
+  /**
+   * The Gateway Host's DSH Agent preset roster (client-safe). `presets[].id`
+   * is the value the Web Admin persists as the Feishu working mode; `broken`
+   * marks a preset that cannot currently compose a Session.
+   */
+  readonly agentPresets?: {
+    readonly ts: number
+    readonly incomplete: boolean
+    readonly defaultId?: string
+    readonly presets: readonly {
+      readonly id: string
+      readonly name?: string
+      readonly description?: string
+      readonly isDefault: boolean
+      readonly broken?: string
+    }[]
+  }
   /** Read-only native DSH compaction capability and local observations. The
    * Gateway cannot override host-owned auto trigger policy. */
   readonly compaction?: {

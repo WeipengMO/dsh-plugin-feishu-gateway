@@ -28,6 +28,9 @@ export interface ManagedChannelConfig {
   groups?: GroupRule[]
   workspace?: string
   agentWorkspace?: string
+  /** Selected DSH Agent preset id for new Feishu Sessions (the bot working mode).
+   * `null` or `''` explicitly clears a Profile-provided preset; absent inherits. */
+  agentPreset?: string | null
   /**
    * Primary route override. Fields may stay partial (inheriting the rest from
    * the Profile); `fallback: null` explicitly clears a previously managed
@@ -75,7 +78,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agentPreset', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect',
     'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
@@ -157,6 +160,18 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
       throw new Error('agentWorkspace must be an absolute path')
     }
     result.agentWorkspace = path.normalize(value.agentWorkspace)
+  }
+  if (value.agentPreset !== undefined) {
+    // `null` (and the empty string) explicitly clears a Profile-provided preset
+    // for new Sessions; a non-empty value must look like a DSH preset id.
+    if (value.agentPreset === null) {
+      result.agentPreset = ''
+    } else if (typeof value.agentPreset !== 'string' ||
+      (value.agentPreset !== '' && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(value.agentPreset))) {
+      throw new Error('invalid agentPreset')
+    } else {
+      result.agentPreset = value.agentPreset
+    }
   }
   if (value.agent !== undefined) {
     if (!dictionary(value.agent)) throw new Error('agent must be an object')
@@ -282,9 +297,12 @@ export function loadManagedConfig(base: GatewayConfig): GatewayConfig {
   if (!dictionary(doc) || doc.version !== 1) throw new Error('unsupported managed config version')
   assertFields(doc, ['version', 'config'])
   const managed = validateManagedConfig(doc.config)
+  const { agentPreset, ...rest } = managed
   return resolveConfig({
     ...base,
-    ...managed,
+    ...rest,
+    // null is normalized to '' by the validator; both clear a Profile preset.
+    ...(agentPreset !== undefined ? { agentPreset: agentPreset ?? '' } : {}),
     agent: mergeAgentRoute(base.agent, managed.agent),
     bots: managed.bots ?? base.bots,
   })

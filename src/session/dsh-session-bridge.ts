@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type {
   AgentRoute,
+  AgentPresetCatalog,
+  AvailableAgentPreset,
   AvailableModel,
   AvailableProvider,
   ModelCatalog,
@@ -37,6 +39,28 @@ interface AgentRegistryLike {
   resume(options: Record<string, unknown>): Promise<AgentHandleLike>
   /** The official registry exposes a live-agent lookup (not an owner handle). */
   get?(sessionId: string): AgentHandleLike['agent'] | undefined
+}
+
+/**
+ * Structural view of the optional `agentPresets` Host service
+ * (`@deepseek-ai/dsh-agent-preset-registry`). Only public methods are used:
+ * the roster for the Web Admin, `resolve`/`mount` to bind a Session, and
+ * `presetForSession` to rebuild a persisted Session's mode on cold resume.
+ */
+interface AgentPresetRegistryLike {
+  readonly defaultId?: string
+  resolve?(id?: string): Promise<{ id: string; broken?: string } | undefined>
+  mount?(ctx: unknown, id?: string): Promise<{ id: string } | undefined>
+  remoteExportList?(): Promise<{
+    presets: ReadonlyArray<{
+      id?: unknown; name?: unknown; description?: unknown
+      isDefault?: unknown; broken?: unknown
+    }>
+  }>
+  list?(): Promise<ReadonlyArray<{
+    id?: unknown; name?: unknown; description?: unknown; broken?: unknown
+  }>>
+  presetForSession?(session: unknown): string | null | undefined
 }
 
 interface NativeCompactionLike {
@@ -245,6 +269,100 @@ export class DshSessionBridge implements SessionBridge {
       ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
   }
 
+  /** Optional Host service exposing the DSH Agent preset roster and binding. */
+  private agentPresetRegistry(): AgentPresetRegistryLike | undefined {
+    try {
+      const service = this.ctx.get('agentPresets') as Partial<AgentPresetRegistryLike> | undefined
+      return service && typeof service.mount === 'function'
+        ? service as AgentPresetRegistryLike : undefined
+    } catch { return undefined }
+  }
+
+  /**
+   * The Gateway Host's DSH Agent preset roster for the Web Admin selector.
+   * Every field is re-validated and bounded here: the roster crossing the
+   * plugin boundary is the Host's data, never the admin side's. `incomplete`
+   * means the `agentPresets` service is absent or the read failed — callers
+   * must not fabricate a default.
+   */
+  async listPresets(): Promise<AgentPresetCatalog> {
+    const presets = this.agentPresetRegistry()
+    if (!presets) return { presets: [], incomplete: true }
+    const safeId = (value: unknown): string | undefined =>
+      typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(value) ? value : undefined
+    const text = (value: unknown, max: number): string | undefined => {
+      if (typeof value !== 'string') return undefined
+      const clean = value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+      return clean ? clean.slice(0, max) : undefined
+    }
+    try {
+      const roster = typeof presets.remoteExportList === 'function'
+        ? await presets.remoteExportList()
+        : { presets: typeof presets.list === 'function' ? await presets.list() : [] }
+      const source = Array.isArray(roster?.presets) ? roster.presets : []
+      const out: AvailableAgentPreset[] = []
+      const seen = new Set<string>()
+      for (const item of source) {
+        const raw = item as { id?: unknown; name?: unknown; description?: unknown
+          isDefault?: unknown; broken?: unknown }
+        const id = safeId(raw?.id)
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        const name = text(raw.name, 100)
+        const description = text(raw.description, 200)
+        const broken = text(raw.broken, 200)
+        out.push({
+          id,
+          ...(name ? { name } : {}),
+          ...(description ? { description } : {}),
+          isDefault: raw.isDefault === true,
+          ...(broken ? { broken } : {}),
+        })
+        if (out.length >= 100) break
+      }
+      const defaultId = safeId(presets.defaultId)
+      return { presets: out, ...(defaultId ? { defaultId } : {}), incomplete: false }
+    } catch { return { presets: [], incomplete: true } }
+  }
+
+  /**
+   * Resolve a managed preset against the Host registry. Returns undefined when
+   * no registry is mounted or no preset was requested. A requested-but-unknown
+   * or broken preset logs a warning and yields undefined so chat stays usable
+   * (the Session is then created without a preset composition), matching the
+   * pre-existing behavior for profiles that do not compose presets.
+   */
+  private async resolvePresetBinding(preset?: string): Promise<{ id: string } | undefined> {
+    const wanted = typeof preset === 'string' ? preset.trim() : ''
+    if (!wanted) return undefined
+    const presets = this.agentPresetRegistry()
+    if (!presets || typeof presets.resolve !== 'function' || typeof presets.mount !== 'function') {
+      this.logger.warn('agent preset %s configured but the Host agentPresets service is unavailable', wanted)
+      return undefined
+    }
+    try {
+      const resolved = await presets.resolve(wanted)
+      if (!resolved || typeof resolved.id !== 'string' || !resolved.id || resolved.broken) {
+        this.logger.warn('agent preset %s is unavailable; creating Session without a preset', wanted)
+        return undefined
+      }
+      return { id: resolved.id }
+    } catch (error) {
+      this.logger.warn('agent preset %s is unavailable (%s); creating Session without a preset',
+        wanted, String(error))
+      return undefined
+    }
+  }
+
+  /** Setup hook that binds the freshly created Agent to one preset revision. */
+  private mountPresetSetup(id: string): (agentCtx: unknown) => Promise<void> {
+    return async (agentCtx: unknown) => {
+      const presets = this.agentPresetRegistry()
+      if (!presets || typeof presets.mount !== 'function') return
+      await presets.mount(agentCtx, id)
+    }
+  }
+
   currentModel(sessionId: string): { provider: string; model: string } | undefined {
     const selected = this.handles.get(sessionId)?.agent.model?.current()
     return selected && typeof selected.provider === 'string' && typeof selected.model === 'string'
@@ -359,19 +477,26 @@ export class DshSessionBridge implements SessionBridge {
       ...(Number.isSafeInteger(n) && (n as number) >= 0 ? { shadowedTokens: n as number } : {}) }
   }
 
-  async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
+  async create(sessionId: string, cwd: string, route?: AgentRoute, preset?: string): Promise<void> {
     if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
     const meta: Record<string, unknown> = { cwd }
 
     const agentOptions = this.routeAgentOptions(route)
+    // Bind the selected working mode to the Session header AND compose it. The
+    // header alone only records the choice; `setup` mounts the preset's tools
+    // and prompt before the Agent is published.
+    const binding = await this.resolvePresetBinding(preset)
+    if (binding) meta.agentPreset = binding.id
     const handle = await agents.create({
       sessionId,
       meta,
       ...(agentOptions ? { agentOptions } : {}),
+      ...(binding ? { setup: this.mountPresetSetup(binding.id) } : {}),
     })
     this.handles.set(sessionId, handle)
-    this.logger.info('created native DSH session %s', sessionId)
+    this.logger.info('created native DSH session %s%s', sessionId,
+      binding ? ` under agent preset ${binding.id}` : '')
   }
 
   async resume(sessionId: string, route?: AgentRoute): Promise<void> {
@@ -406,9 +531,23 @@ export class DshSessionBridge implements SessionBridge {
       // Without agentOptions the loaded Agent has no provider/model and the next
       // scheduled or user turn fails before any message is emitted.
       const agentOptions = this.routeAgentOptions(route)
+      // A Session's working mode is fixed at creation and recorded in its own
+      // header. Rebuild it from the persisted projection, never from the current
+      // managed config, so restarting the Gateway cannot silently change a
+      // conversation's composition.
+      const presets = this.agentPresetRegistry()
+      const setup = presets && typeof presets.presetForSession === 'function' &&
+        typeof presets.mount === 'function'
+        ? async (agentCtx: unknown, agent: unknown): Promise<void> => {
+          const recorded = presets.presetForSession!(
+            (agent as { session?: unknown } | undefined)?.session)
+          if (typeof recorded === 'string' && recorded) await presets.mount!(agentCtx, recorded)
+        }
+        : undefined
       const handle = await agents.resume({
         resumeSessionId: sessionId,
         ...(agentOptions ? { agentOptions } : {}),
+        ...(setup ? { setup } : {}),
       })
       this.handles.set(sessionId, handle)
       this.logger.info('restored persisted native DSH session %s', sessionId)

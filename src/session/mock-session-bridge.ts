@@ -1,5 +1,5 @@
 import type {
-  AgentRoute, ModelCatalog, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions,
+  AgentRoute, AgentPresetCatalog, ModelCatalog, ObservedScheduleTurn, SessionBridge, SessionReply, WaitOptions,
   SessionCompactionStatus, SessionCompactionResult,
 } from '../types.js'
 import { sleep } from '../util/retry.js'
@@ -14,6 +14,8 @@ export interface MockSessionBridgeOptions {
   readonly failNext?: string
   /** Directory advertised by `listModels`; defaults to two magpie routes. */
   readonly catalog?: ModelCatalog
+  /** Roster advertised by `listPresets`; defaults to an empty, complete roster. */
+  readonly presetCatalog?: AgentPresetCatalog
   /** How many native turns fail (as `SessionTurnFailure`) before a reply. */
   readonly turnFailures?: ReadonlyArray<{
     readonly failure?: string
@@ -32,7 +34,7 @@ export class MockSessionBridge implements SessionBridge {
   readonly available = true
   readonly unavailableReason = undefined
 
-  readonly created: Array<{ sessionId: string; cwd: string; route?: AgentRoute }> = []
+  readonly created: Array<{ sessionId: string; cwd: string; route?: AgentRoute; preset?: string }> = []
   readonly titles = new Map<string, string>()
   readonly manuallyTitled = new Set<string>()
   titleSource(sessionId: string): 'user' | 'automatic' {
@@ -80,9 +82,9 @@ export class MockSessionBridge implements SessionBridge {
     this.pendingTurnFailures = [...(options.turnFailures ?? [])]
   }
 
-  async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
+  async create(sessionId: string, cwd: string, route?: AgentRoute, preset?: string): Promise<void> {
     this.assertLive()
-    this.created.push({ sessionId, cwd, ...(route ? { route } : {}) })
+    this.created.push({ sessionId, cwd, ...(route ? { route } : {}), ...(preset ? { preset } : {}) })
     this.live.set(sessionId, cwd)
   }
 
@@ -101,6 +103,10 @@ export class MockSessionBridge implements SessionBridge {
       { provider: 'magpie', model: 'group/deepseek', name: 'Deepseek' },
       { provider: 'magpie', model: 'group/hy4-free', name: 'HY4 free' },
     ] }], incomplete: false }
+  }
+
+  async listPresets(): Promise<AgentPresetCatalog> {
+    return this.options.presetCatalog ?? { presets: [], incomplete: false }
   }
 
   defaultModel(): AgentRoute | undefined {

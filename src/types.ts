@@ -306,6 +306,27 @@ export interface ModelCatalog {
   readonly incomplete: boolean
 }
 
+/** One DSH Agent preset as the registry's client-safe roster advertises it. */
+export interface AvailableAgentPreset {
+  /** Stable preset id; also the display fallback when no name is published. */
+  readonly id: string
+  readonly name?: string
+  readonly description?: string
+  /** True when a session naming no preset composes this one. */
+  readonly isDefault?: boolean
+  /** Why this preset cannot compose a session; absent when usable. */
+  readonly broken?: string
+}
+
+/** The Gateway Host's DSH Agent preset roster, for the Web Admin selector. */
+export interface AgentPresetCatalog {
+  readonly presets: readonly AvailableAgentPreset[]
+  /** Deployment default preset id, when the registry exposes one. */
+  readonly defaultId?: string
+  /** True when the roster could not be read from the Host (service absent/error). */
+  readonly incomplete: boolean
+}
+
 /** Read-only facts from the native DSH compaction service, not a token-cost estimate. */
 export interface SessionCompactionStatus {
   /** The DSH Host has a compaction engine with compactNow(). */
@@ -331,12 +352,25 @@ export interface SessionBridge {
   /** False when the required DSH services are not mounted in this profile. */
   readonly available: boolean
   readonly unavailableReason?: string
-  /** Create a fresh native Session under a caller-chosen identity. */
-  create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void>
-  /** Restore a previously persisted native Session into a live Agent. */
+  /**
+   * Create a fresh native Session under a caller-chosen identity.
+   *
+   * `preset` is an optional DSH Agent preset id: when the Host mounts the
+   * `agentPresets` registry the Session header records it and the preset's
+   * composition (tools/prompt) is mounted during Agent setup. Omitted keeps the
+   * pre-existing "bare" composition behavior.
+   */
+  create(sessionId: string, cwd: string, route?: AgentRoute, preset?: string): Promise<void>
+  /**
+   * Restore a previously persisted native Session into a live Agent. The Agent
+   * preset is reconstructed from the Session's own recorded header (a Session's
+   * working mode is fixed at creation), never from the current managed config.
+   */
   resume(sessionId: string, route?: AgentRoute): Promise<void>
   /** Models advertised by this Gateway Host, not another DSH Profile. */
   listModels?(): Promise<ModelCatalog>
+  /** DSH Agent presets advertised by this Gateway Host, for the working-mode selector. */
+  listPresets?(): Promise<AgentPresetCatalog>
   /** The Host Profile's own default model selection, when one is configured. */
   defaultModel?(): AgentRoute | undefined
   currentModel?(sessionId: string): { provider: string; model: string } | undefined

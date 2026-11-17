@@ -15,7 +15,7 @@
 | **Agent 档案** | 编辑飞书 Agent 身份、提示规则和记忆文件、预览及恢复历史版本 |
 | **用量与审计** | 查看 Token 用量、模型趋势和审批历史 |
 | **运维与诊断** | 告警、连接状态、结构化日志与管理命令结果 |
-| **模型与连接** | 主模型和备用模型、代理、卡片、超时和重试配置 |
+| **模型与连接** | 主模型和备用模型、**Agent 预设（飞书工作模式）**、代理、卡片、超时和重试配置 |
 
 飞书应用的 **App ID / App Secret** 等凭据配置放在 **DSH Web 设置 → 飞书 Gateway**；秘密不在普通业务看板中回显。
 
@@ -33,6 +33,7 @@
 机器人连接、模型路由、代理及部分持久管理配置通常在 **Gateway 启动时加载**。保存后请核对页面提示，并在无在途任务的维护窗口重启独立的飞书通道。不要因为 Web Admin 页面可打开，就认为 Gateway 一定加载了最新配置。
 
 - **主模型**：从 Gateway Host 当前可发现的模型中选择，不必先选择 Provider。
+- **Agent 预设（飞书工作模式）**：从 Gateway Host 的 DSH 预设计划中选择一个作为新会话的工作模式；已有会话在创建时已固定模式，需 `/new` 切换。详见 [Agent 预设](AGENT-PRESET-SELECTION.md)。
 - **备用模型**：同一个多选框中添加/移除，按顺序回退；执行过工具的请求不会被自动重试，防止重复副作用。
 - **群聊**：默认不开放，需明确启用策略、成员白名单，通常建议要求 @机器人。
 - **定时任务**：依赖 DSH `ctx.schedule` 原生服务；不可用时不伪造本地 Cron。
@@ -49,4 +50,4 @@
 
 后台请求使用 DSH 原生用户认证和同源/CSRF 保护，写入使用受限数据结构和独立管理权限。Admin 不读取或回显 App Secret，不创建第二个 Agent Host，也不主动删除原生 DSH Session 文件。详细实现可查 [技术架构](ARCHITECTURE.md) 和 [开发测试](DEVELOPMENT.md)。
 
-进一步阅读：[定时任务](SCHEDULED-TASKS.md) · [群聊](GROUP-CHAT.md) · [Agent 档案](AGENT-PROFILE-MANAGER.md) · [模型与用量](USAGE-AND-MODELS.md) · [运维](OPERATIONS.md)。
+进一步阅读：[定时任务](SCHEDULED-TASKS.md) · [群聊](GROUP-CHAT.md) · [Agent 档案](AGENT-PROFILE-MANAGER.md) · [Agent 预设](AGENT-PRESET-SELECTION.md) · [模型与用量](USAGE-AND-MODELS.md) · [运维](OPERATIONS.md)。

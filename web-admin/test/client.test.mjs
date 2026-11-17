@@ -414,6 +414,54 @@ test('model route helpers aggregate all providers, retain saved routes, and seri
   assert.deepEqual(plain(api.modelsForProvider(view.providers, 'missing')), [])
 })
 
+test('settings expose the agent preset selector and persist the chosen working mode', () => {
+  assert.match(source, /Agent 预设（飞书工作模式）/)
+  assert.match(source, /继承（不覆盖 Profile 配置）/)
+  assert.match(source, /不指定（无预设，由 DSH 默认组合）/)
+  assert.match(source, /还没有获取到预设列表/)
+  assert.match(source, /result\.agentPreset = agentPreset/)
+  assert.match(source, /setAgentPreset\(/)
+  assert.match(source, /const \[agentPreset, setAgentPreset\] = useState\(''\)/)
+  assert.match(built, /Agent 预设（飞书工作模式）/)
+  assert.match(built, /function agentPresetView\(/)
+})
+
+test('agent preset view exposes the sanitized roster and saved selection without inventing a default', () => {
+  const block = source.split('/*__MODEL_ROUTE_HELPERS_START__*/')[1].split('/*__MODEL_ROUTE_HELPERS_END__*/')[0]
+  const api = runInNewContext(block + '\n({ agentPresetView })', {})
+  const plain = value => JSON.parse(JSON.stringify(value))
+
+  const empty = api.agentPresetView({ config: {} })
+  assert.deepEqual(plain(empty.presets), [])
+  // Absent key means "inherit": the form must not write a value.
+  assert.equal(empty.selected, '__inherit__')
+  assert.equal(empty.managed, false)
+  assert.equal(empty.catalogMissing, true)
+  assert.equal(empty.stale, false)
+  assert.equal(empty.defaultId, '')
+  assert.equal(api.agentPresetView(undefined).catalogMissing, true)
+  // A managed empty string is an explicit "no preset", not inherit.
+  assert.equal(api.agentPresetView({ config: { agentPreset: '' } }).selected, '')
+  assert.equal(api.agentPresetView({ config: { agentPreset: '' } }).managed, true)
+
+  const view = api.agentPresetView({
+    agentPresets: { ts: 1, incomplete: false, defaultId: 'planner', presets: [
+      { id: 'planner', name: 'Planner', description: 'Plans work', isDefault: true },
+      { id: 'coder', isDefault: false, broken: 'missing preset files' },
+    ] },
+    config: { agentPreset: 'coder' },
+    modelDirectoryStale: true,
+  })
+  assert.deepEqual(plain(view.presets), [
+    { id: 'planner', name: 'Planner', description: 'Plans work', isDefault: true, broken: '' },
+    { id: 'coder', name: 'coder', description: '', isDefault: false, broken: 'missing preset files' },
+  ])
+  assert.equal(view.selected, 'coder')
+  assert.equal(view.defaultId, 'planner')
+  assert.equal(view.catalogMissing, false)
+  assert.equal(view.stale, true)
+})
+
 test('usage heatmap is a labelled calendar with a theme-aware ramp and one shared tooltip', () => {
   const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')

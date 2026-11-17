@@ -159,6 +159,39 @@ window.__ModuleLoader__.load({
         stale: data.modelDirectoryStale === true,
       }
     }
+    // Pure read-model for the DSH Agent preset roster (`/state.agentPresets`).
+    // Never invents a default: an empty catalogue simply hides all presets so
+    // the "inherit / unspecified" choice stays explicit.
+    function agentPresetView(state) {
+      const data = state && typeof state === 'object' ? state : {}
+      const catalog = data.agentPresets && typeof data.agentPresets === 'object' ? data.agentPresets : null
+      const presets = []
+      if (catalog && Array.isArray(catalog.presets)) {
+        for (const entry of catalog.presets) {
+          if (!entry || typeof entry.id !== 'string' || !entry.id) continue
+          presets.push({
+            id: entry.id,
+            name: typeof entry.name === 'string' && entry.name ? entry.name : entry.id,
+            description: typeof entry.description === 'string' ? entry.description : '',
+            isDefault: entry.isDefault === true,
+            broken: typeof entry.broken === 'string' && entry.broken ? entry.broken : '',
+          })
+        }
+      }
+      const config = data.config && typeof data.config === 'object' ? data.config : {}
+      // Distinguish "managed but empty" (explicitly no preset) from "absent"
+      // (inherit the Profile value). Selecting inherit must NOT write a value.
+      const hasManaged = Object.prototype.hasOwnProperty.call(config, 'agentPreset')
+      const saved = config.agentPreset
+      return {
+        presets,
+        selected: hasManaged ? (typeof saved === 'string' ? saved : '') : '__inherit__',
+        managed: hasManaged,
+        catalogMissing: presets.length === 0,
+        stale: data.modelDirectoryStale === true,
+        defaultId: catalog && typeof catalog.defaultId === 'string' ? catalog.defaultId : '',
+      }
+    }
     function withRouteOptions(providers, routes) {
       const list = providers.map(provider => ({ ...provider, models: [...provider.models] }))
       for (const route of routes) {
@@ -255,6 +288,7 @@ window.__ModuleLoader__.load({
       const [primaryProvider, setPrimaryProvider] = useState('')
       const [primaryModel, setPrimaryModel] = useState('')
       const [fallbacks, setFallbacks] = useState([])
+      const [agentPreset, setAgentPreset] = useState('')
       const [primarySearch, setPrimarySearch] = useState('')
       const [fallbackSearch, setFallbackSearch] = useState('')
       const [timeout, setTimeout] = useState('')
@@ -289,6 +323,7 @@ window.__ModuleLoader__.load({
         setPrimaryProvider(directory.primary?.provider || '')
         setPrimaryModel(directory.primary?.model || '')
         setFallbacks(directory.fallbacks)
+        setAgentPreset(agentPresetView(data).selected)
         setPrimarySearch('')
         setFallbackSearch('')
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
@@ -337,6 +372,9 @@ window.__ModuleLoader__.load({
           fallbacks,
         })
         if (route) result.agent = route
+        // '__inherit__' omits the key entirely (Profile value stays in force);
+        // any other value is persisted, where '' is an explicit "no preset".
+        if (agentPreset !== '__inherit__') result.agentPreset = agentPreset
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
         result.networkProxy = networkProxyPayload({
           enabled: proxyEnabled, fallbackDirect: proxyFallback,
@@ -421,6 +459,10 @@ window.__ModuleLoader__.load({
 
       const proxy = networkProxyView(state)
       const directory = modelDirectoryView(state)
+      const presetDirectory = agentPresetView(state)
+      const presetSelectedVisible = presetDirectory.selected === '__inherit__' ||
+        !presetDirectory.selected ||
+        presetDirectory.presets.some(preset => preset.id === presetDirectory.selected)
       const allModels = flatModelOptions(directory.providers)
       const primaryKey = primaryProvider && primaryModel ? primaryProvider + '/' + primaryModel : ''
       const routeMatches = (entry, query) => !query ||
@@ -541,6 +583,29 @@ window.__ModuleLoader__.load({
                   item.name + '  ·  ' + item.key + (item.unlisted ? '（未在当前目录找到）' : ''))))),
             fallbackSelectionInvalid && h('p', { className: 'fga-error', role: 'alert' },
               '备用模型不能重复或与主模型相同，最多添加 8 个。')),
+          h('div', { className: 'fga-model-card' },
+            h('div', { className: 'fga-model-card-head' },
+              h('strong', null, 'Agent 预设（飞书工作模式）'),
+              h('span', { className: 'fga-hint' },
+                presetDirectory.catalogMissing ? '目录尚未加载' : presetDirectory.presets.length + ' 个预设')),
+            presetDirectory.stale && h('p', { className: 'fga-model-note' },
+              '预设列表来自最近一次运行记录；建议刷新后确认。'),
+            presetDirectory.catalogMissing && h('div', { className: 'fga-warning' },
+              '还没有获取到预设列表，请确认飞书通道正在运行，然后刷新页面。'),
+            h('select', { className: 'fga-input fga-model-select', value: presetDirectory.selected,
+              'aria-label': 'Agent 预设', disabled: busy || !state,
+              onChange: e => setAgentPreset(e.target.value) },
+              h('option', { value: '__inherit__' }, '继承（不覆盖 Profile 配置）'),
+              h('option', { value: '' }, '不指定（无预设，由 DSH 默认组合）'),
+              !presetSelectedVisible && h('option', { value: presetDirectory.selected },
+                presetDirectory.selected + '（未在当前目录找到）'),
+              ...presetDirectory.presets.map(preset => h('option', {
+                key: preset.id, value: preset.id, disabled: Boolean(preset.broken),
+                title: preset.description || undefined },
+                (preset.name || preset.id) + (preset.isDefault ? '（默认）' : '') +
+                  (preset.broken ? ' ⚠ ' + preset.broken : '')))),
+            h('p', { className: 'fga-hint' },
+              '新会话按所选预设工作；已存在会话保持原模式；保存后需重启飞书通道并对新会话生效（旧会话可 /new 切换）。')),
           h('div', { className: 'fga-divider' }),
           h('h3', { className: 'fga-settings-group' }, '回复与工作目录'),
           field('回复格式', h('select', { className: 'fga-input', value: replyFormat,

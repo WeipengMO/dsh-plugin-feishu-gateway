@@ -82,6 +82,16 @@ test('strict config validation rejects secrets, forged paths, and env name colli
   assert.throws(() => validateConfig({ networkProxy: {
     enabled: true, urlEnv: 'HTTPS_PROXY', url: 'http://secret.invalid', fallbackDirect: true,
   } }), /unsupported/)
+  // Agent preset: a bounded id, or an explicit clear via ""/null; anything else 400s.
+  assert.equal(validateConfig({ agentPreset: 'planner' }).agentPreset, 'planner')
+  assert.equal(validateConfig({ agentPreset: 'a.b:c-d_e' }).agentPreset, 'a.b:c-d_e')
+  assert.equal(validateConfig({ agentPreset: '' }).agentPreset, '')
+  assert.equal(validateConfig({ agentPreset: null }).agentPreset, '')
+  assert.equal(Object.prototype.hasOwnProperty.call(validateConfig({}), 'agentPreset'), false)
+  assert.throws(() => validateConfig({ agentPreset: 123 }), /agentPreset/)
+  assert.throws(() => validateConfig({ agentPreset: 'has space' }), /agentPreset/)
+  assert.throws(() => validateConfig({ agentPreset: '.leading-dot' }), /agentPreset/)
+  assert.throws(() => validateConfig({ agentPreset: 'x'.repeat(161) }), /agentPreset/)
 })
 
 test('every read and mutation requires authorized DSH browser session', async () => {
@@ -264,6 +274,7 @@ test('state exposes the Gateway DSH model directory and never invents a default 
     // No Gateway snapshot yet: unknown, explicitly null, not a fabricated value.
     const unknown = await f.request('/state')
     assert.equal(unknown.json.modelCatalog, null)
+    assert.equal(unknown.json.agentPresets, null)
     assert.equal(unknown.json.agentRoute, null)
     assert.equal(unknown.json.profileDefaultRoute, null)
     assert.equal(unknown.json.modelDirectoryStale, null)
@@ -279,6 +290,11 @@ test('state exposes the Gateway DSH model directory and never invents a default 
             { id: 'group/hy4-free', name: 'HY4 free' },
           ] },
           { id: 'broken', models: [] },
+        ] },
+      agentPresets: { ts: Date.now(), incomplete: false, defaultId: 'planner', secret: 'preset-secret',
+        presets: [
+          { id: 'planner', name: 'Planner', description: 'Plans work', isDefault: true },
+          { id: 'coder', isDefault: false, broken: 'missing preset files', secret: 'preset-row-secret' },
         ] },
       agentRoute: { provider: 'magpie', model: 'group/deepseek',
         fallback: { provider: 'magpie', model: 'group/hy4-free' }, reasoningEffort: 'high' },
@@ -296,13 +312,50 @@ test('state exposes the Gateway DSH model directory and never invents a default 
     assert.deepEqual(result.json.modelCatalog.models,
       ['magpie/group/deepseek', 'magpie/group/hy4-free'])
     assert.equal(result.json.modelCatalog.incomplete, false)
+    assert.ok(Number.isFinite(result.json.agentPresets.ts))
+    assert.deepEqual(result.json.agentPresets, {
+      ts: result.json.agentPresets.ts, incomplete: false, defaultId: 'planner',
+      presets: [
+        { id: 'planner', name: 'Planner', description: 'Plans work', isDefault: true },
+        { id: 'coder', isDefault: false, broken: 'missing preset files' },
+      ],
+    })
     assert.deepEqual(result.json.agentRoute, { provider: 'magpie', model: 'group/deepseek',
       fallback: { provider: 'magpie', model: 'group/hy4-free' }, reasoningEffort: 'high' })
     assert.deepEqual(result.json.profileDefaultRoute, {
       provider: 'magpie', model: 'group/deepseek', reasoningEffort: 'high' })
     assert.equal(result.json.modelDirectoryStale, false)
     assert.doesNotMatch(JSON.stringify(result.json),
-      /MUST-NOT-LEAK|provider-secret|model-secret|catalog-secret|"secret"/)
+      /MUST-NOT-LEAK|provider-secret|model-secret|catalog-secret|preset-secret|preset-row-secret|"secret"/)
+  } finally { await f.close() }
+})
+
+test('agent preset selection is validated, persisted, and cleared explicitly', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.request('/state')
+    const saved = await f.request('/config', 'PUT', {
+      expectedRevision: first.json.revision,
+      config: { agentPreset: 'planner' },
+    }, mutating)
+    assert.equal(saved.status, 200)
+    let latest = await f.request('/state')
+    assert.equal(latest.json.config.agentPreset, 'planner')
+
+    // null and "" both normalize to a stored empty string (explicit clear).
+    const cleared = await f.request('/config', 'PUT', {
+      expectedRevision: latest.json.revision,
+      config: { agentPreset: null },
+    }, mutating)
+    assert.equal(cleared.status, 200)
+    latest = await f.request('/state')
+    assert.equal(latest.json.config.agentPreset, '')
+
+    const bad = await f.request('/config', 'PUT', {
+      expectedRevision: latest.json.revision,
+      config: { agentPreset: 'bad id' },
+    }, mutating)
+    assert.equal(bad.status, 400)
   } finally { await f.close() }
 })
 

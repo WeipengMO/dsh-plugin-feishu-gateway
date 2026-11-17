@@ -21,6 +21,7 @@
 | 定时任务 | [定时任务](SCHEDULED-TASKS.md) | [Schedule API 合约](SCHEDULE-API-CONTRACT.md) |
 | 群聊与 @ | [群聊管理](GROUP-CHAT.md) | [飞书权限](FEISHU-APP.md) |
 | 模型 / 多模型回退 | [模型及用量](USAGE-AND-MODELS.md) | [历史用量](TOKEN-USAGE-ANALYTICS.md) |
+| Agent 预设 / 飞书工作模式 | [Agent 预设](AGENT-PRESET-SELECTION.md) | [Web 管理后台](WEB-ADMIN.md) |
 | 工具审批 / 任务卡片 | [卡片与审批](APPROVAL-STREAMING.md) | [安全与可靠性](RELIABILITY-AND-PROXY.md) |
 | Agent 档案 | [档案管理](AGENT-PROFILE-MANAGER.md) | [工作区隔离与旧配置迁移](AGENT-PROFILE-ISOLATION.md) |
 | 网络代理 | [运维手册](OPERATIONS.md) | [代理技术实现](PROXY-CONFIG-FLOW.md) |

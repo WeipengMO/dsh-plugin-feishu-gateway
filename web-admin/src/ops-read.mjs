@@ -14,9 +14,15 @@ const safeBot = s => typeof s === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(s) 
 const safeModel = s => typeof s === 'string' && /^[a-zA-Z0-9_./:@+-]{1,256}$/.test(s) ? s : undefined
 const safeProvider = s => typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s) ? s : undefined
 const safeEffort = s => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(s) ? s : undefined
+/** Agent preset ids mirror the managed-config charset exactly. */
+const safePresetId = s => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(s) ? s : undefined
 /** Display labels are plain bounded text: no control characters, ever. */
 const safeDisplayName = s => typeof s === 'string'
   ? s.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined
+  : undefined
+/** Optional preset prose is bounded printable text, never a raw error body. */
+const safePresetText = (s, max) => typeof s === 'string'
+  ? s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) || undefined
   : undefined
 
 function safeRoute(value, includeFallback = false) {
@@ -73,6 +79,33 @@ function safeModelCatalog(value) {
     incomplete: value.incomplete === true,
     models,
     ...(providers.length > 0 ? { providers } : {}),
+  }
+}
+
+function safeAgentPresets(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (safeNum(value.ts) === undefined) return undefined
+  const presets = (Array.isArray(value.presets) ? value.presets : []).slice(0, 100).flatMap(entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const id = safePresetId(entry.id)
+    if (!id) return []
+    const name = safePresetText(entry.name, 100)
+    const description = safePresetText(entry.description, 200)
+    const broken = safePresetText(entry.broken, 200)
+    return [{
+      id,
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {}),
+      isDefault: entry.isDefault === true,
+      ...(broken ? { broken } : {}),
+    }]
+  })
+  const defaultId = safePresetId(value.defaultId)
+  return {
+    ts: safeNum(value.ts),
+    incomplete: value.incomplete === true,
+    ...(defaultId ? { defaultId } : {}),
+    presets,
   }
 }
 
@@ -168,6 +201,7 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
       },
     } : {}),
     ...(safeModelCatalog(doc.modelCatalog) ? { modelCatalog: safeModelCatalog(doc.modelCatalog) } : {}),
+    ...(safeAgentPresets(doc.agentPresets) ? { agentPresets: safeAgentPresets(doc.agentPresets) } : {}),
     ...(safeRoute(doc.agentRoute, true) ? { agentRoute: safeRoute(doc.agentRoute, true) } : {}),
     ...(safeRoute(doc.profileDefaultRoute) ? { profileDefaultRoute: safeRoute(doc.profileDefaultRoute) } : {}),
     tasks, sessions, transport: transports,

@@ -209,3 +209,36 @@ describe('loadStoredProxyUrl (admin-managed proxy URL)', () => {
     expect(loadStoredProxyUrl(path.join(d.dir, 'missing'))).toBeUndefined()
   })
 })
+
+describe('managed agent preset (Feishu working mode)', () => {
+  it('accepts a valid preset id and clears with null or empty string', () => {
+    expect(validateManagedConfig({ agentPreset: 'standard' }).agentPreset).toBe('standard')
+    expect(validateManagedConfig({ agentPreset: 'ptc-minimal' }).agentPreset).toBe('ptc-minimal')
+    // Both explicit clears normalize to '' so a Profile preset cannot survive.
+    expect(validateManagedConfig({ agentPreset: null }).agentPreset).toBe('')
+    expect(validateManagedConfig({ agentPreset: '' }).agentPreset).toBe('')
+  })
+
+  it('rejects malformed preset ids and oversized values', () => {
+    expect(() => validateManagedConfig({ agentPreset: 'has space' })).toThrow(/agentPreset/)
+    expect(() => validateManagedConfig({ agentPreset: '-leading' })).toThrow(/agentPreset/)
+    expect(() => validateManagedConfig({ agentPreset: 42 as unknown as string })).toThrow(/agentPreset/)
+    expect(() => validateManagedConfig({ agentPreset: 'a'.repeat(161) })).toThrow(/agentPreset/)
+  })
+
+  it('overlays, inherits, and clears the Profile preset on load', async () => {
+    const d = await tempDir()
+    cleanup.push(d.cleanup)
+    const base = resolveConfig({ stateDir: d.dir, agentPreset: 'from-profile' })
+    // No overlay: the Profile value is inherited untouched.
+    expect(loadManagedConfig(base).agentPreset).toBe('from-profile')
+    // Explicit managed preset replaces the Profile value.
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: { agentPreset: 'ptc' } }))
+    expect(loadManagedConfig(base).agentPreset).toBe('ptc')
+    // null explicitly clears: no preset composition for new Sessions.
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: { agentPreset: null } }))
+    expect(loadManagedConfig(base).agentPreset).toBeUndefined()
+    await writeFile(managedConfigPath(d.dir), JSON.stringify({ version: 1, config: { agentPreset: '' } }))
+    expect(loadManagedConfig(base).agentPreset).toBeUndefined()
+  })
+})
