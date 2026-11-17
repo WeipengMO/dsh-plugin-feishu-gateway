@@ -57,6 +57,15 @@ export interface OpsSnapshot {
       readonly models: readonly { readonly id: string; readonly name?: string }[]
     }[]
   }
+  /** Read-only native DSH compaction capability and local observations. The
+   * Gateway cannot override host-owned auto trigger policy. */
+  readonly compaction?: {
+    readonly available: boolean
+    readonly completedInProcess: number
+    readonly lastCompletedAt?: number
+    readonly lastShadowedItems?: number
+    readonly lastShadowedTokens?: number
+  }
   /** Effective model route configured for Feishu Sessions (Profile + managed). */
   readonly agentRoute?: {
     readonly provider?: string
