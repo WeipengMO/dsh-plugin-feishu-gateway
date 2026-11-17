@@ -1,5 +1,7 @@
 # Scheduled tasks implementation contract (Issue #19)
 
+> **开发 API 合约**：这是 Issue #19 的技术实现/安全验证依据，不是最终用户操作手册。使用步骤及当前验收边界见 [定时任务](SCHEDULED-TASKS.md)；任何 API 字段变化需与 Gateway 和 Web Admin 同步验证。
+
 > Internal design contract for the `feat/scheduled-tasks` branch. This is the
 > **single source of truth** for the cross-profile interfaces between the
 > Gateway (TypeScript, `src/`) and the Web Admin (plain JS, `web-admin/`).
