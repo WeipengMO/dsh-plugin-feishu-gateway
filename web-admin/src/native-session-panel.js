@@ -136,19 +136,19 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
     try {
       const result = await request('/sessions/organizer/settings', 'PUT', patch)
       setSettings(result.settings)
-      setNotice('整理设置已保存；自动整理每约 15 秒检查一次，运行中的 Session 不会被强制归档。')
+      setNotice('工作区整理设置已保存；不会删除聊天记录。')
       void refresh()
     } catch (e) { setError(e.message || String(e)) }
     finally { setBusy(false) }
   }
   const runNow = async () => {
     if (!settings?.enabled || !plan?.available ||
-      !window.confirm('执行飞书工作区归位与已确认历史状态的安全对账？\n仅操作 WorkspaceRegistry，不删除 Session 历史；归档需要通过原生活动检查。')) return
+      !window.confirm('整理飞书工作区？\n只更新侧栏显示，不删除聊天记录；仍被使用的会话会跳过。')) return
     setBusy(true)
     try {
       const result = await request('/sessions/organizer/run', 'POST', {})
-      setNotice('对账完成：归位 ' + (result.report.attached || 0) +
-        '，归档 ' + (result.report.archived || 0) +
+      setNotice('整理完成：归入工作区 ' + (result.report.attached || 0) +
+        '，隐藏旧会话 ' + (result.report.archived || 0) +
         '，跳过 ' + (result.report.skipped?.length || 0) + '。')
       void refresh()
     } catch (e) { setError(e.message || String(e)) }
@@ -217,7 +217,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
   const formatDate = ts => Number.isFinite(ts) && ts > 0 ? opsDate(ts) : '—'
   return h(React.Fragment, null,
     mode === 'maintenance' && h(WbBlock, { title: '自动整理工作区',
-      aside: 'Web 只读取 header；不调用 resume，不抢占 Gateway 写锁' },
+      aside: '只整理侧栏归属，不修改对话正文' },
       !plan?.available && h('p', { className: 'fgw-caution' },
         'DSH 原生工作区/会话服务尚不可用：' + (plan?.reason || '等待 Gateway 与 Web 服务就绪')),
       h('div', { className: 'fgw-workspace-controls' },
@@ -225,11 +225,11 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           h('input', { type: 'checkbox', disabled: busy || !plan?.available,
             checked: settings?.enabled === true,
             onChange: e => void saveSettings({ enabled: e.target.checked }) }),
-          '启用自动工作区归位（默认关闭）'),
+          '自动归入飞书会话工作区'),
         h('label', { className: 'fga-check' },
           h('input', { type: 'checkbox', checked: settings?.revealNames === true, disabled: busy,
             onChange: e => void saveSettings({ revealNames: e.target.checked }) }),
-          '允许在授权页显示群名'),
+          '显示已配置的群聊名称'),
         h('label', { className: 'fgw-session-filter fgw-workspace-duration' },
           h('span', null, '定时任务移除后等待'),
           h('select', { className: 'fga-input', value: settings?.graceHours || 24,
@@ -244,8 +244,8 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       plan?.available && h('p', { className: 'fgw-muted' },
         '预览：待归位 ' + wbCount(plan.attach?.length) + '；符合规则的待归档 ' +
         wbCount(plan.archive?.length) + '；旧工作区会话 ' + wbCount(plan.legacy?.length) +
-        '。首次对账不会自动清理未知历史。归档活动检查失败将跳过。'),
-      h(OpsNote, null, '原生旧工作区会话的 cwd 不能更改，不能强制 attach；仅通过下面的独立预览逐条归档。手动取消归档后不会再次自动归档已处理记录。')),
+        '。不会修改旧会话的工作目录，无法确认状态时会跳过。'),
+      h(OpsNote, null, '已有旧工作区中的会话不会强制迁移；手动恢复的会话不会被自动重复隐藏。')),
     mode !== 'maintenance' && h('div',{className:'fgw-session-list', 'data-expanded':showAdvanced?'yes':'no'},
       h(WbBlock, { title: mode === 'archive'?'已归档的对话':mode==='trash'?'回收站中的对话':'对话历史',
       aside: mode==='trash'?'可恢复，当前不能永久删除':mode==='archive'?'归档不会释放磁盘空间':'只显示未归档、未移入回收站的 DSH 对话' },
@@ -284,6 +284,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         'aria-expanded':showAdvanced }, showAdvanced?'收起筛选条件':'更多筛选条件'),
       error && h('div',{className:'fgw-caution',role:'alert'},error),
       notice && h('div',{className:'fgw-caution',role:'status'},notice),
+      report?.titleSearchLimited&&h('p',{className:'fgw-muted'},'会话过多：标题搜索暂限前 1,000 条，请结合来源或日期筛选。'),
       !report?.available ? h(WbEmpty, {headline:'等待原生 Session 服务',description:report?.reason || '请确认 DSH Web 具备持久化和工作区服务。'}) :
       h(OpsTable, {rows:report.items, empty:'没有符合当前筛选条件的原生 Session',
         columns:[
