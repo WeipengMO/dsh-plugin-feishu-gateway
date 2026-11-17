@@ -63,6 +63,9 @@ dsh --profile web --dump-config
 
 飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
 
+
+> **可选增强**：永久删除已归档 DSH 对话需要在 **`web` Profile** 安装并启用 `@michengai/dsh-archive-manager`。没安装时「删除」按钮为灰色，归档、恢复和飞书消息功能不受影响。具体步骤见 [会话管理指南](docs/SESSION-CENTER-UX.md)。
+
 ## 安全与升级原则
 
 - 飞书私聊只允许授权的 `open_id`；群聊默认关闭，需要显式配置策略和成员白名单。
