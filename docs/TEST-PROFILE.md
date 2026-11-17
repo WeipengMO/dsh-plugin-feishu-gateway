@@ -1,5 +1,7 @@
 # 本地测试 Profile 安装方法
 
+> **隔离测试指南（历史示例）**：本文件包含初期 DSH 0.2.2-rc.1 的手动测试 Profile 和部分旧配置。构建安装当前源码请先按 [首次部署](GETTING-STARTED.md) 使用 `package.json` 中实际版本，切勿复制下文旧版本 tgz 名称或把示例路径直接用于生产。验收流程见 [开发与测试](DEVELOPMENT.md)。
+
 > **重要**：本项目**不修改、不覆盖现有 `web` profile**（`~/.dsh/profiles/web/`）。
 > 下面所有操作都针对一个**新建的独立 profile**：`feishu-gateway-test`。
 > 本文件描述的是「方法」，本次交付**没有执行** `dsh plugin add`（它是会改动 DSH home 的状态变更）。
