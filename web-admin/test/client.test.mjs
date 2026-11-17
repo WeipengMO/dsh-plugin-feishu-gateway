@@ -720,3 +720,15 @@ test('bot management uses safe source switching, in-page confirmation and live c
   assert.match(validate([{ ...bot, id: 'a-b' }, { ...bot, id: 'a_b' }]), /冲突/)
   assert.match(validate(Array.from({ length: 9 }, (_, i) => ({ ...bot, id: 'b' + i }))), /最多/)
 })
+
+test('dashboard cards and settings stay centered as the DSH content column shrinks', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /\.fgw-content\{container-type:inline-size;overflow-x:hidden\}/)
+  assert.match(css, /\.fgw-content > \.fgw-shortcuts,\s*\.fgw-content > \.fgw-approval-metrics\{margin-inline:auto\}/)
+  assert.match(css, /@container \(max-width:1000px\)/)
+  assert.match(css, /@container \(max-width:650px\)/)
+  assert.match(css, /\.fga-model-route-grid\{[\s\S]*?grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/)
+  assert.match(source, /className: 'fga-model-route-grid'/)
+  assert.match(source, /className: 'fga-model-card fga-model-primary'/)
+  assert.match(source, /fga-model-unsaved/)
+})
