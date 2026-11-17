@@ -222,7 +222,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     (status === 'all' ||
       (status === 'current' ? !row.archived && !trash.items[row.id] :
       (status === 'trashed' ? Boolean(trash.items[row.id]) :
-       status === 'archived' ? row.archived && !trash.items[row.id] :
+       status === 'archived' ? row.archived :
        row.status === status && !trash.items[row.id]))) &&
     (type === 'all' || row.type === type) &&
     (!query.orphanOnly || row.orphan) &&
@@ -262,6 +262,8 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
     canTrash: !data.runtime.stale && typeof services.registry?.archiveSession === 'function' &&
       typeof services.registry?.unarchiveSession === 'function',
+    canDelete: typeof services.deleter?.inspect === 'function' &&
+      typeof services.deleter?.delete === 'function',
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
 export function reconcileSessionOrganization(stateDir, services, options = {}) {
@@ -617,5 +619,72 @@ export function autoArchiveExpiredSessions(stateDir, services, now = Date.now())
     await privateWrite(stateDir, CURSOR_FILE, { ...emptyCursor(), ...cursor,
       activity, handled: [...handled].slice(-10000) })
     return { enabled: true, archived, physicalDeletePerformed: false }
+  })
+}
+
+/**
+ * Permanent Session deletion is only supported through a runtime service
+ * which owns the DSH persistence, workspace, projection and live-agent cleanup.
+ * Never guess storage paths, rm logs, or represent archive/unlink as delete.
+ */
+function deletionService(services) {
+  const deleter = services.deleter
+  if (!deleter || typeof deleter.inspect !== 'function' ||
+    typeof deleter.delete !== 'function') {
+    throw Object.assign(new Error('当前 DSH 未提供可用的安全删除服务'), { status: 501 })
+  }
+  return deleter
+}
+async function deletionCandidate(stateDir, services, sessionRef) {
+  const data = await sourceData(stateDir, services.persistence, services.registry)
+  if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
+  const row = onlyRow(data, sessionRef)
+  if (!row.archived || row.bound || !row.orphan || row.status === 'active' ||
+    row.type === 'schedule' || data.activeTasks[row.id] || data.runtime.stale ||
+    data.runtime.stats?.pendingApprovals || data.runtime.stats?.inboxPending ||
+    data.runtime.stats?.outboxPending) {
+    throw Object.assign(new Error('会话仍在使用、处于定时任务中或运行状态不确定，不能删除'), { status: 409 })
+  }
+  const deleter = deletionService(services)
+  if (typeof deleter.isLive === 'function' && deleter.isLive(row.id))
+    throw Object.assign(new Error('会话仍由 Agent 占用'), { status: 409 })
+  return { row, deleter }
+}
+export async function previewNativePermanentDelete(stateDir, services, sessionRef) {
+  const { row, deleter } = await deletionCandidate(stateDir, services, sessionRef)
+  const detail = await deleter.inspect(row.id)
+  if (detail?.live === true || detail?.status === 'live')
+    throw Object.assign(new Error('会话正在运行，不能删除'), { status: 409 })
+  // Inspection can contain absolute paths and other sensitive backend fields:
+  // expose a minimal, backend-agnostic sanitized preview only.
+  const bytes = Number(detail?.bytes ?? detail?.bytesTotal ?? detail?.totalBytes)
+  return { sessionRef, permanent: true, reversible: false,
+    estimatedBytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null }
+}
+export function permanentlyDeleteNativeSession(stateDir, services, sessionRef) {
+  return serialized(stateDir, async () => {
+    const { row, deleter } = await deletionCandidate(stateDir, services, sessionRef)
+    const detail = await deleter.inspect(row.id)
+    if (detail?.live === true || detail?.status === 'live')
+      throw Object.assign(new Error('会话正在运行，不能删除'), { status: 409 })
+    // The storage owner must refuse live writers and clean all DSH indices.
+    // Explicitly disallow forced live deletion and retained full-log backups.
+    const report = await deleter.delete(row.id, { force: false, backup: false })
+    if (!report || typeof report !== 'object')
+      throw Object.assign(new Error('删除服务没有返回可验证的结果'), { status: 503 })
+    const bytes = Number(report.bytesRemoved)
+    let indexCleanupPending = false
+    try {
+      const trash = await readTrash(stateDir)
+      if (trash.items[row.id]) {
+        delete trash.items[row.id]
+        await privateWrite(stateDir, TRASH_FILE, trash)
+      }
+    } catch { indexCleanupPending = true }
+    await auditOrganization(stateDir, row.id, 'native-session-permanently-deleted')
+      .catch(() => { indexCleanupPending = true })
+    return { sessionRef, deleted: true,
+      bytesRemoved: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null,
+      indexCleanupPending }
   })
 }
