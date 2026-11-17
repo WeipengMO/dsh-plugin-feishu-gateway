@@ -13,7 +13,7 @@
 - **管理后台**：模型与备用模型、机器人/群聊权限、Agent 档案、Token 用量、消息投递、代理及运行诊断。
 - **可靠性**：持久化 Inbox/Outbox、消息去重、保守重试与重启恢复；不自动重放可能已经产生副作用的任务。
 
-**已支持在检测到兼容 DSH 安全删除服务时手动永久删除已归档会话；不支持的运行时会明确禁用。自动永久删除与按期限物理清理尚未实现**（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
+**手动永久删除通过可选的 `@michengai/dsh-archive-manager` 提供**（安装于 DSH Web `web` Profile）；没有安装时「删除」按钮保持灰色，其他功能正常运行。自动永久删除和按期限物理清理尚未实现（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
 
 ## 快速开始
 
@@ -59,7 +59,7 @@ dsh --profile web --dump-config
 | 运维与诊断 | 告警、连接和结构化日志 |
 | 模型与连接 | 主模型、多个备用模型、代理和消息卡片选项 |
 
-「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**。已归档直接提供“恢复 / 删除”，删除依赖兼容的 DSH 存储管理服务；确认操作统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
+「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**。已归档直接提供“恢复 / 删除”；删除需要可选的 `@michengai/dsh-archive-manager` 扩展接口，没有安装时保持灰色；确认操作统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
 
 飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
 
