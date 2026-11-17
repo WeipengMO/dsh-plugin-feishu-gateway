@@ -1,52 +1,44 @@
-# Feishu group chat management (Issue #18)
+# 飞书群聊与成员权限
 
-Groups are **disabled by default**, even if the old `allowGroups` switch is true. Existing private conversations and their `allowlist` are unaffected.
+入口：**DSH Web → 飞书管理 → 接入与权限 → 群聊管理**。
 
-## Configure
+群聊**默认关闭**。即使旧配置中有 `allowGroups: true`，也不能绕过新的显式群策略、成员白名单和消息权限。
 
-Open DSH Web → **飞书管理 → 群聊管理**.
+## 配置建议
 
-1. Set `groupPolicy` to `allowlist` (recommended). `open` includes every group but still restricts senders; its first activation requires an explicit confirmation. `disabled` is the default.
-2. Configure trusted Feishu user `open_id` values in `groupSenderAllowlist`. Empty means deny all groups, including `open`.
-3. Register each `oc_...` chat id and optionally assign a local display label. Per-group sender allowlists can only restrict access further; the effective group permission is the intersection.
-4. Keep `requireMention=true` to respond only when the sender **actually mentions this bot**. To enable auto-replies in a selected group, clear it. All groups default to mention-only.
-5. Choose Session isolation: `group_sender` (recommended) separates members; `group_topic_sender` additionally separates topics; `group` and `group_topic` share DSH conversation context between trusted members.
-6. Save and restart the **independent** Feishu Gateway. Do not restart while real tasks are executing without accounting for interrupted side effects.
+1. 设置群聊策略为 **仅允许指定群（allowlist）**，避免直接对所有群开放。
+2. 将可信成员的飞书 `open_id` 添加到全局群成员白名单。空名单表示拒绝所有群消息，即使策略是 `open`。
+3. 添加获准使用机器人的群 `chat_id`（`oc_...`），并设置一个**本地显示名称**。名称仅用于后台展示，不代表飞书接口自动核实。
+4. 默认打开 **必须 @机器人**；需要自动回复的群再单独关闭。
+5. 建议使用 **按群成员隔离会话（group_sender）**，避免不同成员共享 DSH 对话上下文。
+6. 保存后，在合适的维护窗口重启独立 Gateway；配置提交不一定立即改变活跃连接。
 
-Group policy managed configuration example:
+## 会话隔离的区别
 
-```json
-{
-  "groupPolicy": "allowlist",
-  "groupSenderAllowlist": ["ou_example_user"],
-  "groups": [{
-    "chatId": "oc_example_group",
-    "name": "Research discussion",
-    "enabled": true,
-    "requireMention": true,
-    "sessionScope": "group_sender"
-  }]
-}
-```
+| 模式 | DSH 上下文与谁共享 |
+| --- | --- |
+| `group_sender`（推荐） | 同一个群里的每名用户各自拥有上下文 |
+| `group_topic_sender` | 进一步按话题与发送者隔离 |
+| `group` | 获授权群成员共享一段上下文 |
+| `group_topic` | 同一群话题内共享上下文 |
 
-These are **configuration values**, not real accounts or identifiers. The example is a fragment, not a replacement for the full admin-config.json document.
+共享上下文时，成员之间可能相互看到通过 Agent 产生的信息，请在理解风险后才启用。
 
-## Feishu permissions and @mentions
+## 飞书权限与 @ 判定
 
-Subscribe to `im.message.receive_v1`. For @only group messages, grant `im:message.group_at_msg:readonly` (or equivalent); for ordinary **non-@** group messages, the bot needs `im:message.group_msg:readonly` or equivalent. Publishing a revised app configuration or tenant authorization may be required. The saved setting cannot grant Feishu permissions; test in the tenant.
+- 至少订阅 `im.message.receive_v1`。@ 才回复通常需要对应群 @ 消息读取权限，非 @ 全部消息还需要相应群消息权限；具体名称由飞书开放平台决定。
+- Gateway 通过飞书机器人身份信息以及结构化的 `mentions` 判断是否真的 @ 当前机器人；消息里只出现名字、`@all` 不足以触发。
+- 无法验证机器人身份时，要求 @ 的群应拒绝处理，而不是开放为自动回复。
 
-The SDK adapter calls `GET /open-apis/bot/v3/info` to retrieve its own `open_id` and compares it with *structured* `mentions[].id.open_id` (and `mentioned_type=bot`). A plain-text name or `@all` is never sufficient. Without a verified bot identity, mention-required groups fail closed.
+## 安全行为
 
-## Security guarantees and boundaries
+- 入站消息先经过群策略及成员授权，再记录到持久 Inbox 和原生 DSH Session。
+- 重试、重放或队列恢复时仍重新检查权限；不会因为旧消息已入队而绕过授权。
+- `/cancel`、工具审批卡片等控制操作绑定实际执行者、机器人、聊天和一次性请求，不能替别人取消或批准。
+- 不认识的聊天类型和机器人自己发出的消息会忽略。
 
-- All incoming group messages require an explicitly enabled group policy and a global sender allowlist match **before** durable Inbox or DSH Session creation.
-- Durable Inbox persists chat type, verified mention flag and topic IDs. Replayed or queued records are reauthorized before any native Agent or command execution.
-- Group registry keys are separated from direct-message keys; default `group_sender` scope isolates group members. Shared scopes must be chosen explicitly.
-- `/cancel` cannot cancel a turn owned by another sender. Tool approvals and cancellation cards match actor, bot, chat, specific message and one-time nonce, rather than merely the chat id.
-- Unknown chat types and bot-generated messages are ignored; Feishu message IDs are deduplicated by the existing durable Inbox.
-- The group name field is a local administrator label, not a verified Feishu directory value. The UI does not claim to discover group names automatically.
-- The admin API is behind authenticated DSH Web and validates both allowed fields and `open` confirmation.
+## 实际验收
 
-## Verification
+在真实飞书租户中分别测试 @ 与非 @、允许和拒绝的成员、不同群或话题、卡片审批、重启与并发。`pnpm run verify` 只完成 Mock/安全测试，不代表真实群消息权限已正确发布。
 
-Run `pnpm run verify`. CI mocks Feishu/DSH and checks group allowlist, @routing, open policy, Session scope and Web admin confirmation. Full live acceptance requires a Feishu tenant: @ and non-@ delivery, permissions for all-message events, concurrent users, restart/recovery, group-topic mapping, card approvals and private DM regression. CI alone **does not** prove real-tenant group delivery.
+相关文档：[飞书应用配置](FEISHU-APP.md) · [会话管理](SESSION-CENTER-UX.md) · [Web 后台](WEB-ADMIN.md)。

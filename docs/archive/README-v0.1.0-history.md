@@ -89,7 +89,7 @@ Feishu WebSocket → FeishuTransport
   → DurableOutbox（串行补发 / 持久 UUID / 幂等键）→ Feishu reply/create
 ```
 
-详细设计、官方 API 证据、能力矩阵见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，版本兼容性分析见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
+详细设计、官方 API 证据、能力矩阵见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)，版本兼容性分析见 [docs/COMPATIBILITY.md](../../docs/COMPATIBILITY.md)。
 
 ---
 
@@ -101,7 +101,7 @@ Feishu WebSocket → FeishuTransport
 - CardKit v1 流式任务卡片：通过原生 assistant-stream 增量展示任务进度，限频更新，提供取消按钮。最终完整答复仍然由原始 DurableOutbox 发送。
 - 此插件不会自动将 DSH approval 的 never 策略改为 ask。请在真实飞书环境验收后再有意识地启用 ask，并限制权限。
 
-详见 [docs/APPROVAL-STREAMING.md](docs/APPROVAL-STREAMING.md)。
+详见 [docs/APPROVAL-STREAMING.md](../../docs/APPROVAL-STREAMING.md)。
 
 ## 富文本与 Markdown（Gateway 0.1.3 / Admin 0.1.1）
 
@@ -117,11 +117,11 @@ Feishu WebSocket → FeishuTransport
 - `/cancel` 独立于长任务队列，不必等待原有 LLM 响应；只取消**当前聊天**正在运行的 turn。可能已执行的操作不会回滚，不会自动重放取消的 turn。
 - `/new` 在当前聊天任务结束后将下条消息切换到新 Session，原 DSH Session 历史保留。
 
-命令先经过原有白名单、私聊和 Inbox 去重/持久化检查，不会提交给模型。只有文本 DM 支持；没有打开群聊或工具审批。更多详情见 [docs/FEISHU-CHANNEL.md](docs/FEISHU-CHANNEL.md)。
+命令先经过原有白名单、私聊和 Inbox 去重/持久化检查，不会提交给模型。只有文本 DM 支持；没有打开群聊或工具审批。更多详情见 [docs/FEISHU-CHANNEL.md](../../docs/FEISHU-CHANNEL.md)。
 
 ## Web 可视化管理（新增）
 
-新增独立的 `web-admin/` 配套插件 **dsh-plugin-feishu-admin**：通过 DSH Web 的 `settings.section` 插槽提供「飞书通道」后台，可查看状态、修改模型/白名单/机器人和安全更新凭据，使用 systemd 重启独立 Gateway。**请不要把 Gateway 安装到 `web` Profile**；Web 只安装 Admin tarball。完整流程见 [docs/WEB-ADMIN.md](docs/WEB-ADMIN.md)。
+新增独立的 `web-admin/` 配套插件 **dsh-plugin-feishu-admin**：通过 DSH Web 的 `settings.section` 插槽提供「飞书通道」后台，可查看状态、修改模型/白名单/机器人和安全更新凭据，使用 systemd 重启独立 Gateway。**请不要把 Gateway 安装到 `web` Profile**；Web 只安装 Admin tarball。完整流程见 [docs/WEB-ADMIN.md](../../docs/WEB-ADMIN.md)。
 
 ## 配置
 
@@ -165,7 +165,7 @@ FEISHU_GATEWAY_<BOT_ID_UPPER>_APP_ID
 FEISHU_GATEWAY_<BOT_ID_UPPER>_APP_SECRET
 ```
 
-见 [.env.example](.env.example)。生产环境请通过 systemd / 容器 secret 注入环境变量，**不要提交 `.env`**。
+见 [.env.example](../../.env.example)。生产环境请通过 systemd / 容器 secret 注入环境变量，**不要提交 `.env`**。
 
 ---
 
@@ -206,7 +206,7 @@ dsh plugin --profile "$PROFILE" add "$PWD/dist/dsh-plugin-feishu-gateway-0.1.0.t
 > **安装 ≠ 测试**：v0.1.0 没有 Web 管理面板，装进 `web` 也不会出现任何界面或交互入口；
 > 功能验证不需要启动 DSH、也不需要装进任何 Profile，见下一节。
 > 模板用的是 `dsh-headless`，启动需要任务参数且需要 LLM 路由配置（默认模板未配，
-> 直接启动会报 `MISSING_CREDENTIAL`）——详见 [docs/TEST-PROFILE.md](docs/TEST-PROFILE.md) §5。
+> 直接启动会报 `MISSING_CREDENTIAL`）——详见 [docs/TEST-PROFILE.md](../../docs/TEST-PROFILE.md) §5。
 
 ---
 
@@ -234,7 +234,7 @@ pnpm run demo "你好" ou_stranger     # 白名单外 → 无回复
 
 ## 飞书测试应用配置
 
-见 [docs/FEISHU-APP.md](docs/FEISHU-APP.md)：创建企业自建应用、开启机器人能力、配置 `im.message.receive_v1` 长连接事件订阅、所需权限（`im:message`、`im:message:send_as_bot` 等）、白名单 `open_id` 获取方式。**本项目不会连接任何现有正式飞书应用。**
+见 [docs/FEISHU-APP.md](../../docs/FEISHU-APP.md)：创建企业自建应用、开启机器人能力、配置 `im.message.receive_v1` 长连接事件订阅、所需权限（`im:message`、`im:message:send_as_bot` 等）、白名单 `open_id` 获取方式。**本项目不会连接任何现有正式飞书应用。**
 
 ---
 
@@ -278,7 +278,7 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 
 - 本插件**不提供端到端 exactly-once**。实际保证是：单实例、单主机、进程（非机器掉电）崩溃范围内的**「Agent 最多自动执行一次」+「回复至少投递一次」+「尽力而为的外部幂等」**（20k 条上限的 `sent` 记录 + 飞书约 1 小时的 `uuid` 窗口 + 稳定的 `idem` 键）。
 - `appendFile` 未 `fsync`：机器掉电可能丢失最近的 `running` 事件，使一次已开始的 Turn 退化为可重放的 `pending` → 理论上重复执行。`inbox.jsonl` 的 append 与 `outbox.send()` / `registry.touch()` / `markProcessed()` 不在同一事务内：回复发出后才标记完成，极窄崩溃窗口内会产生一条「请检查会话后决定是否重发」的二次提示。
-- **`failed` / `uncertain` 是终态且目前没有程序化的重试 / 解决入口**：`health()` / `diagnostics()` 只读，唯一的恢复方式是用户在飞书重新发送（产生新的 `message_id`）。这是刻意的保守取舍（避免重放可能已产生副作用的 Turn），也是已知的人工恢复缺口，见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md) 的死信队列 + 手动重放 TODO。
+- **`failed` / `uncertain` 是终态且目前没有程序化的重试 / 解决入口**：`health()` / `diagnostics()` 只读，唯一的恢复方式是用户在飞书重新发送（产生新的 `message_id`）。这是刻意的保守取舍（避免重放可能已产生副作用的 Turn），也是已知的人工恢复缺口，见 [docs/ROADMAP-v0.2.0.md](ROADMAP-v0.2.0.md) 的死信队列 + 手动重放 TODO。
 - **已完成的非法 JSONL 行**（非尾部断尾）仍会让 `open()` 抛错并导致插件启动失败，尚没有隔离 / 跳过 / 命令行修复入口；只有三个 `JsonStore` 状态文件有 `.corrupt-*` 隔离。
 - 白名单撤销只对**重启后**重放的 `pending` 生效；运行中的实例仍持有构造时的 allowlist 快照，热撤销需要重新加载插件。Outbox 的 `pending` 与 `inbox.jsonl` 均无上限/压缩（`sent` 有 20k 上限）；单个机器人的 `sendText` 没有硬超时，可能阻塞全局 Outbox 互斥队列。
 - 状态文件以 `0o600` 保存**明文**用户消息与回复文本（不含 App Secret 值），`stateDir` 请勿放在会被提交到仓库的位置。飞书服务端对非 200 ACK 的重推行为、超过 1 小时的 `uuid` 去重，均未通过真实租户验证。
@@ -318,7 +318,7 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 
 用**同一个持续运行的 DSH Host 进程**（`HOST_KEEPALIVE` 让 headless 自身的任务保持未完成，
 避免 `io.exit()` 触发根 fiber 卸载）驱动真实 `DshSessionBridge`，复验结论见
-`research/ROUND2-TEST-REPORT.md`，可复现 harness 见 [`scripts/real-runtime/`](scripts/real-runtime/README.md)：
+`research/ROUND2-TEST-REPORT.md`，可复现 harness 见 [`scripts/real-runtime/`](../../scripts/real-runtime/README.md)：
 
 - **同一 Host 连续三轮 PASS**：三轮共用同一 Session ID；测试 LLM **无状态且只从 DSH 发来的
   真实会话历史生成回复**（非硬编码答案），Turn 1 为确认语、Turn 2/3 均返回 `GBM-7429`。
@@ -348,7 +348,7 @@ CI：`.github/workflows/ci.yml`（pnpm frozen-lockfile → typecheck → build �
 ## 两个 P0 端到端测试（真实商用 LLM / 真实飞书租户）
 
 两项都需要**外部凭据**，因此都做了「凭据缺失 → 明确 BLOCKED，绝不假通过」的处理。
-完整步骤见 [docs/E2E.md](docs/E2E.md)。
+完整步骤见 [docs/E2E.md](../../docs/E2E.md)。
 
 ```bash
 pnpm run e2e:preflight      # 真实 LLM + 真实飞书：缺哪个环境变量一目了然（exit 3 = BLOCKED）
@@ -378,14 +378,14 @@ pnpm run e2e:feishu         # P0-B：真实飞书租户（长驻 Host + 手动�
 
 ## 后续版本
 
-见 [docs/ROADMAP-v0.2.0.md](docs/ROADMAP-v0.2.0.md)：卡片与流式回复、图片/文件双向、原生审批桥接、长任务取消、Schedule 主动通知、Web 管理面板、多机器人独立工作区/模型、可观测性。
+见 [docs/ROADMAP-v0.2.0.md](ROADMAP-v0.2.0.md)：卡片与流式回复、图片/文件双向、原生审批桥接、长任务取消、Schedule 主动通知、Web 管理面板、多机器人独立工作区/模型、可观测性。
 
 ---
 
 ## 参考与许可
 
-- DSH 官方 API 调研：[research/dsh-api.md](research/dsh-api.md)
-- 插件范例调研：[research/plugin-examples.md](research/plugin-examples.md)
-- 参考项目调研：[research/references.md](research/references.md)
+- DSH 官方 API 调研：[research/dsh-api.md](../../research/dsh-api.md)
+- 插件范例调研：[research/plugin-examples.md](../../research/plugin-examples.md)
+- 参考项目调研：[research/references.md](../../research/references.md)
 - 上游：https://github.com/deepseek-ai/deepseek-harness , https://github.com/larksuite/node-sdk
 - 本项目从零编写，未 Fork 任何社区插件。MIT License。

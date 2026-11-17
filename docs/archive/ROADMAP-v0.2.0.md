@@ -49,7 +49,7 @@
 
 ## P0-2 原生 DSH 工具审批桥接
 
-**官方依据**（[../research/dsh-api.md](../research/dsh-api.md) §5）：
+**官方依据**（[../research/dsh-api.md](../../research/dsh-api.md) §5）：
 `ctx.approval`（`@deepseek-ai/dsh-user-approval`，`super(ctx, "approval")`），
 事件 `ctx.on('approval/request', (req, next) => ...)`，返回四种 `ApprovalOutcome` 之一或 `next()`。
 
@@ -172,7 +172,7 @@ v0.1.0 已有 JSONL Inbox + 原子 JSON Outbox + DedupIndex。建议：
 
 ## P1-7 定时任务主动通知
 
-**官方依据**（[../research/dsh-api.md](../research/dsh-api.md) §6）：
+**官方依据**（[../research/dsh-api.md](../../research/dsh-api.md) §6）：
 `ctx.schedule.create({ title, prompt, timing, target })`，`target: { kind: 'session', sessionId }`；
 或 `@deepseek-ai/cordis-plugin-timer` 的 `ctx.timeout(...)`。
 

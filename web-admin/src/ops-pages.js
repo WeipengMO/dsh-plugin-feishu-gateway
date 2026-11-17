@@ -24,7 +24,7 @@ function OpsTable({ columns, rows, empty }) {
         h('th', { key: c.key, scope: 'col' }, c.title)))),
       h('tbody', null, rows.map((row, i) =>
         h('tr', { key: row.ref || row.ts + ':' + i }, columns.map(c =>
-          h('td', { key: c.key }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
+          h('td', { key: c.key, 'data-label': c.title }, c.render ? c.render(row) : wbValue(row[c.key]))))))))
 }
 const APPROVAL_DECISION_LABELS = {
   requested: '等待审批', 'allowed-once': '允许一次', 'allowed-permanent': '永久允许',
@@ -78,8 +78,7 @@ function ApprovalCountdown({ expiresAt }) {
 }
 
 function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh }) {
-  if (kind === 'sessions') return h(React.Fragment, null,
-    h(FeishuNativeSessionLedger, {}), h(FeishuSessionsInventory, {}))
+  if (kind === 'sessions') return h(FeishuSessionCenter, {})
   // Historical token metrics remain available when the Gateway is offline.
   if (kind === 'usage') return h(UsagePanel, {})
   // Approvals are published in their own authoritative Gateway file; keep the
@@ -282,6 +281,8 @@ function FeishuSessionsInventory() {
   const [filters, setFilters] = useState({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' })
   const [applied, setApplied] = useState({ page: 1, pageSize: 25 })
   const [report, setReport] = useState(null)
+  const [nativeNames, setNativeNames] = useState({})
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [selected, setSelected] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -294,8 +295,14 @@ function FeishuSessionsInventory() {
       Object.entries(applied).forEach(([key, value]) => {
         if (value !== '' && value !== 'all') args.set(key, String(value))
       })
-      const response = await request('/sessions?' + args.toString())
+      const [response, native] = await Promise.all([
+        request('/sessions?' + args.toString()),
+        request('/sessions/ledger?pageSize=100&reveal=0').catch(() => null)
+      ])
       setReport(response.report)
+      const nameMap = {}
+      for (const row of native?.report?.items || []) nameMap[row.sessionRef] = row
+      setNativeNames(nameMap)
       setError('')
     } catch (e) { setError(e.message || String(e)) }
     finally { setBusy(false) }
@@ -305,8 +312,8 @@ function FeishuSessionsInventory() {
   const storage = report?.storage
   const bytes = n => Number.isFinite(n) ? (n < 1024 ? n + ' B' :
     n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(2) + ' MiB') : '—'
-  const kinds = { inbox: 'Inbox', outbox: 'Outbox', bindings: 'Session 绑定',
-    events: '事件审计', runtime: '运行时快照', dedup: '去重记录', usage: 'Token 用量', commands: '操作队列' }
+  const kinds = { inbox: '收到的消息', outbox: '待发送的消息', bindings: '聊天关联',
+    events: '操作记录', runtime: '运行状态', dedup: '防重复记录', usage: 'Token 用量', commands: '管理操作' }
   const pages = report ? Math.ceil(report.total / report.pageSize) : 0
   const manage = async (type, item) => {
     setNotice('')
@@ -316,12 +323,12 @@ function FeishuSessionsInventory() {
         type, ref: item.sessionRef, expectedLastActiveAt: item.lastActiveAt,
       })
       const preview = response.preview
-      const action = type === 'archive-session' ? '归档绑定' : '解除飞书绑定'
+      const action = type === 'archive-session' ? '隐藏关联' : '解除聊天关联'
       const details = '操作：' + action + '\n机器人：' + preview.botId +
         '\nSession 引用：' + preview.sessionRef +
         '\n聊天引用：' + preview.chatRef +
         '\n绑定记录估算：' + bytes(preview.estimatedBindingBytes) +
-        '\n原生 DSH Session 历史：保留不删除' +
+        '\nDSH 对话历史：仍然保留，不会删除' +
         '\n\n请再次确认。'
       if (!window.confirm(details)) {
         setNotice('已取消，未提交任何操作。')
@@ -348,7 +355,7 @@ function FeishuSessionsInventory() {
       }))
       const result = await request('/sessions/batch/preview', 'POST', { action, items })
       const preview = result.preview
-      const verb = action === 'archive' ? '批量归档' : '批量解除绑定'
+      const verb = action === 'archive' ? '批量隐藏关联' : '批量解除绑定'
       const confirmed = window.confirm(verb + ' ' + preview.count + ' 条？' +
         '\\n涉及绑定记录约 ' + bytes(preview.estimatedBindingBytes) +
         '（非实际可回收空间）' +
@@ -364,15 +371,14 @@ function FeishuSessionsInventory() {
     finally { setBusy(false) }
   }
   return h(React.Fragment, null,
-    h('div', { className: 'fgw-metrics fgw-metrics-three' },
-      h(WbMetric, { title: '绑定总数', value: report ? wbCount(report.total) : '—', caption: '当前筛选范围' }),
-      h(WbMetric, { title: 'Gateway 已知文件占用', value: storage ? bytes(storage.totalBytes) : '—', caption: '不包括 DSH 原生 Session' }),
-      h(WbMetric, { title: 'Gateway 运行时', value: report?.runtimeFresh ? '在线' : '未确认', caption: '任务状态需实时快照确认' })),
-    h(WbBlock, { title: '历史筛选', aside: '按最近活跃时间（UTC 日期）筛选，不展示聊天正文' },
-      h('form', { className: 'fgw-session-filters', onSubmit: e => { e.preventDefault(); apply() } },
+    h('div',{className:'fgw-session-mini-summary'},
+      h('strong',null,report?wbCount(report.total)+' 条聊天关联':'正在读取聊天关联…'),
+      h('span',null,report?.runtimeFresh?'飞书通道已连接':'通道状态尚未确认；暂不可修改关联')),
+    h(WbBlock, { title: '查找聊天关联', aside: '可以按最后使用时间筛选；不读取聊天正文' },
+      h('form', { className: 'fgw-session-filters fgw-binding-filters', 'data-expanded':showAdvanced?'yes':'no', onSubmit: e => { e.preventDefault(); apply() } },
         [['from','开始日期','date'], ['to','结束日期','date'], ['bot','机器人 ID','text'],
-          ['chat','聊天 ID / 哈希','text'], ['session','Session ID / 哈希','text']].map(([key, label, type]) =>
-          h('label', { key, className: 'fgw-session-filter' },
+          ['chat','聊天引用','text'], ['session','会话引用','text']].map(([key, label, type]) =>
+          h('label', { key, className: 'fgw-session-filter'+(['bot','chat','session'].includes(key)?' fgw-binding-extra':'') },
             h('span', null, label),
             h('input', { type, className: 'fga-input', value: filters[key],
               onChange: e => update(key, e.target.value), placeholder: label, maxLength: type === 'text' ? 128 : undefined }))),
@@ -386,8 +392,10 @@ function FeishuSessionsInventory() {
         h('button', { className: 'fgw-refresh', type: 'button', onClick: () => { setFilters({ from: '', to: '', bot: '', chat: '', session: '', status: 'all', sort: 'lastActiveAt' }); setApplied({ page: 1, pageSize: 25, direction: 'desc' }) } }, '重置筛选'))),
     error && h('div', { className: 'fgw-caution', role: 'alert' }, '读取失败：' + error),
     notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
-    h(WbBlock, { title: '飞书绑定列表', aside: '仅引用原生 DSH Session，不访问或修改其会话历史' },
-      h('div', { className: 'fgw-session-actions' },
+    h(WbBlock, { title: '飞书聊天关联', aside: '显示飞书聊天当前指向的对话；不会修改对话正文' },
+      h('details',{className:'fgw-session-details fgw-session-bulk'},
+        h('summary',null,'批量管理（一次最多 20 条）'),
+        h('div', { className: 'fgw-session-actions' },
         h('span', null, '已选 ' + selected.length + '/20 条（仅本页，跳过运行中的绑定）'),
         h('button', { className: 'fgw-refresh', type: 'button', disabled: busy || !report?.runtimeFresh,
           onClick: () => setSelected((report?.items || []).filter(x => x.status !== 'active').slice(0, 20)) }, '选择本页'),
@@ -395,32 +403,35 @@ function FeishuSessionsInventory() {
           onClick: () => setSelected([]) }, '清空选择'),
         h('button', { className: 'fgw-refresh', type: 'button',
           disabled: busy || !report?.runtimeFresh || !selected.length || selected.some(x => x.status === 'archived'),
-          onClick: () => void bulk('archive') }, '批量归档'),
+          onClick: () => void bulk('archive') }, '批量隐藏关联'),
         h('button', { className: 'fgw-refresh', type: 'button',
           disabled: busy || !report?.runtimeFresh || !selected.length,
-          onClick: () => void bulk('unlink') }, '批量解绑')),
+          onClick: () => void bulk('unlink') }, '批量解除关联'))),
       h(OpsTable, { rows: report?.items ?? [], empty: busy ? '正在载入…' : '没有匹配的 Session',
         columns: [
-          { key: 'selection', title: '选择', render: x =>
-            h('input', { type: 'checkbox', 'aria-label': '选择 Session ' + x.sessionRef,
-              disabled: busy || !report?.runtimeFresh || x.status === 'active',
-              checked: selected.some(item => keyOf(item) === keyOf(x)),
-              onChange: () => toggle(x) }) },
-          { key: 'sessionRef', title: 'Session 哈希', render: x => h('code', null, x.sessionRef) },
-          { key: 'chatRef', title: '聊天哈希', render: x => h('code', null, x.chatRef) },
-          { key: 'botId', title: '机器人' },
-          { key: 'createdAt', title: '创建日期', render: x => opsDate(x.createdAt) },
-          { key: 'lastActiveAt', title: '最近活跃', render: x => opsDate(x.lastActiveAt) },
-          { key: 'status', title: '状态', render: x => h(WbState, { value: x.status }) },
-          { key: 'estimatedBindingBytes', title: '绑定估算', render: x => bytes(x.estimatedBindingBytes) },
-          { key: 'actions', title: '操作', render: x =>
-            h('div', { className: 'fgw-session-actions' },
-              h('button', { type: 'button', className: 'fgw-refresh',
-                disabled: busy || !report?.runtimeFresh || x.status === 'active' || x.status === 'archived',
-                onClick: () => void manage('archive-session', x) }, '归档'),
-              h('button', { type: 'button', className: 'fgw-refresh',
-                disabled: busy || !report?.runtimeFresh || x.status === 'active',
-                onClick: () => void manage('unbind-session', x) }, '解除绑定')) },
+          {key:'selection',title:'选择',render:x=>
+            h('input',{type:'checkbox','aria-label':'选择会话关联 '+x.sessionRef,
+              disabled:busy||!report?.runtimeFresh||x.status==='active',
+              checked:selected.some(item=>keyOf(item)===keyOf(x)),onChange:()=>toggle(x)})},
+          {key:'conversation',title:'飞书关联的对话',render:x=>h('div',null,
+            h('strong',null,nativeNames[x.sessionRef]?.sessionTitle||
+              nativeNames[x.sessionRef]?.scheduleTitle||'飞书聊天'),
+            h('div',{className:'fgw-muted'},'机器人：'+x.botId),
+            h('details',{className:'fgw-session-tech'},
+              h('summary',null,'查看技术信息'),
+              h('div',null,'会话引用：',h('code',null,x.sessionRef)),
+              h('div',null,'聊天引用：',h('code',null,x.chatRef)),
+              h('div',null,'创建时间：',opsDate(x.createdAt))))},
+          {key:'lastActiveAt',title:'最近使用',render:x=>opsDate(x.lastActiveAt)},
+          {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},
+            ({active:'正在处理',idle:'空闲',archived:'关联已隐藏'})[x.status]||'未知')},
+          {key:'actions',title:'操作',render:x=>h('div',{className:'fgw-session-actions'},
+            h('button',{type:'button',className:'fgw-refresh',
+              disabled:busy||!report?.runtimeFresh||x.status==='active'||x.status==='archived',
+              onClick:()=>void manage('archive-session',x)},'隐藏关联'),
+            h('button',{type:'button',className:'fgw-refresh',
+              disabled:busy||!report?.runtimeFresh||x.status==='active',
+              onClick:()=>void manage('unbind-session',x)},'解除关联'))}
         ] }),
       report && h('div', { className: 'fgw-session-pages' },
         h('span', null, '共 ' + wbCount(report.total) + ' 条 · 第 ' + report.page + '/' + (pages || 1) + ' 页'),
@@ -428,9 +439,10 @@ function FeishuSessionsInventory() {
           onClick: () => setApplied(x => ({ ...x, page: x.page - 1 })) }, '上一页'),
         h('button', { type: 'button', className: 'fgw-refresh', disabled: busy || applied.page >= pages,
           onClick: () => setApplied(x => ({ ...x, page: x.page + 1 })) }, '下一页'))),
-    h(WbBlock, { title: 'Gateway 存储构成', aside: '白名单文件统计，非整个磁盘占用' },
+    h('details',{className:'fgw-session-details fgw-session-storage-details'},
+      h('summary',null,'查看飞书插件的数据占用（不含 DSH 对话历史）'),
       h('div', { className: 'fgw-session-storage' },
         (storage?.categories ?? []).map(x => h('div', { key: x.key, className: 'fgw-data-row' },
           h('span', null, kinds[x.key] || x.key), h('strong', null, bytes(x.bytes)))))),
-    h(OpsNote, null, '归档仅设置飞书绑定标记；解除绑定只移除飞书→DSH 关联，原生 DSH Session 正文仍保留。批量操作每次最多 20 条，逐项校验并显示执行结果；历史消息/日志清理与自动保留策略尚未开放。'))
+    h(OpsNote, null, '这里的隐藏关联与解除关联只影响飞书聊天的关联信息。真正删除 DSH 对话历史和定期清理功能尚未开放。'))
 }

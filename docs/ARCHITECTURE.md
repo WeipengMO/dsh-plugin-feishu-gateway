@@ -1,5 +1,7 @@
 # 架构设计与官方 API 调研
 
+> **技术背景 / 历史研究**：本文汇集 v0.1 初始架构与后续 DSH API 调研，包含阶段性方案。当前功能、安装及生命周期边界请以 [项目 README](../README.md)、[开发指南](DEVELOPMENT.md) 和真实源码为准；不要把本文旧版本的“未实现”描述当作最新结论。
+
 > 本文是「先调研、再实现」交付物的设计部分。所有 DSH API 结论都来自本机已安装的
 > `@deepseek-ai/dsh@0.2.2-rc.1` 及其 `node_modules/@deepseek-ai/*` 的 `.d.ts` / `lib/*.js`，
 > 证据与行号见 [../research/dsh-api.md](../research/dsh-api.md)。**未确认的私有 API 一律不用。**

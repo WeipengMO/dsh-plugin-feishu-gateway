@@ -1,5 +1,7 @@
 # Token 用量历史趋势与日历热图（Issue #17）
 
+> **用量统计技术说明**：展示的数据来自 Gateway 已记录的模型/任务 usage，不代表 DSH 所有历史调用或账单费用。用户操作入口见 [Web 管理](WEB-ADMIN.md)，模型与命令见 [模型及用量](USAGE-AND-MODELS.md)。
+
 ## 数据链路
 
 Gateway 复用 DSH SessionBridge.waitForReply() 已汇总的模型 usage，不发起额外 LLM 请求。仅针对尝试过原生 Session submit 的任务，终态记录一个脱敏结算事件；未返回 usage 的失败、超时、取消任务也会记录为「未知」，而不是 0。

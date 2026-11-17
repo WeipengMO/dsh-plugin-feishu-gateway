@@ -19,7 +19,7 @@ import { validateSpec, previewOccurrences, specSummary, SCHEDULE_ACTIONS,
   SCHEDULE_NOTIFY, SCHEDULE_ACTOR, SCHEDULE_TASK_ID_RE, SCHEDULE_UUID_RE,
   TITLE_MAX, PROMPT_MAX, PREVIEW_MAX } from './schedule-spec.mjs'
 import { parseSessionQuery, querySessions } from './session-read.mjs'
-import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession,
+import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession, restoreNativeSession,
   organizationSettings, saveOrganizationSettings } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
@@ -883,7 +883,7 @@ export function createAdminHandler(options = {}) {
           (params.get('search') || '').length > 128 ||
           (bot !== '' && !/^[a-z][a-z0-9_-]{0,31}$/.test(bot)) ||
           !validDay(from) || !validDay(to) || (from && to && from > to) ||
-          !['all', 'active', 'idle', 'unbound', 'archived'].includes(params.get('status') || 'all') ||
+          !['all', 'active', 'idle', 'unknown', 'unbound', 'archived'].includes(params.get('status') || 'all') ||
           !['all', 'p2p', 'group', 'schedule'].includes(params.get('type') || 'all') ||
           !['0', '1'].includes(params.get('reveal') || '0') ||
           !['0', '1'].includes(params.get('orphan') || '0')) throw httpError(400, 'invalid native Session query')
@@ -946,6 +946,14 @@ export function createAdminHandler(options = {}) {
           nativePreviews.delete(body.token)
           if (!pending || pending.expiresAt <= Date.now()) throw httpError(409, 'confirmation expired')
           const result = await archiveNativeSession(stateDir, sessionServices(), pending.sessionId)
+          return json(res, 200, { ok: true, result })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/restore') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['sessionRef'])
+          const result = await restoreNativeSession(stateDir, sessionServices(), body.sessionRef)
           return json(res, 200, { ok: true, result })
         })
       }

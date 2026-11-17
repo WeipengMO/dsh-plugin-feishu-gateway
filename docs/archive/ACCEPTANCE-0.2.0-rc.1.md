@@ -97,4 +97,4 @@ dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-真实部署需根据 [APPROVAL-STREAMING.md](APPROVAL-STREAMING.md) 逐级验收；没有真实权限升级时，不应把“无审批弹窗”当作 PASS。历史 Mock E2E 报告见 [research/P0-E2E-REPORT.md](../research/P0-E2E-REPORT.md)，其历史 BLOCKED 状态**不能覆盖本次真实生产会话的人工验收**，反之亦然。
+真实部署需根据 [APPROVAL-STREAMING.md](../APPROVAL-STREAMING.md) 逐级验收；没有真实权限升级时，不应把“无审批弹窗”当作 PASS。历史 Mock E2E 报告见 [research/P0-E2E-REPORT.md](../../research/P0-E2E-REPORT.md)，其历史 BLOCKED 状态**不能覆盖本次真实生产会话的人工验收**，反之亦然。
