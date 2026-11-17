@@ -11,6 +11,8 @@ import type {
   SessionBridge,
   SessionReply,
   SessionToolActivity,
+  SessionCompactionResult,
+  SessionCompactionStatus,
   WaitOptions,
 } from '../types.js'
 import { withTimeout } from '../util/retry.js'
@@ -35,6 +37,20 @@ interface AgentRegistryLike {
   resume(options: Record<string, unknown>): Promise<AgentHandleLike>
   /** The official registry exposes a live-agent lookup (not an owner handle). */
   get?(sessionId: string): AgentHandleLike['agent'] | undefined
+}
+
+interface NativeCompactionLike {
+  compactNow(agent: unknown, signal: AbortSignal): Promise<{
+    shadowedSeqs?: unknown
+    shadowedTokenCount?: unknown
+  } | null>
+}
+
+interface ObservedCompaction {
+  readonly count: number
+  readonly at: number
+  readonly shadowedItems: number
+  readonly shadowedTokens: number
 }
 
 interface SessionStoreLike {
@@ -104,6 +120,12 @@ export class DshSessionBridge implements SessionBridge {
   private scheduleTurnHandler: ((turn: ObservedScheduleTurn) => void) | undefined
   /** Reuse the last confirmed native request route on subsequent turns. */
   private readonly sessionModels = new Map<string, string>()
+  /** Host-local, privacy-safe compaction observations (never summaries). */
+  private readonly compactionObserved = new Map<string, ObservedCompaction>()
+  private readonly compactionPending = new Map<string, {
+    sessionId: string; shadowedItems: number; shadowedTokens: number
+  }>()
+  private readonly completedCompactions = new Set<string>()
   private readonly disposers: Array<() => void> = []
   private disposed = false
 
@@ -294,6 +316,45 @@ export class DshSessionBridge implements SessionBridge {
     }
   }
 
+  private nativeCompaction(): NativeCompactionLike | undefined {
+    try {
+      const service = this.ctx.get('compaction') as Partial<NativeCompactionLike> | undefined
+      return typeof service?.compactNow === 'function' ? service as NativeCompactionLike : undefined
+    } catch { return undefined }
+  }
+
+  /** Availability means the host has a compaction backend, NOT that auto=true was verified. */
+  compactionStatus(sessionId?: string): SessionCompactionStatus {
+    const observed = sessionId ? this.compactionObserved.get(sessionId) : undefined
+    return {
+      available: !this.disposed && Boolean(this.nativeCompaction()),
+      completedInProcess: observed?.count ?? 0,
+      ...(observed ? {
+        lastCompletedAt: observed.at,
+        lastShadowedItems: observed.shadowedItems,
+        lastShadowedTokens: observed.shadowedTokens,
+      } : {}),
+    }
+  }
+
+  /** Safe manual hook: DSH holds its own per-Session compaction lock and writes
+   * durable checkpoint events. Never duplicate a compaction using followup(). */
+  async compactNow(sessionId: string, signal: AbortSignal): Promise<SessionCompactionResult> {
+    const engine = this.nativeCompaction()
+    if (!engine || this.disposed) throw new Error('DSH compaction service unavailable')
+    const handle = this.handles.get(sessionId)
+    if (!handle || this.agents?.get?.(sessionId) !== handle.agent) {
+      throw new Error('DSH Session is not owned by this Gateway')
+    }
+    if (signal.aborted) throw signal.reason ?? new Error('compaction cancelled')
+    const result = await engine.compactNow(handle.agent, signal)
+    if (result === null) return { outcome: 'nothing-to-compact' }
+    const items = Array.isArray(result.shadowedSeqs) ? result.shadowedSeqs.length : 0
+    const n = result.shadowedTokenCount
+    return { outcome: 'compacted', shadowedItems: items,
+      ...(Number.isSafeInteger(n) && (n as number) >= 0 ? { shadowedTokens: n as number } : {}) }
+  }
+
   async create(sessionId: string, cwd: string, route?: AgentRoute): Promise<void> {
     if (this.handles.has(sessionId)) return
     const agents = this.requireAgents()
@@ -481,6 +542,9 @@ export class DshSessionBridge implements SessionBridge {
     this.externalTurns.clear()
     this.scheduleTurnHandler = undefined
     this.sessionModels.clear()
+    this.compactionObserved.clear()
+    this.compactionPending.clear()
+    this.completedCompactions.clear()
     const handles = [...this.handles.values()]
     this.handles.clear()
     await Promise.allSettled(handles.map((handle) => handle.dispose()))
@@ -513,6 +577,28 @@ export class DshSessionBridge implements SessionBridge {
     if (!sessionId) return
     const type = (event as { type?: unknown })?.type
     const data = (event as { data?: Record<string, unknown> })?.data
+    if (type === 'compaction/summary' && typeof data?.compactionId === 'string') {
+      const key = sessionId + ':' + data.compactionId
+      // No summary text, tool data or raw events are read into Gateway state.
+      const shadowedItems = Array.isArray(data.shadowedSeqs) ? data.shadowedSeqs.length : 0
+      const shadowedTokens = Number.isSafeInteger(data.shadowedTokenCount) &&
+        (data.shadowedTokenCount as number) >= 0 ? data.shadowedTokenCount as number : 0
+      if (this.compactionPending.size >= 256) this.compactionPending.clear()
+      this.compactionPending.set(key, { sessionId, shadowedItems, shadowedTokens })
+    } else if (type === 'compaction/end' && typeof data?.compactionId === 'string') {
+      const key = sessionId + ':' + data.compactionId
+      const pending = this.compactionPending.get(key)
+      this.compactionPending.delete(key)
+      if (pending && !data.error && !this.completedCompactions.has(key)) {
+        this.completedCompactions.add(key)
+        if (this.completedCompactions.size > 512) this.completedCompactions.clear()
+        const before = this.compactionObserved.get(sessionId)
+        this.compactionObserved.set(sessionId, {
+          count: (before?.count ?? 0) + 1, at: Date.now(),
+          shadowedItems: pending.shadowedItems, shadowedTokens: pending.shadowedTokens,
+        })
+      }
+    }
     // Native DSH records the effective route under request/context (or
     // request/header). Read from the same stream as token settlements.
     const context = type === 'request/context' ? data :
