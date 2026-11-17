@@ -22,7 +22,7 @@ import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession, restoreNativeSession,
   organizationSettings, saveOrganizationSettings, retentionSettings, saveRetentionSettings,
   previewRetention, previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
-  previewNativePermanentDelete, permanentlyDeleteNativeSession,
+  previewNativePermanentDelete, permanentlyDeleteNativeSession, createArchiveManagerDeleter,
   autoArchiveExpiredSessions } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
@@ -1371,9 +1371,12 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const unregister = webServer.register({ kind: 'prefix', path: PREFIX,
       handler: createAdminHandler({ ...config,
-        sessionServices: () => ({ registry: ctx.get('workspaceRegistry'),
-          persistence: ctx.get('sessionPersistence'), query: ctx.get('sessionQuery'),
-          deleter: ctx.get('sessionAdmin') }),
+        sessionServices: () => {
+          const registry = ctx.get('workspaceRegistry')
+          const persistence = ctx.get('sessionPersistence')
+          return { registry, persistence, query: ctx.get('sessionQuery'),
+            deleter: createArchiveManagerDeleter(registry, persistence, ctx.get('sessions')) }
+        },
         requestRejection: req => connection.requestRejection(req),
         requestAdmission: typeof connection.admit === 'function' ? req => connection.admit(req) : undefined }) })
     ctx.logger.info('feishu-admin: management API registered on authenticated DSH Web')
