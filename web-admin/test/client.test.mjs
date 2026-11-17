@@ -90,6 +90,18 @@ test('Session center exposes one archive view and safe in-page dialogs', () => {
   const server = readFileSync(path.join(root, 'src/server.mjs'), 'utf8')
   assert.ok(server.includes('createArchiveManagerDeleter('))
   assert.ok(!server.includes("ctx.get('sessionAdmin')"))
+  for (const label of ['批量归档', '批量恢复', '批量删除', '选择本页', '清空选择']) {
+    assert.ok(native.includes(label), label)
+  }
+  assert.ok(native.includes('fgw-native-session-checkbox'))
+  assert.ok(native.includes("['archive','已归档']"))
+  assert.ok(native.includes('/sessions/native/batch/preview'))
+  assert.ok(native.includes('/sessions/native/batch/execute'))
+  const organizer = readFileSync(path.join(root, 'src/session-organizer.mjs'), 'utf8')
+  assert.ok(organizer.includes('validateNativeSessionBatch'))
+  assert.ok(organizer.includes('executeNativeSessionBatch'))
+  assert.ok(css.includes('.fgw-session-selection-toolbar'))
+  assert.ok(css.includes('.fgw-native-session-checkbox'))
   assert.ok(native.includes('/sessions/native/delete/preview'))
   assert.ok(native.includes('/sessions/native/delete'))
   assert.ok(native.includes('FeishuSessionModal'))
