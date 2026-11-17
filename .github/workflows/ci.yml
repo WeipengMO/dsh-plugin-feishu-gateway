@@ -36,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check Markdown documentation links
+        run: pnpm run docs:check
+
       - name: Proxy startup offline smoke (no real network)
         run: |
           bash -n scripts/channel/start-feishu-channel.sh
