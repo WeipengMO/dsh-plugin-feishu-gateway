@@ -262,7 +262,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
     canTrash: !data.runtime.stale && typeof services.registry?.archiveSession === 'function' &&
       typeof services.registry?.unarchiveSession === 'function',
-    canDelete: typeof services.deleter?.inspect === 'function' &&
+    canDelete: !data.runtime.stale && typeof services.deleter?.inspect === 'function' &&
       typeof services.deleter?.delete === 'function',
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
@@ -670,8 +670,14 @@ export function permanentlyDeleteNativeSession(stateDir, services, sessionRef) {
     // The storage owner must refuse live writers and clean all DSH indices.
     // Explicitly disallow forced live deletion and retained full-log backups.
     const report = await deleter.delete(row.id, { force: false, backup: false })
-    if (!report || typeof report !== 'object')
-      throw Object.assign(new Error('删除服务没有返回可验证的结果'), { status: 503 })
+    if (!report || typeof report !== 'object' ||
+      report.deleted === false || report.ok === false || report.success === false)
+      throw Object.assign(new Error('删除服务没有确认删除成功'), { status: 503 })
+    if (typeof deleter.presentSessionIds === 'function') {
+      const present = await deleter.presentSessionIds()
+      if (present instanceof Set && present.has(row.id))
+        throw Object.assign(new Error('原生日志仍然存在，删除结果需要检查'), { status: 503 })
+    }
     const bytes = Number(report.bytesRemoved)
     let indexCleanupPending = false
     try {
