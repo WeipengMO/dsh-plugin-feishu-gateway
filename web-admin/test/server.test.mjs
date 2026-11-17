@@ -1223,3 +1223,73 @@ test('approval timeout config accepts the raised 30-minute ceiling', () => {
   assert.throws(() => validateConfig({ approvalTimeoutMs: 1800001 }), /approvalTimeoutMs/)
   assert.throws(() => validateConfig({ approvalTimeoutMs: 4999 }), /approvalTimeoutMs/)
 })
+
+test('authenticated recycle bin API uses single-use tokens and never deletes native history', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'dsh-recycle-api-test-'))
+  const stateDir = path.join(dir, 'state')
+  const cwd = path.join(stateDir, 'workspace')
+  const sid = 'feishu-default-chat-session-test'
+  const archived = []
+  const persistence = { async list() {
+    return [{ header: { id: sid, cwd, createdAt: Date.now()-86400000 } }]
+  } }
+  const workspace = { id: 'ws-test', title: '飞书会话', sessionIds: [] }
+  const registry = {
+    archivedSessionIds: archived,
+    list: () => [workspace],
+    resolveByPath: async () => workspace,
+    create: async () => workspace,
+    archiveSession: async id => { if (!archived.includes(id)) archived.push(id) },
+    unarchiveSession: async id => { const i = archived.indexOf(id); if (i>=0) archived.splice(i,1) }
+  }
+  await mkdir(cwd, { recursive: true })
+  await writeFile(path.join(stateDir, 'sessions.json'), '{"bindings":{}}')
+  await writeFile(path.join(stateDir, 'ops-runtime.json'), JSON.stringify({
+    version:1, ts:Date.now(), workspace:cwd, isolatedAgent:true,
+    tasks:[], status:'ok', stats:{}, transport:{}
+  }))
+  const f = await fixture({stateDir, sessionServices: {persistence, registry,
+    query: {readTitle: async () => 'Testing session'} }})
+  try {
+    assert.equal((await f.request('/sessions/retention','GET',undefined,{})).status,401)
+    const defaults = await f.request('/sessions/retention')
+    assert.equal(defaults.status,200)
+    assert.equal(defaults.json.report.settings.archiveAfterDays,90)
+    assert.equal(defaults.json.report.settings.trashKeepDays,30)
+    assert.equal(defaults.json.report.physicalDeleteAvailable,false)
+    assert.equal((await f.request('/sessions/retention/settings','PUT',
+      {autoArchiveEnabled:true},allowed)).status,403)
+    assert.equal((await f.request('/sessions/retention/settings','PUT',
+      {autoDeleteEnabled:true},mutating)).status,400)
+    assert.equal((await f.request('/sessions/retention/settings','PUT',
+      {autoArchiveEnabled:true,archiveAfterDays:90,trashKeepDays:30},mutating)).status,200)
+    const list = await f.request('/sessions/ledger?status=current')
+    assert.equal(list.status,200)
+    assert.equal(list.json.report.total,1)
+    const ref = list.json.report.items[0].sessionRef
+    const preview = await f.request('/sessions/trash/preview','POST',{sessionRef:ref},mutating)
+    assert.equal(preview.status,200)
+    const token = preview.json.preview.token
+    assert.equal(preview.json.preview.nativeHistoryPreserved,true)
+    assert.equal((await f.request('/sessions/trash/move','POST',{token},{})).status,401)
+    const moved = await f.request('/sessions/trash/move','POST',{token},mutating)
+    assert.equal(moved.status,200)
+    assert.equal(moved.json.result.trashed,true)
+    assert.equal((await f.request('/sessions/trash/move','POST',{token},mutating)).status,409)
+    assert.deepEqual(archived,[sid])
+    assert.equal((await f.request('/sessions/ledger?status=current')).json.report.total,0)
+    const trash = await f.request('/sessions/ledger?status=trashed')
+    assert.equal(trash.json.report.total,1)
+    assert.equal(trash.json.report.items[0].sessionRef,ref)
+    const restored = await f.request('/sessions/trash/restore','POST',{sessionRef:ref},mutating)
+    assert.equal(restored.status,200)
+    assert.equal(restored.json.result.target,'current')
+    assert.deepEqual(archived,[])
+    assert.equal((await f.request('/sessions/ledger?status=trashed')).json.report.total,0)
+    assert.equal((await f.request('/sessions/ledger?status=current')).json.report.total,1)
+    assert.doesNotMatch(JSON.stringify(trash.json),/feishu-default-chat-session-test/)
+  } finally {
+    await f.close()
+    await rm(dir,{recursive:true,force:true})
+  }
+})
