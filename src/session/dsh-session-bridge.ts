@@ -581,7 +581,7 @@ export class DshSessionBridge implements SessionBridge {
     if (!sessionId) return
     const type = (event as { type?: unknown })?.type
     const data = (event as { data?: Record<string, unknown> })?.data
-    if (type === 'compaction/summary' && typeof data?.compactionId === 'string') {
+    if (this.handles.has(sessionId) && type === 'compaction/summary' && typeof data?.compactionId === 'string') {
       const key = sessionId + ':' + data.compactionId
       // No summary text, tool data or raw events are read into Gateway state.
       const shadowedItems = Array.isArray(data.shadowedSeqs) ? data.shadowedSeqs.length : 0
@@ -589,7 +589,7 @@ export class DshSessionBridge implements SessionBridge {
         (data.shadowedTokenCount as number) >= 0 ? data.shadowedTokenCount as number : 0
       if (this.compactionPending.size >= 256) this.compactionPending.clear()
       this.compactionPending.set(key, { sessionId, shadowedItems, shadowedTokens })
-    } else if (type === 'compaction/end' && typeof data?.compactionId === 'string') {
+    } else if (this.handles.has(sessionId) && type === 'compaction/end' && typeof data?.compactionId === 'string') {
       const key = sessionId + ':' + data.compactionId
       const pending = this.compactionPending.get(key)
       this.compactionPending.delete(key)
@@ -597,6 +597,10 @@ export class DshSessionBridge implements SessionBridge {
         this.completedCompactions.add(key)
         if (this.completedCompactions.size > 512) this.completedCompactions.clear()
         const before = this.compactionObserved.get(sessionId)
+        if (this.compactionObserved.size >= 500 && !this.compactionObserved.has(sessionId)) {
+          const first = this.compactionObserved.keys().next().value
+          if (first) this.compactionObserved.delete(first)
+        }
         this.compactionObserved.set(sessionId, {
           count: (before?.count ?? 0) + 1, at: Date.now(),
           shadowedItems: pending.shadowedItems, shadowedTokens: pending.shadowedTokens,
