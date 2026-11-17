@@ -166,9 +166,10 @@ async function sourceData(stateDir, persistence, registry) {
     const binding = bindings.get(id)
     const scheduleTitle = tasks.get(id)
     const isScheduled = id.startsWith('feishu-schedule-')
+    const running = active.has(hash(id))
     const status = archived.has(id) ? 'archived' :
       runtime.stale && (binding || scheduleTitle) ? 'unknown' :
-      active.has(hash(id)) ? 'active' : binding || scheduleTitle ? 'idle' : 'unbound'
+      running ? 'active' : binding || scheduleTitle ? 'idle' : 'unbound'
     const chatName = binding?.chatId ? nameMap.get(binding.chatId) : undefined
     records.push({
       id, idRef: hash(id), root: canonical, legacy,
@@ -178,7 +179,7 @@ async function sourceData(stateDir, persistence, registry) {
         (binding?.chatId?.startsWith('oc_') ? 'group' : 'p2p'),
       scheduleTitle: scheduleTitle || null, bound: Boolean(binding),
       bindingArchived: binding?.bindingArchived === true,
-      status, archived: archived.has(id), orphan: !binding && !scheduleTitle,
+      status, running, archived: archived.has(id), orphan: !binding && !scheduleTitle,
       createdAt: binding?.createdAt || ms(header?.createdAt),
       lastActiveAt: binding?.lastActiveAt || ms(header?.createdAt),
       lastActiveKnown: Boolean(binding?.lastActiveAt),
@@ -248,7 +249,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
       botId: row.botId, chatRef: row.chatRef,
       chatName: settings.revealNames && reveal ? row.chatName : null,
       type: row.type, scheduleTitle: row.scheduleTitle,
-      sessionTitle, status: trash.items[row.id] ? 'trashed' : row.status, orphan: row.orphan,
+      sessionTitle, status: trash.items[row.id] ? 'trashed' : row.status, orphan: row.orphan, running: row.running,
       legacy: row.legacy, bindingArchived: row.bindingArchived,
       createdAt: row.createdAt, lastActiveAt: row.lastActiveAt, lastActiveKnown: row.lastActiveKnown,
       ...(trash.items[row.id] ? { trashedAt: trash.items[row.id].trashedAt, previousArchived: trash.items[row.id].previousArchived } : {}),
@@ -399,7 +400,7 @@ async function archiveNativeSessionInternal(stateDir, services, sessionId) {
   if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
   const row = data.records.find(value => value.id === sessionId)
   if (!row) throw Object.assign(new Error('native Session not found'), { status: 404 })
-  if (row.status === 'active' || data.runtime.stale || row.bound ||
+  if (row.status === 'active' || row.running || data.runtime.stale || row.bound ||
     data.activeTasks[sessionId] || (await readTrash(stateDir)).items[sessionId]) throw Object.assign(new Error('active/bound native Session cannot be archived here'), { status: 409 })
   // Even stale Web state cannot override native activity admission.
   await services.registry.archiveSession(sessionId)
@@ -433,7 +434,7 @@ async function restoreNativeSessionInternal(stateDir, services, sessionRef) {
   // Reject ID collisions, stale catalog matches and any session whose owner
   // is currently performing work. The operation only removes an archive flag.
   const row = matches[0]
-  if (row.status === 'active' || data.runtime.stale || data.activeTasks[row.id])
+  if (row.status === 'active' || row.running || data.runtime.stale || data.activeTasks[row.id])
     throw Object.assign(new Error('active Session cannot be restored here'), { status: 409 })
   await services.registry.unarchiveSession(row.id)
   await auditOrganization(stateDir, row.id, 'native-session-manual-restored')
@@ -494,7 +495,7 @@ function onlyRow(data, ref) {
 function eligibleToTrash(data, row) {
   // A possibly stale Gateway cannot prove absence of a new binding or writer.
   if (data.runtime.stale || row.bound || !row.orphan || row.type === 'schedule' || data.activeTasks[row.id] ||
-    row.status === 'active' || row.status === 'unknown' ||
+    row.running || row.status === 'active' || row.status === 'unknown' ||
     data.runtime.stats?.pendingApprovals || data.runtime.stats?.outboxPending ||
     data.runtime.stats?.inboxPending) throw Object.assign(
     new Error('Session is active, referenced or runtime status not safe'), { status: 409 })
@@ -702,7 +703,7 @@ async function deletionCandidate(stateDir, services, sessionRef) {
   const data = await sourceData(stateDir, services.persistence, services.registry)
   if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
   const row = onlyRow(data, sessionRef)
-  if (!row.archived || row.bound || !row.orphan || row.status === 'active' ||
+  if (!row.archived || row.bound || !row.orphan || row.status === 'active' || row.running ||
     row.type === 'schedule' || data.activeTasks[row.id] || data.runtime.stale ||
     data.runtime.stats?.pendingApprovals || data.runtime.stats?.inboxPending ||
     data.runtime.stats?.outboxPending) {
@@ -780,11 +781,11 @@ function batchRowReason(action, row, data, trash, services) {
     if (row.archived || trash.items[row.id]) return '已经归档'
     if (row.bound) return '仍与飞书聊天关联，请先解除关联'
     if (row.type === 'schedule' || data.activeTasks[row.id]) return '定时任务会话暂不支持手动归档'
-    if (!row.orphan || row.status !== 'unbound') return '会话仍在运行或状态未知'
+    if (!row.orphan || row.running || row.status !== 'unbound') return '会话仍在运行或状态未知'
     return null
   }
   if (!row.archived) return '不是已归档的对话'
-  if (row.status === 'active' || data.activeTasks[row.id]) return '会话正在使用'
+  if (row.status === 'active' || row.running || data.activeTasks[row.id]) return '会话正在使用'
   if (action === 'restore') {
     if (typeof services.registry?.unarchiveSession !== 'function')
       return '当前 DSH 无法恢复归档'
