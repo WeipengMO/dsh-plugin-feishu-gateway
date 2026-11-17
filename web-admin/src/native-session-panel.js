@@ -339,6 +339,10 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           h('input', { type: 'checkbox', checked: reveal,
             onChange: e => setReveal(e.target.checked) }), '显示完整技术标识（仅排查问题时使用）'),
         h('button', { type: 'submit', className:'fgw-refresh', disabled:busy }, busy?'加载中…':'刷新')),
+      mode==='archive'&&!report?.canDelete&&report?.available&&
+        h('p',{className:'fgw-session-deletion-info'},
+          '当前 DSH 未提供可用的安全删除服务，因此“删除”按钮暂不可用。'+
+          '只有能够同时清理原生日志和工作区索引的删除服务可用时，才会允许真正删除。'),
       h('button', { type:'button', className:'fgw-session-extra-toggle', onClick:()=>setShowAdvanced(x=>!x),
         'aria-expanded':showAdvanced }, showAdvanced?'收起筛选条件':'更多筛选条件'),
       error && h('div',{className:'fgw-caution',role:'alert'},error),
@@ -361,7 +365,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             mode==='trash'?formatDate(x.trashedAt):
             x.lastActiveKnown ? formatDate(x.lastActiveAt) :
             h('span',{className:'fgw-muted'},'最近活动未记录（创建：'+formatDate(x.createdAt)+'）')},
-          {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unknown:'状态待确认',unbound:'未关联',archived:'已归档',trashed:'回收站'})[x.status]||'未知')},
+          {key:'status',title:'状态',render:x=>h('span',{className:'fgw-pill'},({active:'正在运行',idle:'已保存',unknown:'状态待确认',unbound:'未关联',archived:'已归档',trashed:'已归档'})[x.status]||'未知')},
           {key:'actions',title:'操作',render:x=>h('div',{className:'fgw-session-row-actions'},
             mode==='archive'?
               h(React.Fragment,null,
