@@ -34,7 +34,7 @@
 
 ## 已知未完成
 
-- **回收站、永久删除、自动物理清理**：尚未支持，[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)。
+- **永久删除、自动物理清理**：尚未支持；可恢复的回收站暂存已在 PR #40 开发，[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)。
 - 媒体双向传输等仍需按相应 GitHub Issue 与当前源码确认。
 - 会话管理 UI 更新与验收状态见 [PR #38](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/38)；**通过 CI 不等于已经发布或实机验收**。
 
