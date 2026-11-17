@@ -46,6 +46,9 @@ function FeishuRecycleHub() {
     } catch(e){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
+  const candidateRows=(preview?.candidatePreview||[]).map(row=>
+    h('li',{key:row.sessionRef},h('strong',null,row.title),
+      h('span',{className:'fgw-muted'},'最后使用：'+opsDate(row.lastActiveAt))))
   return h('div',{className:'fgw-session-recycle'},
     h('div',{className:'fgw-session-recycle-summary'},
       h('div',null,
@@ -75,11 +78,17 @@ function FeishuRecycleHub() {
             [7,30,90].map(n=>h('option',{key:n,value:n},n+' 天')))),
         h('label',{className:'fgw-retention-setting fgw-retention-toggle'},
           h('input',{type:'checkbox',checked:policy?.autoArchiveEnabled===true,
-            disabled:busy||!policy,onChange:e=>void update({autoArchiveEnabled:e.target.checked})}),
+            disabled:busy||!policy,onChange:e=>{
+              if(e.target.checked&&!window.confirm('启用自动归档？\\n会每小时检查一次，只隐藏有可靠最后活动时间、且超过 '+(policy?.archiveAfterDays||90)+' 天未使用的旧对话。\\n聊天内容不会被删除，不确定是否活跃的会话会跳过。'))return
+              void update({autoArchiveEnabled:e.target.checked})
+            }}),
           h('span',null,'启用自动归档'))),
       h('p',{className:'fgw-muted fgw-session-policy-hint'},
         '目前有 '+(preview?.candidates??'—')+' 条符合自动归档条件；'+
         (preview?.skippedUnknownActivity??'—')+' 条旧对话缺少可靠的最后活动时间，将跳过。'),
+      candidateRows.length>0&&h('details',{className:'fgw-retention-preview'},
+        h('summary',null,'查看待归档对话（'+preview.candidates+' 条）'),
+        h('ul',null,...candidateRows)),
       h('p',{className:'fgw-muted fgw-session-policy-hint'},
         '回收站已到保留期：'+(preview?.expiredTrash??'—')+
         ' 条。当前 DSH 没有安全的原生删除接口，因此不会自动清空回收站或释放磁盘空间。'),
