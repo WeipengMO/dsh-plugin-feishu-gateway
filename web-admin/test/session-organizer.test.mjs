@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import {
   archiveNativeSession,
   restoreNativeSession,
@@ -586,5 +587,31 @@ test('batch restore understands legacy trash records and preserves native histor
     {action:'restore',sessionRefs:preview.eligibleRefs})
   assert.equal(result.succeeded,1)
   assert.equal(f.archived.length,0)
+  assert.equal(f.snapshots.length,4)
+})
+
+test('archived status never hides an active native writer from batch restore or delete checks', async t => {
+  const f=await fixture(t)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  const ref=(await sessionOrganizationInventory(f.stateDir,f.native,
+    {status:'archived'})).items[0].sessionRef
+  const activeRef=createHash('sha256').update(ORPHAN).digest('hex').slice(0,16)
+  await json(f.stateDir,'ops-runtime.json',{
+    version:1,ts:Date.now(),workspace:f.cwd,isolatedAgent:true,
+    tasks:[{session:activeRef,status:'running'}],status:'ok',stats:{},transport:{}
+  })
+  const services={...f.native,deleter:{
+    inspect:async()=>({live:false}),delete:async()=>{throw Error('must not run')}
+  }}
+  const row=(await sessionOrganizationInventory(f.stateDir,services,
+    {status:'archived'})).items[0]
+  assert.equal(row.running,true)
+  assert.equal(row.status,'archived')
+  assert.equal((await previewNativeSessionBatch(f.stateDir,services,
+    {action:'restore',sessionRefs:[ref]})).eligible,0)
+  assert.equal((await previewNativeSessionBatch(f.stateDir,services,
+    {action:'delete',sessionRefs:[ref]})).eligible,0)
+  await assert.rejects(restoreNativeSession(f.stateDir,services,ref),{status:409})
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,services,ref),{status:409})
   assert.equal(f.snapshots.length,4)
 })
