@@ -1293,3 +1293,83 @@ test('authenticated recycle bin API uses single-use tokens and never deletes nat
     await rm(dir,{recursive:true,force:true})
   }
 })
+
+test('authenticated permanent-delete API uses a one-time token and a supported DSH storage owner', async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),'dsh-permanent-delete-'))
+  const stateDir=path.join(dir,'state'),cwd=path.join(stateDir,'workspace')
+  const sid='feishu-default-archived-delete-test'
+  const archived=[sid]
+  const snapshots=[{header:{id:sid,cwd,createdAt:Date.now()-86400000}}]
+  const registry={
+    archivedSessionIds:archived,list:()=>[],resolveByPath:async()=>null,
+    create:async()=>({id:'ws',sessionIds:[],attachSession:async()=>{}}),
+    archiveSession:async()=>{},unarchiveSession:async()=>{}
+  }
+  let deleted=0
+  const deleter={
+    isLive:()=>false,
+    inspect:async id=>({sessionId:id,bytes:321,live:false}),
+    delete:async (id,options)=>{
+      assert.equal(id,sid);assert.equal(options.force,false)
+      deleted+=1;snapshots.length=0;archived.length=0
+      return {deleted:true,bytesRemoved:321}
+    },
+    presentSessionIds:async()=>new Set(snapshots.map(x=>x.header.id))
+  }
+  await mkdir(cwd,{recursive:true})
+  await writeFile(path.join(stateDir,'sessions.json'),'{"bindings":{}}')
+  await writeFile(path.join(stateDir,'ops-runtime.json'),JSON.stringify({
+    version:1,ts:Date.now(),workspace:cwd,isolatedAgent:true,tasks:[],
+    status:'ok',stats:{},transport:{}
+  }))
+  const f=await fixture({stateDir,sessionServices:{
+    persistence:{list:async()=>snapshots},registry,deleter,
+    query:{readTitle:async()=> 'Archive for deletion'}
+  }})
+  try{
+    const before=await f.request('/sessions/ledger?status=archived')
+    assert.equal(before.json.report.total,1)
+    assert.equal(before.json.report.canDelete,true)
+    const ref=before.json.report.items[0].sessionRef
+    assert.equal((await f.request('/sessions/native/delete/preview','POST',{sessionRef:ref},{})).status,401)
+    const plan=await f.request('/sessions/native/delete/preview','POST',{sessionRef:ref},mutating)
+    assert.equal(plan.status,200)
+    assert.equal(plan.json.preview.estimatedBytes,321)
+    const token=plan.json.preview.token
+    assert.equal((await f.request('/sessions/native/delete','POST',{token},{})).status,401)
+    const done=await f.request('/sessions/native/delete','POST',{token},mutating)
+    assert.equal(done.status,200)
+    assert.equal(done.json.result.deleted,true)
+    assert.equal(done.json.result.bytesRemoved,321)
+    assert.equal(deleted,1)
+    assert.equal((await f.request('/sessions/native/delete','POST',{token},mutating)).status,409)
+    assert.equal(deleted,1)
+    assert.equal((await f.request('/sessions/ledger?status=archived')).json.report.total,0)
+  }finally{await f.close();await rm(dir,{recursive:true,force:true})}
+})
+
+test('without real deletion capability the permanent-delete preview is unavailable',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'dsh-no-deleter-'))
+  const stateDir=path.join(dir,'state'),cwd=path.join(stateDir,'workspace')
+  const id='feishu-default-archived-delete-test'
+  await mkdir(cwd,{recursive:true})
+  await writeFile(path.join(stateDir,'sessions.json'),'{"bindings":{}}')
+  await writeFile(path.join(stateDir,'ops-runtime.json'),JSON.stringify({
+    version:1,ts:Date.now(),workspace:cwd,isolatedAgent:true,
+    tasks:[],status:'ok',stats:{},transport:{}
+  }))
+  const f=await fixture({stateDir,sessionServices:{
+    persistence:{list:async()=>[{header:{id,cwd,createdAt:Date.now()}}]},
+    registry:{
+      archivedSessionIds:[id],list:()=>[],resolveByPath:async()=>null,
+      create:async()=>{},archiveSession:async()=>{},unarchiveSession:async()=>{}
+    }
+  }})
+  try{
+    const list=await f.request('/sessions/ledger?status=archived')
+    assert.equal(list.json.report.canDelete,false)
+    const result=await f.request('/sessions/native/delete/preview','POST',
+      {sessionRef:list.json.report.items[0].sessionRef},mutating)
+    assert.equal(result.status,501)
+  }finally{await f.close();await rm(dir,{recursive:true,force:true})}
+})

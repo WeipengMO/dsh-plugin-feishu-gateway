@@ -9,6 +9,8 @@ import {
   retentionSettings, saveRetentionSettings, previewRetention,
   previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
   autoArchiveExpiredSessions,
+  previewNativePermanentDelete, permanentlyDeleteNativeSession,
+  archiveManagerDeleteAvailable, createArchiveManagerDeleter,
   organizationSettings,
   reconcileSessionOrganization,
   saveOrganizationSettings,
@@ -329,4 +331,147 @@ test('normal history search finds human-readable DSH conversation titles without
   assert.equal(result.titleSearchLimited, false)
   assert.equal(result.items[0].sessionTitle, 'title for 000')
   assert.ok(!('sessionId' in result.items[0]))
+})
+
+test('archived history is one list, including legacy recycle-bin entries', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, {status:'archived'})
+  assert.equal(list.total, 1)
+  const archived = list.items[0]
+  await moveNativeSessionToTrash(f.stateDir, f.native, archived.sessionRef)
+  const merged = await sessionOrganizationInventory(f.stateDir, f.native, {status:'archived'})
+  assert.equal(merged.total, 1)
+  assert.equal(merged.items[0].status, 'trashed') // UI calls both archived
+  const restored = await restoreNativeSessionFromTrash(f.stateDir, f.native, archived.sessionRef)
+  assert.equal(restored.target,'archived')
+})
+
+test('permanent delete is unavailable without an authoritative owner service', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, {status:'archived'})
+  assert.equal(list.canDelete, false)
+  await assert.rejects(previewNativePermanentDelete(f.stateDir, f.native, list.items[0].sessionRef),
+    {status:501})
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir, f.native, list.items[0].sessionRef),
+    {status:501})
+  assert.equal(f.snapshots.length,4)
+})
+
+test('a compatible DSH storage owner can inspect and physically delete cold archived history', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const deleted = []
+  const deleter = {
+    isLive(){return false},
+    async inspect(id){return {sessionId:id,bytes:2048,live:false,rawPath:'/secret/must-not-leak'}},
+    async delete(id,options){
+      assert.deepEqual(options,{force:false,backup:false})
+      deleted.push(id)
+      f.snapshots.splice(f.snapshots.findIndex(x=>x.header.id===id),1)
+      const index=f.archived.indexOf(id)
+      if(index>=0)f.archived.splice(index,1)
+      return {deleted:true,bytesRemoved:2048}
+    },
+    async presentSessionIds(){return new Set(f.snapshots.map(x=>x.header.id))}
+  }
+  const services={...f.native,deleter}
+  const list=await sessionOrganizationInventory(f.stateDir,services,{status:'archived'})
+  assert.equal(list.canDelete,true)
+  const p=await previewNativePermanentDelete(f.stateDir,services,list.items[0].sessionRef)
+  assert.deepEqual(p,{sessionRef:list.items[0].sessionRef,permanent:true,reversible:false,estimatedBytes:2048})
+  assert.ok(!JSON.stringify(p).includes('/secret/'))
+  const result=await permanentlyDeleteNativeSession(f.stateDir,services,list.items[0].sessionRef)
+  assert.deepEqual(deleted,[ORPHAN])
+  assert.equal(result.deleted,true)
+  assert.equal(result.bytesRemoved,2048)
+  assert.equal((await sessionOrganizationInventory(f.stateDir,services,{status:'archived'})).total,0)
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,services,list.items[0].sessionRef),
+    {status:409})
+})
+
+test('permanent delete rejects running, bound, stale, scheduled or live-owner sessions', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  const ref=(await sessionOrganizationInventory(f.stateDir,f.native,{status:'archived'})).items[0].sessionRef
+  let calls=0
+  const services={...f.native,deleter:{
+    isLive(){return true},async inspect(){return {live:true}},async delete(){calls++;return {deleted:true}}
+  }}
+  await assert.rejects(previewNativePermanentDelete(f.stateDir,services,ref),{status:409})
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,services,ref),{status:409})
+  assert.equal(calls,0)
+  services.deleter.isLive=()=>false
+  await json(f.stateDir,'ops-runtime.json',{
+    version:1,ts:Date.now()-60000,workspace:f.cwd,isolatedAgent:true,
+    tasks:[],status:'ok',stats:{},transport:{}
+  })
+  await assert.rejects(previewNativePermanentDelete(f.stateDir,services,ref),{status:409})
+  assert.equal(calls,0)
+})
+
+test('archive-manager is optional: only its complete workspaceRegistry API enables delete', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const registry = f.native.registry
+  assert.equal(archiveManagerDeleteAvailable(registry), false)
+  assert.equal(createArchiveManagerDeleter(registry, f.native.persistence), null)
+  registry.deleteSession = async () => ({ deleted: true })
+  assert.equal(archiveManagerDeleteAvailable(registry), false,
+    'unrelated or incomplete registry delete method must not be enough')
+  registry.archivedSessionMetadata = async () => ({ items: [] })
+  assert.equal(archiveManagerDeleteAvailable(registry), false)
+  registry.deleteArchivedSessions = async () => ({ deletedSessionIds: [] })
+  assert.equal(archiveManagerDeleteAvailable(registry), true)
+
+  const deletionCalls = []
+  registry.archivedSessionMetadata = async () => ({
+    items: f.archived.map(sessionId => ({ sessionId, createdAt: Date.now() })),
+  })
+  registry.deleteSession = async sessionId => {
+    deletionCalls.push(sessionId)
+    const index = f.snapshots.findIndex(x => x.header.id === sessionId)
+    if (index >= 0) f.snapshots.splice(index, 1)
+    const archivedIndex = f.archived.indexOf(sessionId)
+    if (archivedIndex >= 0) f.archived.splice(archivedIndex, 1)
+    return { deleted: true }
+  }
+  const sessions = { get: () => undefined }
+  const deleter = createArchiveManagerDeleter(registry, f.native.persistence, sessions)
+  const services = { ...f.native, deleter }
+  const list = await sessionOrganizationInventory(f.stateDir, services, { status: 'archived' })
+  assert.equal(list.canDelete, true)
+  assert.equal(list.deleteUnavailableReason, null)
+  const candidate = list.items.find(row => row.orphan && row.type !== 'schedule')
+  assert.ok(candidate)
+  const preview = await previewNativePermanentDelete(f.stateDir, services, candidate.sessionRef)
+  assert.equal(preview.permanent, true)
+  assert.equal(preview.estimatedBytes, null, 'archive manager does not supply size estimates')
+  const deleted = await permanentlyDeleteNativeSession(f.stateDir, services, candidate.sessionRef)
+  assert.equal(deleted.deleted, true)
+  assert.equal(deleted.bytesRemoved, null)
+  assert.deepEqual(deletionCalls, [ORPHAN])
+  assert.equal((await sessionOrganizationInventory(f.stateDir, services, { status: 'archived' })).total, 0)
+})
+
+test('archive manager adapter rejects a Session still held by the native DSH live store', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  let calls = 0
+  const registry = f.native.registry
+  registry.deleteSession = async () => { calls++; return { deleted: true } }
+  registry.deleteArchivedSessions = async () => ({ deletedSessionIds: [] })
+  registry.archivedSessionMetadata = async () => ({
+    items: [{ sessionId: ORPHAN, createdAt: Date.now() }],
+  })
+  const deleter = createArchiveManagerDeleter(registry, f.native.persistence,
+    { get(id) { return id === ORPHAN ? { id } : undefined } })
+  const candidate = (await sessionOrganizationInventory(f.stateDir, { ...f.native, deleter },
+    { status: 'archived' })).items[0]
+  await assert.rejects(previewNativePermanentDelete(f.stateDir,
+    { ...f.native, deleter }, candidate.sessionRef), { status: 409 })
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,
+    { ...f.native, deleter }, candidate.sessionRef), { status: 409 })
+  assert.equal(calls, 0)
 })

@@ -315,60 +315,66 @@ function FeishuSessionsInventory() {
   const kinds = { inbox: '收到的消息', outbox: '待发送的消息', bindings: '聊天关联',
     events: '操作记录', runtime: '运行状态', dedup: '防重复记录', usage: 'Token 用量', commands: '管理操作' }
   const pages = report ? Math.ceil(report.total / report.pageSize) : 0
+  const [dialog,setDialog]=useState(null)
+  const [dialogBusy,setDialogBusy]=useState(false)
+  const [dialogError,setDialogError]=useState('')
+  const confirmAction=async()=>{
+    if(!dialog||dialogBusy)return
+    setDialogBusy(true);setDialogError('')
+    try{await dialog.onConfirm();setDialog(null)}
+    catch(e){setDialogError(e.message||String(e))}
+    finally{setDialogBusy(false)}
+  }
   const manage = async (type, item) => {
     setNotice('')
     setBusy(true)
     try {
-      const response = await request('/sessions/preview', 'POST', {
-        type, ref: item.sessionRef, expectedLastActiveAt: item.lastActiveAt,
+      const {preview}=await request('/sessions/preview','POST',{
+        type,ref:item.sessionRef,expectedLastActiveAt:item.lastActiveAt
       })
-      const preview = response.preview
-      const action = type === 'archive-session' ? '隐藏关联' : '解除聊天关联'
-      const details = '操作：' + action + '\n机器人：' + preview.botId +
-        '\nSession 引用：' + preview.sessionRef +
-        '\n聊天引用：' + preview.chatRef +
-        '\n绑定记录估算：' + bytes(preview.estimatedBindingBytes) +
-        '\nDSH 对话历史：仍然保留，不会删除' +
-        '\n\n请再次确认。'
-      if (!window.confirm(details)) {
-        setNotice('已取消，未提交任何操作。')
-        return
-      }
-      const result = await request('/sessions/commands', 'POST', { token: preview.token })
-      setNotice('已提交操作 ' + result.command.id + '。这仅代表已入队；执行结果请在「告警中心」核对。')
-      void load()
-    } catch (e) { setNotice('操作未提交：' + (e.message || String(e))) }
-    finally { setBusy(false) }
+      const action=type==='archive-session'?'隐藏关联':'解除聊天关联'
+      setDialogError('')
+      setDialog({
+        title:action,confirmLabel:action,
+        description:'确认'+action+'这段飞书聊天的关联？',
+        detail:'机器人：'+preview.botId+' · 会话引用：'+preview.sessionRef,
+        note:'DSH 历史记录不会删除。此操作只会改变飞书聊天与 DSH Session 的关联。',
+        onConfirm:async()=>{
+          const {command}=await request('/sessions/commands','POST',{token:preview.token})
+          setNotice('操作已提交：'+command.id+'。此时只是排队，完成结果请到告警中心核对。')
+          await load()
+        }
+      })
+    } catch(e){setNotice('操作未提交：'+(e.message||String(e)))}
+    finally{setBusy(false)}
   }
   const keyOf = item => item.botId + ':' + item.chatRef + ':' + item.sessionRef
   const toggle = item => setSelected(old => old.some(x => keyOf(x) === keyOf(item))
     ? old.filter(x => keyOf(x) !== keyOf(item))
     : old.length >= 20 ? old : [...old, item])
-  const bulk = async action => {
-    if (!selected.length || busy) return
-    setBusy(true)
-    setNotice('')
-    try {
-      const items = selected.map(row => ({
-        ref: row.sessionRef, chatRef: row.chatRef,
-        botId: row.botId, expectedLastActiveAt: row.lastActiveAt,
+  const bulk=async action=>{
+    if(!selected.length||busy)return
+    setBusy(true);setNotice('')
+    try{
+      const items=selected.map(row=>({
+        ref:row.sessionRef,chatRef:row.chatRef,
+        botId:row.botId,expectedLastActiveAt:row.lastActiveAt
       }))
-      const result = await request('/sessions/batch/preview', 'POST', { action, items })
-      const preview = result.preview
-      const verb = action === 'archive' ? '批量隐藏关联' : '批量解除绑定'
-      const confirmed = window.confirm(verb + ' ' + preview.count + ' 条？' +
-        '\\n涉及绑定记录约 ' + bytes(preview.estimatedBindingBytes) +
-        '（非实际可回收空间）' +
-        '\\n不会删除任何 DSH 原生 Session 历史。' +
-        '\\nGateway 执行时会逐条检查，变化的绑定将跳过。')
-      if (!confirmed) { setNotice('操作已取消。'); return }
-      const queued = await request('/sessions/commands', 'POST', { token: preview.token })
-      setNotice('已排队：' + queued.command.id + '（最多 ' + preview.count +
-        ' 条）。具体完成/跳过数量请到「运维与诊断 → 告警中心」查看。')
-      setSelected([])
-      void load()
-    } catch (e) { setNotice('批量操作未提交：' + (e.message || String(e))) }
-    finally { setBusy(false) }
+      const {preview}=await request('/sessions/batch/preview','POST',{action,items})
+      const verb=action==='archive'?'批量隐藏关联':'批量解除关联'
+      setDialogError('')
+      setDialog({title:verb,confirmLabel:verb,
+        description:'确认对 '+preview.count+' 条飞书聊天执行“'+verb+'”？',
+        detail:'涉及的绑定记录约 '+bytes(preview.estimatedBindingBytes)+'（不是实际可回收空间）。',
+        note:'Gateway 执行时会重新检查每条关联。不会删除任何 DSH 聊天正文。',
+        onConfirm:async()=>{
+          const {command}=await request('/sessions/commands','POST',{token:preview.token})
+          setNotice('批量操作已排队：'+command.id+'。真实执行情况请到告警中心核对。')
+          setSelected([])
+          await load()
+        }})
+    }catch(e){setNotice('批量操作未提交：'+(e.message||String(e)))}
+    finally{setBusy(false)}
   }
   return h(React.Fragment, null,
     h('div',{className:'fgw-session-mini-summary'},
@@ -444,5 +450,7 @@ function FeishuSessionsInventory() {
       h('div', { className: 'fgw-session-storage' },
         (storage?.categories ?? []).map(x => h('div', { key: x.key, className: 'fgw-data-row' },
           h('span', null, kinds[x.key] || x.key), h('strong', null, bytes(x.bytes)))))),
-    h(OpsNote, null, '这里的隐藏关联与解除关联只影响飞书聊天的关联信息。真正删除 DSH 对话历史和定期清理功能尚未开放。'))
+    h(OpsNote, null, '隐藏关联或解除关联不会删除 DSH 历史。永久删除请到“已归档”页面，在安全删除服务可用时操作。'),
+    dialog&&h(FeishuSessionModal,{key:dialog.title,dialog,busy:dialogBusy,error:dialogError,
+      onCancel:()=>setDialog(null),onConfirm:()=>void confirmAction()}))
 }

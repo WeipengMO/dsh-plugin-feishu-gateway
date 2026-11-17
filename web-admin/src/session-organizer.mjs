@@ -222,7 +222,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     (status === 'all' ||
       (status === 'current' ? !row.archived && !trash.items[row.id] :
       (status === 'trashed' ? Boolean(trash.items[row.id]) :
-       status === 'archived' ? row.archived && !trash.items[row.id] :
+       status === 'archived' ? row.archived :
        row.status === status && !trash.items[row.id]))) &&
     (type === 'all' || row.type === type) &&
     (!query.orphanOnly || row.orphan) &&
@@ -262,6 +262,11 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
     canTrash: !data.runtime.stale && typeof services.registry?.archiveSession === 'function' &&
       typeof services.registry?.unarchiveSession === 'function',
+    canDelete: !data.runtime.stale && typeof services.deleter?.inspect === 'function' &&
+      typeof services.deleter?.delete === 'function',
+    deleteUnavailableReason: data.runtime.stale ? '飞书通道状态未确认，暂时不能删除。' :
+      typeof services.deleter?.delete === 'function' ? null :
+      '未检测到 @michengai/dsh-archive-manager 的删除功能。可选安装至 DSH Web 的 web Profile；未安装不影响其他功能。',
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
 export function reconcileSessionOrganization(stateDir, services, options = {}) {
@@ -617,5 +622,137 @@ export function autoArchiveExpiredSessions(stateDir, services, now = Date.now())
     await privateWrite(stateDir, CURSOR_FILE, { ...emptyCursor(), ...cursor,
       activity, handled: [...handled].slice(-10000) })
     return { enabled: true, archived, physicalDeletePerformed: false }
+  })
+}
+
+/**
+ * Optional integration with @michengai/dsh-archive-manager.
+ *
+ * The plugin augments the existing DSH workspaceRegistry rather than
+ * providing a separate "sessionAdmin" service. Its real interface is:
+ *   archivedSessionMetadata(): { items: [{ sessionId, createdAt }] }
+ *   deleteArchivedSessions(target)
+ *   deleteSession(sessionId): { deleted: true }
+ *
+ * We require the full signature to avoid accidentally enabling the dangerous
+ * action because an unrelated extension exposes a same-named method.
+ * These functions are not called during capability detection.
+ */
+export function archiveManagerDeleteAvailable(registry) {
+  return typeof registry?.archivedSessionMetadata === 'function' &&
+    typeof registry?.deleteArchivedSessions === 'function' &&
+    typeof registry?.deleteSession === 'function'
+}
+
+export function createArchiveManagerDeleter(registry, persistence, sessions) {
+  if (!archiveManagerDeleteAvailable(registry)) return null
+  return {
+    isLive: sessionId => {
+      // dsh-archive-manager itself can detach a live session before removing
+      // it. The Feishu Admin never intentionally permits that behaviour.
+      if (typeof sessions?.get !== 'function') return false
+      return sessions.get(sessionId) !== undefined
+    },
+    async inspect(sessionId) {
+      if (typeof sessions?.get === 'function' && sessions.get(sessionId) !== undefined)
+        throw Object.assign(new Error('会话正在执行，不能删除'), { status: 409 })
+      const metadata = await registry.archivedSessionMetadata()
+      if (!Array.isArray(metadata?.items) ||
+        !metadata.items.some(row => row?.sessionId === sessionId))
+        throw Object.assign(new Error('此会话已不在归档中，请刷新重试'), { status: 409 })
+      // This plugin does not report bytes; do not invent an estimate.
+      return { live: false }
+    },
+    async delete(sessionId, options) {
+      if (options?.force !== false || options?.backup !== false)
+        throw Object.assign(new Error('unsafe delete options'), { status: 400 })
+      if (typeof sessions?.get === 'function' && sessions.get(sessionId) !== undefined)
+        throw Object.assign(new Error('会话正在执行，不能删除'), { status: 409 })
+      const result = await registry.deleteSession(sessionId)
+      if (result?.deleted !== true)
+        throw Object.assign(new Error('归档管理插件未确认删除成功'), { status: 503 })
+      return { deleted: true }
+    },
+    async presentSessionIds() {
+      // Physical deletion in the archive-manager already verifies persistence
+      // using stat/location. A second indexed list read is only a guard.
+      if (typeof persistence?.list !== 'function') return null
+      const result = await persistence.list()
+      const entries = Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : []
+      return new Set(entries.map(item => item?.header?.id ?? item?.id).filter(id => typeof id === 'string'))
+    },
+  }
+}
+
+/**
+ * Permanent Session deletion is only supported through a runtime service
+ * which owns the DSH persistence, workspace, projection and live-agent cleanup.
+ * Never guess storage paths, rm logs, or represent archive/unlink as delete.
+ */
+function deletionService(services) {
+  const deleter = services.deleter
+  if (!deleter || typeof deleter.inspect !== 'function' ||
+    typeof deleter.delete !== 'function') {
+    throw Object.assign(new Error('未检测到 @michengai/dsh-archive-manager 删除功能，请确认已安装在 web Profile 并启用'), { status: 501 })
+  }
+  return deleter
+}
+async function deletionCandidate(stateDir, services, sessionRef) {
+  const data = await sourceData(stateDir, services.persistence, services.registry)
+  if (!data.available) throw Object.assign(new Error(data.reason), { status: 503 })
+  const row = onlyRow(data, sessionRef)
+  if (!row.archived || row.bound || !row.orphan || row.status === 'active' ||
+    row.type === 'schedule' || data.activeTasks[row.id] || data.runtime.stale ||
+    data.runtime.stats?.pendingApprovals || data.runtime.stats?.inboxPending ||
+    data.runtime.stats?.outboxPending) {
+    throw Object.assign(new Error('会话仍在使用、处于定时任务中或运行状态不确定，不能删除'), { status: 409 })
+  }
+  const deleter = deletionService(services)
+  if (typeof deleter.isLive === 'function' && deleter.isLive(row.id))
+    throw Object.assign(new Error('会话仍由 Agent 占用'), { status: 409 })
+  return { row, deleter }
+}
+export async function previewNativePermanentDelete(stateDir, services, sessionRef) {
+  const { row, deleter } = await deletionCandidate(stateDir, services, sessionRef)
+  const detail = await deleter.inspect(row.id)
+  if (detail?.live === true || detail?.status === 'live')
+    throw Object.assign(new Error('会话正在运行，不能删除'), { status: 409 })
+  // Inspection can contain absolute paths and other sensitive backend fields:
+  // expose a minimal, backend-agnostic sanitized preview only.
+  const bytes = Number(detail?.bytes ?? detail?.bytesTotal ?? detail?.totalBytes)
+  return { sessionRef, permanent: true, reversible: false,
+    estimatedBytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null }
+}
+export function permanentlyDeleteNativeSession(stateDir, services, sessionRef) {
+  return serialized(stateDir, async () => {
+    const { row, deleter } = await deletionCandidate(stateDir, services, sessionRef)
+    const detail = await deleter.inspect(row.id)
+    if (detail?.live === true || detail?.status === 'live')
+      throw Object.assign(new Error('会话正在运行，不能删除'), { status: 409 })
+    // The storage owner must refuse live writers and clean all DSH indices.
+    // Explicitly disallow forced live deletion and retained full-log backups.
+    const report = await deleter.delete(row.id, { force: false, backup: false })
+    if (!report || typeof report !== 'object' ||
+      report.deleted === false || report.ok === false || report.success === false)
+      throw Object.assign(new Error('删除服务没有确认删除成功'), { status: 503 })
+    if (typeof deleter.presentSessionIds === 'function') {
+      const present = await deleter.presentSessionIds()
+      if (present instanceof Set && present.has(row.id))
+        throw Object.assign(new Error('原生日志仍然存在，删除结果需要检查'), { status: 503 })
+    }
+    const bytes = Number(report.bytesRemoved)
+    let indexCleanupPending = false
+    try {
+      const trash = await readTrash(stateDir)
+      if (trash.items[row.id]) {
+        delete trash.items[row.id]
+        await privateWrite(stateDir, TRASH_FILE, trash)
+      }
+    } catch { indexCleanupPending = true }
+    await auditOrganization(stateDir, row.id, 'native-session-permanently-deleted')
+      .catch(() => { indexCleanupPending = true })
+    return { sessionRef, deleted: true,
+      bytesRemoved: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null,
+      indexCleanupPending }
   })
 }

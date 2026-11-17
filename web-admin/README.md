@@ -30,3 +30,13 @@ pnpm --dir web-admin test
 ```
 
 运行前确认 Gateway 与 Admin 的版本及 API 兼容；本仓库分支中存在未正式发布的功能，**测试通过不等于已部署**。当前源码版本以 [package.json](package.json) 为准。
+
+## 可选的永久删除扩展
+
+正常浏览、归档、恢复和管理飞书聊天**不需要**额外插件。若希望在「飞书管理 → 会话管理 → 已归档」中使用永久删除，需要在 **DSH Web `web` Profile** 可选安装 [@michengai/dsh-archive-manager](https://github.com/MichengAI/dsh-archive-manager)：
+
+```bash
+dsh plugin --profile web add @michengai/dsh-archive-manager
+```
+
+Web Admin 会在运行时检查 `workspaceRegistry.archivedSessionMetadata`、`deleteArchivedSessions` 和 `deleteSession` 是否全部可用；没有安装、没有启动或服务状态不安全时「删除」保持灰色，其他功能正常。安装后需确认 DSH Web 已加载插件，且实际版本兼容；不会自动删除任何会话。详见 [会话管理指南](../docs/SESSION-CENTER-UX.md)。
