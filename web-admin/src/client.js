@@ -281,8 +281,6 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState('')
       const [allowOverride, setAllowOverride] = useState(false)
       const [allowText, setAllowText] = useState('')
-      const [botsOverride, setBotsOverride] = useState(false)
-      const [bots, setBots] = useState([{ id: 'default', enabled: true, domain: 'feishu' }])
       const [workspace, setWorkspace] = useState('')
       const [agentWorkspace, setAgentWorkspace] = useState('')
       const [primaryProvider, setPrimaryProvider] = useState('')
@@ -312,8 +310,6 @@ window.__ModuleLoader__.load({
         const c = data.config || {}
         setAllowOverride(Array.isArray(c.allowlist))
         setAllowText(Array.isArray(c.allowlist) ? c.allowlist.join('\n') : '')
-        setBotsOverride(Array.isArray(c.bots))
-        setBots(c.bots || data.bots || [{ id: 'default', enabled: true, domain: 'feishu' }])
         setWorkspace(c.workspace || '')
         setAgentWorkspace(c.agentWorkspace || '')
         // Current route comes from the Gateway Host's DSH snapshot, never from
@@ -364,7 +360,9 @@ window.__ModuleLoader__.load({
         if (allowOverride) {
           result.allowlist = [...new Set(allowText.split(/[\n,]/).map(x => x.trim()).filter(Boolean))]
         }
-        if (botsOverride) result.bots = bots.map(b => ({ id: b.id.trim(), domain: b.domain, enabled: b.enabled }))
+        // Bot source is managed exclusively in the dedicated robot panel.
+        // Other settings must never silently remove or overwrite this list.
+        if (Array.isArray(existing.bots)) result.bots = existing.bots
         if (workspace.trim()) result.workspace = workspace.trim()
         if (agentWorkspace.trim()) result.agentWorkspace = agentWorkspace.trim()
         const route = modelRoutePayload({
@@ -454,8 +452,6 @@ window.__ModuleLoader__.load({
           if (saved) { try { populate(await request('/state')) } catch { /* keep previous state */ } }
         }
       }
-      const updateBot = (index, key, value) =>
-        setBots(current => current.map((b, i) => i === index ? { ...b, [key]: value } : b))
 
       const proxy = networkProxyView(state)
       const directory = modelDirectoryView(state)
@@ -507,7 +503,7 @@ window.__ModuleLoader__.load({
         error && h('div', { className: 'fga-error', role: 'alert' }, error),
         notice && h('div', { className: 'fga-notice', role: 'status' }, notice),
         !hideTabs && h('div', { className: 'fga-tabs' },
-          ...[['settings','模型与连接'],['permissions','私聊白名单'],['bots','机器人管理']]
+          ...[['settings','模型与连接'],['permissions','私聊白名单']]
             .map(([id,label]) => h('button', { type: 'button', key: id, className: tab === id ? 'fga-tab fga-selected' : 'fga-tab',
               onClick: () => setTab(id) }, label))),
         tab === 'overview' && h('div', { className: 'fga-section' },
@@ -691,23 +687,6 @@ window.__ModuleLoader__.load({
             : h('p', { className: 'fga-hint' }, '白名单仍由原 Profile 控制，未在后台覆盖。'),
           h('div', { className: 'fga-warning' }, '飞书聊天中的 Agent 可能拥有工作区写权限。仅将可信任人员加入白名单。'),
           action('保存权限', save, busy || !state)),
-        tab === 'bots' && h('div', { className: 'fga-section' },
-          h('label', { className: 'fga-check' },
-            h('input', { type: 'checkbox', checked: botsOverride, onChange: e => setBotsOverride(e.target.checked) }),
-            '在此管理机器人（覆盖原 Profile 中的 bots 列表）'),
-          botsOverride && h('div', { className: 'fga-bots' },
-            ...bots.map((bot, i) => h('div', { className: 'fga-bot', key: bot.id + ':' + i },
-              field('机器人标识', textInput(bot.id, v => updateBot(i, 'id', v), '如 default')),
-              field('应用区域', h('select', { className: 'fga-input', value: bot.domain,
-                onChange: e => updateBot(i, 'domain', e.target.value) },
-                h('option', { value: 'feishu' }, '飞书（中国）'), h('option', { value: 'lark' }, 'Lark（国际）'))),
-              h('label', { className: 'fga-check' }, h('input', { type: 'checkbox', checked: bot.enabled,
-                onChange: e => updateBot(i, 'enabled', e.target.checked) }), '启用机器人'),
-              action('删除此机器人', () => setBots(list => list.filter((_, j) => i !== j)), busy, true))),
-            bots.length < 8 && action('新增机器人', () => setBots(list => [...list, { id: '', domain: 'feishu', enabled: false }]), busy, true),
-            action('保存机器人列表', save, busy || !state)),
-          h('p', { className: 'fga-hint' },
-            '飞书 App ID / App Secret 已移至 DSH 设置 → 飞书 Gateway，以免混淆运行管理与凭据编辑。')),
         h('p', { className: 'fga-footer' },
           '管理接口由 DSH Web 身份认证保护 · 通过本机读取健康状态 · 不修改 DSH Core'))
     }

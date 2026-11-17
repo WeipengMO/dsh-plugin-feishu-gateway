@@ -544,11 +544,18 @@ async function unitState(unit) {
 async function credentialStatus(filename, bots) {
   if (!(await existingRegular(filename))) return bots.map(bot => ({ id: bot.id, configured: false }))
   const raw = await fs.readFile(filename, 'utf8')
+  const lines = raw.split(/\r?\n/)
   return bots.map(bot => {
     const keys = envNames(bot.id)
-    // Only existence/length of assignments; values are NEVER included in JSON.
-    const present = key => raw.split(/\r?\n/).some(line => line.startsWith(key + '=') && line.length > key.length + 1)
-    return { id: bot.id, configured: present(keys.appId) && present(keys.appSecret) }
+    const get = key => lines.find(line => line.startsWith(key + '='))?.slice(key.length + 1) || ''
+    const appId = get(keys.appId)
+    const appSecret = get(keys.appSecret)
+    // Only a fixed prefix and trailing four characters of a valid App ID
+    // leave the server. Never return full App IDs or any part of App Secrets.
+    const appIdMasked = /^cli_[A-Za-z0-9]{16}$/.test(appId)
+      ? 'cli_' + '•'.repeat(12) + appId.slice(-4) : null
+    return { id: bot.id, configured: Boolean(appId && appSecret),
+      ...(appIdMasked ? { appIdMasked } : {}) }
   })
 }
 // --- Issue #19: cross-profile schedule operator commands ------------------
@@ -1316,6 +1323,13 @@ export function createAdminHandler(options = {}) {
           // its own, then strip it before the strict config validation.
           const split = splitProxyUrl(body.config)
           const config = validateConfig(split.config)
+          // A managed list must never replace a working Profile configuration
+          // with no usable bot. Keep legacy empty configs readable so owners
+          // can recover, but reject unsafe writes on every update path.
+          if (Array.isArray(config.bots) &&
+            (config.bots.length === 0 || !config.bots.some(bot => bot.enabled))) {
+            throw httpError(400, 'managed bots must contain at least one enabled bot')
+          }
           if (config.groupPolicy === 'open' && before.config.groupPolicy !== 'open' &&
             body.confirmOpenGroups !== true) {
             throw httpError(400, 'opening group access requires explicit confirmation')

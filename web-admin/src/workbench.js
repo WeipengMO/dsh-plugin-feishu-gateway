@@ -86,6 +86,200 @@ function WbEmpty({ headline, description }) {
     h('p', null, description))
 }
 
+
+function botListIssue(list) {
+  if (!Array.isArray(list) || list.length === 0) return '至少需要保留一个机器人，不能保存空列表。'
+  if (list.length > 8) return '最多只能配置 8 个机器人。'
+  const seen = new Set()
+  for (const bot of list) {
+    const id = typeof bot.id === 'string' ? bot.id.trim() : ''
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id))
+      return '机器人标识需以小写字母开头，只能包含小写字母、数字、下划线或连字符（最多 32 位）。'
+    const envKey = id.toUpperCase().replace(/-/g, '_')
+    if (seen.has(envKey)) return '机器人标识冲突：连字符和下划线会映射到同一组凭据环境变量。'
+    seen.add(envKey)
+  }
+  if (!list.some(bot => bot.enabled !== false)) return '至少需要启用一个机器人，不能全部禁用。'
+  return ''
+}
+
+function BotManagementPanel({ state, health, onChanged }) {
+  const bots = Array.isArray(state?.bots) ? state.bots : []
+  const managed = Array.isArray(state?.config?.bots)
+  const [draft, setDraft] = useState(() => bots.map(bot => ({ ...bot })))
+  const [confirmSource, setConfirmSource] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState('')
+  const [checks, setChecks] = useState({})
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const effective = Array.isArray(state?.config?.bots) ? state.config.bots : (state?.bots || [])
+    setDraft(effective.map(bot => ({ ...bot })))
+    setConfirmSource(null)
+  }, [state?.revision])
+  const issue = botListIssue(draft)
+  const changeBot = (index, key, value) => setDraft(current =>
+    current.map((bot, i) => i === index ? { ...bot, [key]: value } : bot))
+
+  async function saveBots(nextBots, success) {
+    const validation = nextBots === null ? '' : botListIssue(nextBots)
+    if (validation) { setError(validation); return false }
+    setSaving(true); setNotice(''); setError('')
+    try {
+      // Only change the bots key. Preserve model routing, proxy, permissions and
+      // the rest of the managed configuration; revision prevents stale writes.
+      const config = { ...(state?.config || {}) }
+      if (nextBots === null) delete config.bots
+      else config.bots = nextBots.map(bot => ({
+        id: bot.id.trim(), domain: bot.domain, enabled: bot.enabled !== false,
+      }))
+      await request('/config', 'PUT', { expectedRevision: state.revision, config })
+      await onChanged?.()
+      setNotice(success + ' 新配置需要重启飞书通道后才会生效；本次没有自动重启。')
+      return true
+    } catch (e) {
+      setError(e?.message === 'config changed; reload before saving'
+        ? '配置已被其他操作更新，请刷新后重新操作。' : (e?.message || String(e)))
+      return false
+    } finally { setSaving(false) }
+  }
+
+  async function confirmChange() {
+    if (!confirmSource) return
+    const target = confirmSource
+    const ok = await saveBots(target === 'managed' ? draft : null,
+      target === 'managed' ? '已切换为在此页面管理机器人。' : '已恢复使用 DSH 原有机器人配置。')
+    if (ok) setConfirmSource(null)
+  }
+
+  async function testConnection(bot) {
+    setTesting(bot.id)
+    setChecks(current => ({ ...current, [bot.id]: null }))
+    try {
+      // Read actual Gateway transport health: no dummy Feishu message or
+      // unverified "connected" result is generated on the client.
+      const response = await request('/health')
+      const status = response.health?.health?.transports?.[bot.id]
+      const message = bot.enabled === false
+        ? '此机器人已禁用，无法检测活动连接。'
+        : status === 'connected' ? 'Gateway 长连接正常（未发送测试消息）。'
+        : status ? '当前连接状态：' + status + '（未发送测试消息）。'
+        : '网关尚未报告此机器人的连接状态，请检查服务日志。'
+      setChecks(current => ({ ...current, [bot.id]: { ok: status === 'connected', message } }))
+    } catch (e) {
+      setChecks(current => ({ ...current, [bot.id]: {
+        ok: false, message: '连接检测失败：' + (e?.message || String(e)),
+      } }))
+    } finally { setTesting('') }
+  }
+
+  return h(React.Fragment, null,
+    h('div', { className: 'fgw-bot-grid' },
+      bots.map(bot => {
+        const credential = state?.credentials?.find(item => item.id === bot.id)
+        const check = checks[bot.id]
+        return h('article', { className: 'fgw-detail-card fgw-bot-card', key: bot.id },
+          h('div', { className: 'fgw-detail-top' },
+            h('span', { className: 'fgw-avatar fgw-avatar-large', 'aria-hidden': true }, '飞'),
+            h(WbState, { value: health?.transports?.[bot.id] ||
+              (bot.enabled === false ? 'disabled' : 'unavailable') })),
+          h('div', { className: 'fgw-bot-card-heading' },
+            h('h3', null, bot.id),
+            h('span', { className: 'fgw-muted' }, '机器人标识')),
+          h('p', { className: 'fgw-muted' },
+            bot.domain === 'lark' ? 'Lark · 国际' : '飞书 · 中国'),
+          h(WbRow, { label: '通道', value: bot.enabled === false ? '已禁用' : '已启用' }),
+          h(WbRow, { label: 'App ID', value: credential?.appIdMasked || '未检测到' }),
+          h(WbRow, { label: '凭据', value: credential?.configured ? '已配置' : '未检测到完整凭据' }),
+          h('div', { className: 'fgw-bot-card-actions' },
+            h('button', { className: 'fga-button fga-secondary', type: 'button',
+              disabled: Boolean(testing) || saving || bot.enabled === false,
+              onClick: () => testConnection(bot) },
+              testing === bot.id ? '检测中…' : '测试连接')),
+          check && h('p', { className: 'fgw-bot-check' + (check.ok ? ' is-ok' : ''),
+            role: 'status' }, check.message))
+      }),
+      bots.length === 0 && h(WbEmpty, {
+        headline: '尚无机器人',
+        description: '请先在 DSH 设置中配置机器人及凭据。',
+      })),
+    state?.pendingRestart && h('div', { className: 'fgw-caution' },
+      '存在尚未应用的设置修改，重启飞书通道后才会生效。'),
+    h(WbBlock, { title: '配置来源', aside: managed ? '当前由此页面管理' : '当前使用 DSH 原有配置' },
+      h('p', { className: 'fgw-bot-help' },
+        '默认沿用 DSH 原有机器人列表。只有需要在此添加或调整机器人时，才切换到页面管理。'),
+      h('div', { className: 'fgw-bot-source-grid' },
+        h('button', { className: 'fgw-bot-source' + (!managed ? ' is-active' : ''),
+          type: 'button', 'aria-pressed': !managed, disabled: saving || !managed,
+          onClick: () => setConfirmSource('profile') },
+          h('strong', null, '使用 DSH 原有配置'),
+          h('span', null, '不覆盖原有机器人列表；适合已经正常运行的连接。'),
+          h('small', null, !managed ? '当前使用' : '切换至此')),
+        h('button', { className: 'fgw-bot-source' + (managed ? ' is-active' : ''),
+          type: 'button', 'aria-pressed': managed, disabled: saving || managed || Boolean(issue),
+          onClick: () => setConfirmSource('managed') },
+          h('strong', null, '在此页面管理'),
+          h('span', null, '编辑机器人标识、区域和启用状态；最多 8 个。'),
+          h('small', null, managed ? '当前使用' : '切换至此'))),
+      !managed && issue && h('p', { className: 'fgw-bot-help', role: 'status' },
+        '暂不能切换：' + issue),
+      h('p', { className: 'fgw-bot-help' },
+        'App ID / App Secret 仍在 DSH 设置 → 飞书 Gateway 中管理；不会在此显示完整凭据。')),
+    managed && h(WbBlock, { title: '编辑机器人', aside: '保存后需要重启飞书通道' },
+      h('div', { className: 'fgw-bot-edit-list' },
+        draft.map((bot, index) =>
+          h('div', { className: 'fgw-bot-edit-row', key: index },
+            h('label', { className: 'fga-field' },
+              h('span', { className: 'fga-label' }, '机器人标识'),
+              h('input', { className: 'fga-input', value: bot.id,
+                onChange: e => changeBot(index, 'id', e.target.value),
+                placeholder: '例如 default', spellCheck: false })),
+            h('label', { className: 'fga-field' },
+              h('span', { className: 'fga-label' }, '接入区域'),
+              h('select', { className: 'fga-input', value: bot.domain,
+                onChange: e => changeBot(index, 'domain', e.target.value) },
+                h('option', { value: 'feishu' }, '飞书（中国）'),
+                h('option', { value: 'lark' }, 'Lark（国际）'))),
+            h('label', { className: 'fga-check fgw-bot-enabled' },
+              h('input', { type: 'checkbox', checked: bot.enabled !== false,
+                onChange: e => changeBot(index, 'enabled', e.target.checked) }),
+              '启用'),
+            h('button', { type: 'button', className: 'fga-button fga-secondary',
+              disabled: saving || draft.length <= 1,
+              onClick: () => setDraft(list => list.filter((_, i) => i !== index)) },
+              '移除')))),
+      issue && h('p', { className: 'fga-error', role: 'alert' }, issue),
+      h('div', { className: 'fgw-bot-edit-actions' },
+        h('button', { type: 'button', className: 'fga-button fga-secondary',
+          disabled: saving || draft.length >= 8,
+          onClick: () => setDraft(list => [...list, { id: '', domain: 'feishu', enabled: false }]) },
+          '添加机器人'),
+        h('button', { type: 'button', className: 'fga-button',
+          disabled: saving || Boolean(issue),
+          onClick: () => saveBots(draft, '机器人列表已保存。') },
+          saving ? '保存中…' : '保存机器人配置'))),
+    error && h('div', { className: 'fga-error', role: 'alert' }, error),
+    notice && h('div', { className: 'fga-notice', role: 'status' }, notice),
+    confirmSource && h('div', { className: 'fgw-bot-modal-backdrop' },
+      h('div', { className: 'fgw-bot-modal', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'fgw-bot-modal-title' },
+        h('h3', { id: 'fgw-bot-modal-title' }, '确认切换机器人配置来源'),
+        h('p', null, confirmSource === 'managed'
+          ? '将使用本页面列出的机器人覆盖 DSH 原有机器人列表。'
+          : '将停止覆盖机器人列表，并恢复从 DSH 原有配置读取。'),
+        h('p', { className: 'fgw-bot-help' },
+          '切换不会删除 App ID / Secret，但可能改变实际接入的机器人。保存后需要手动重启通道，正在运行的任务可能受到影响。'),
+        confirmSource === 'managed' && h('p', { className: 'fgw-bot-help' },
+          '将启用 ' + draft.filter(bot => bot.enabled !== false).length + ' 个机器人。'),
+        h('div', { className: 'fgw-bot-modal-actions' },
+          h('button', { type: 'button', className: 'fga-button fga-secondary',
+            disabled: saving, onClick: () => setConfirmSource(null) }, '取消'),
+          h('button', { type: 'button', className: 'fga-button',
+            disabled: saving || (confirmSource === 'managed' && Boolean(issue)),
+            onClick: confirmChange }, saving ? '保存中…' : '确认切换')))))
+}
+
 function Workbench() {
   const [state, setState] = useState(null)
   const [live, setLive] = useState(undefined)
@@ -220,16 +414,7 @@ function Workbench() {
           h('span', { className: 'fgw-muted' }, '投递等待：', wbCount(health?.outbox?.pending)),
           h('span', { className: 'fgw-muted' }, '去重记录：', wbCount(health?.dedupEntries)))))
   } else if (selected === 'channels' && sectionTab.channels === 'bots') {
-    body = h('div', { className: 'fgw-grid-cards' },
-      bots.map(bot => h('article', { className: 'fgw-detail-card', key: bot.id },
-        h('div', { className: 'fgw-detail-top' }, h('span', { className: 'fgw-avatar fgw-avatar-large' }, '飞'),
-          h(WbState, { value: health?.transports?.[bot.id] || (bot.enabled === false ? 'disabled' : 'unavailable') })),
-        h('h3', null, bot.id),
-        h('p', { className: 'fgw-muted' }, bot.domain === 'lark' ? 'Lark · 国际' : 'Feishu · 中国'),
-        h(WbRow, { label: '通道开关', value: bot.enabled === false ? '禁用' : '启用' }),
-        h(WbRow, { label: '凭据状态', value: state?.credentials?.find(x => x.id === bot.id)?.configured ? '已配置' : '未检测到完整凭据' }),
-        h('p', { className: 'fgw-muted' }, '修改机器人标识和启用状态：高级管理；更新 App ID / Secret：设置 → 飞书 Gateway。'))),
-      bots.length === 0 && h(WbEmpty, { headline: '尚无机器人', description: '配置凭据后，机器人状态会自动显示在这里。' }))
+    body = h(BotManagementPanel, { state, health, onChanged: load })
   } else if (selected === 'channels' && sectionTab.channels === 'groups') {
     body = h(GroupManagementPanel, { onChanged: load })
   } else if (selected === 'agent-profile') {
@@ -271,12 +456,6 @@ function Workbench() {
     body = h(WbEmpty, { headline: '未知页面', description: '请选择左侧的管理功能。' })
   }
   // Settings share the section with their Gateway capability.
-  if (selected === 'channels' && sectionTab.channels === 'bots') {
-    body = h(React.Fragment, null, body,
-      h(WbBlock, { title: '机器人配置', aside: '启用状态、接入区域；凭据保留在 DSH 设置' },
-        h('div', { className: 'fgw-advanced' },
-          h(Panel, { key: 'bots', initialTab: 'bots', hideTabs: true, onChanged: load }))))
-  }
   if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null, body,
       h(WbBlock, { title: '私聊白名单', aside: '仅允许可信用户访问 Agent 工具' },

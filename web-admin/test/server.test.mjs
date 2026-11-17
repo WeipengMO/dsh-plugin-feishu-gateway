@@ -170,7 +170,9 @@ test('write-only credentials preserve old keys and never return secrets', async 
     assert.equal(JSON.stringify(response.json).includes(secret), false)
     assert.equal((await stat(f.envFile)).mode & 0o777, 0o600)
     const status = await f.request('/state')
-    assert.deepEqual(status.json.credentials, [{ id: 'default', configured: true }])
+    assert.deepEqual(status.json.credentials, [{ id: 'default', configured: true,
+      appIdMasked: 'cli_' + '•'.repeat(12) + 'cdef' }])
+    assert.equal(JSON.stringify(status.json).includes(appId), false)
     assert.equal(JSON.stringify(status.json).includes(secret), false)
     const newSecret = 'NEWSUPERSECRET9876543210'
     const changed = await f.request('/credentials', 'PUT', { botId: 'default', appSecret: newSecret }, mutating)
@@ -1494,4 +1496,39 @@ test('native batch archive and restore require login, CSRF, one-time tokens, and
     assert.equal(archived.length,0)
     assert.equal(snapshots.length,3)
   }finally{await f.close();await rm(dir,{recursive:true,force:true})}
+})
+
+
+test('managed bot writes cannot empty or disable the entire list, and Profile mode is reversible', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.request('/state')
+    const initial = await f.request('/config', 'PUT', {
+      expectedRevision: first.json.revision,
+      config: { allowlist: ['ou_alpha'], bots: [{ id: 'default', enabled: true, domain: 'feishu' }] },
+    }, mutating)
+    assert.equal(initial.status, 200)
+    const current = await f.request('/state')
+    assert.equal(current.json.config.bots.length, 1)
+    for (const bots of [[], [{ id: 'default', enabled: false, domain: 'feishu' }]]) {
+      const blocked = await f.request('/config', 'PUT', {
+        expectedRevision: current.json.revision,
+        config: { ...current.json.config, bots },
+      }, mutating)
+      assert.equal(blocked.status, 400)
+      assert.match(blocked.json.error, /at least one enabled bot/)
+    }
+    const unchanged = await f.request('/state')
+    assert.deepEqual(unchanged.json.config.bots, current.json.config.bots)
+    const inherited = { ...unchanged.json.config }
+    delete inherited.bots
+    const switched = await f.request('/config', 'PUT', {
+      expectedRevision: unchanged.json.revision, config: inherited,
+    }, mutating)
+    assert.equal(switched.status, 200)
+    const restored = await f.request('/state')
+    assert.equal(restored.json.config.bots, undefined)
+    assert.deepEqual(restored.json.config.allowlist, ['ou_alpha'])
+    assert.deepEqual(restored.json.bots, [{ id: 'default', domain: 'feishu', enabled: true }])
+  } finally { await f.close() }
 })
