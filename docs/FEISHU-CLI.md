@@ -26,4 +26,4 @@ lark-cli doctor
 
 此权限仅供查询应用斜杠命令，不是 Gateway 或所有 CLI 操作的通用前提。不同操作还可能需要其他应用权限、用户授权、资源共享或群成员资格。auth scopes 的 tokenType 必须与目标身份对应，用户 scope 列表不能证明机器人权限。
 
-曾观察到 CLI 应用 cli_a978… 与 Gateway 应用 cli_a930… 不同，以实时配置为准。不要通过绑定 OpenClaw 解决此问题，也不要擅自切换 CLI profile、覆盖凭据或更改身份策略。
+CLI 与 Gateway 可能使用**不同的飞书应用身份**，请以各自运行时配置为准。不要通过绑定 OpenClaw 解决此问题，也不要擅自切换 CLI profile、覆盖凭据或更改身份策略。
