@@ -68,7 +68,7 @@ dsh --profile web --dump-config
 
 ## 自动上下文压缩
 
-DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早对话，并在确认溢出后尝试恢复；Gateway 不会另造一个按累计 Token 用量触发的摘要引擎。飞书发送 `/context` 可查看当前 Session 的压缩能力，发送 `/compact` 可调用 DSH 原生手动压缩；Web Admin 会话管理底部也提供只读状态。自动触发阈值应在 **`feishu-channel` Profile** 的 DSH 压缩后端中配置，而非 Web Admin。详见 [上下文压缩与触发策略](docs/CONTEXT-COMPACTION.md)。
+DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早对话，并在确认溢出后尝试恢复；Gateway 不会另造一个按累计 Token 用量触发的摘要引擎。飞书发送 `/context` 可查看当前 Session 的压缩能力，发送 `/compact` 可调用 DSH 原生手动压缩；Web Admin 会话管理底部也提供只读状态：区分自动、手动、未分类压缩和失败计数；只有观察到真实原生自动压缩事件才显示“已观察到”，否则标明自动策略未验证。自动触发阈值应在 **`feishu-channel` Profile** 的 DSH 压缩后端中配置，而非 Web Admin。详见 [上下文压缩与触发策略](docs/CONTEXT-COMPACTION.md)。
 
 ## 安全与升级原则
 

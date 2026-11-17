@@ -590,8 +590,19 @@ export class FeishuGateway {
           'DSH 上下文压缩',
           '原生压缩引擎：' + (status?.available ? '可用' : '未检测到'),
           status?.available
-            ? '自动触发：由 DSH compaction-basic 根据模型上下文与输出预留决定（飞书不重复设阈值）。'
-            : '自动压缩：未确认启用；请在 Gateway 所属 DSH Profile 中检查 dsh-compaction-basic。',
+            ? (status.automaticCompletedInProcess ?? 0) > 0
+              ? '自动压缩：本次启动后已观察到 ' + status.automaticCompletedInProcess +
+                ' 次 DSH 原生自动压缩。'
+              : '自动压缩：尚未观察到自动触发，auto 配置状态无法从当前原生接口确认；请检查 feishu-channel Profile。'
+            : '自动压缩：未检测到原生引擎；请在 feishu-channel Profile 中检查 dsh-compaction-basic。',
+          '触发机制：DSH 按目标模型上下文、输出预留与安全余量判断；不是按累计 Token 消耗。',
+          status?.available
+            ? '已观察到的手动压缩：' + (status.manualCompletedInProcess ?? 0) +
+              ' 次；来源未分类：' + (status.unclassifiedCompletedInProcess ?? 0) + ' 次。'
+            : '',
+          (status?.failedInProcess ?? 0) > 0
+            ? '本次启动后原生压缩失败：' + status!.failedInProcess + ' 次（原因请查看 DSH 宿主日志）。'
+            : '',
           bound
             ? '当前聊天：已有 DSH 会话'
             : '当前聊天：尚未创建会话',

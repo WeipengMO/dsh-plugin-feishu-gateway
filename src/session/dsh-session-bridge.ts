@@ -46,9 +46,18 @@ interface NativeCompactionLike {
   } | null>
 }
 
+type CompactionTrigger = 'automatic' | 'manual' | 'unclassified'
+
 interface ObservedCompaction {
   readonly count: number
+  readonly automaticCount: number
+  readonly manualCount: number
+  readonly unclassifiedCount: number
+  readonly failedCount: number
   readonly at: number
+  readonly lastAutoCompletedAt?: number
+  readonly lastFailedAt?: number
+  readonly lastTrigger?: CompactionTrigger
   readonly shadowedItems: number
   readonly shadowedTokens: number
 }
@@ -122,6 +131,8 @@ export class DshSessionBridge implements SessionBridge {
   private readonly sessionModels = new Map<string, string>()
   /** Host-local, privacy-safe compaction observations (never summaries). */
   private readonly compactionObserved = new Map<string, ObservedCompaction>()
+  /** DSH owns the policy: numbered turn = automatic; null turn = manual. */
+  private readonly compactionStarts = new Map<string, CompactionTrigger>()
   private readonly compactionPending = new Map<string, {
     sessionId: string; shadowedItems: number; shadowedTokens: number
   }>()
@@ -328,13 +339,26 @@ export class DshSessionBridge implements SessionBridge {
     const snapshots = sessionId
       ? [this.compactionObserved.get(sessionId)].filter((value): value is ObservedCompaction => value !== undefined)
       : [...this.compactionObserved.values()]
-    const observed = [...snapshots].sort((a, b) => b.at - a.at)[0]
+    const observed = snapshots.filter(value => value.count > 0).sort((a, b) => b.at - a.at)[0]
     const total = snapshots.reduce((sum, value) => sum + value.count, 0)
+    const auto = snapshots.reduce((sum, value) => sum + value.automaticCount, 0)
+    const manual = snapshots.reduce((sum, value) => sum + value.manualCount, 0)
+    const unclassified = snapshots.reduce((sum, value) => sum + value.unclassifiedCount, 0)
+    const failed = snapshots.reduce((sum, value) => sum + value.failedCount, 0)
+    const lastAuto = Math.max(0, ...snapshots.map(value => value.lastAutoCompletedAt ?? 0))
+    const lastFailure = Math.max(0, ...snapshots.map(value => value.lastFailedAt ?? 0))
     return {
       available: !this.disposed && Boolean(this.nativeCompaction()),
       completedInProcess: total,
+      automaticCompletedInProcess: auto,
+      manualCompletedInProcess: manual,
+      unclassifiedCompletedInProcess: unclassified,
+      failedInProcess: failed,
+      ...(lastAuto > 0 ? { lastAutoCompletedAt: lastAuto } : {}),
+      ...(lastFailure > 0 ? { lastFailedAt: lastFailure } : {}),
       ...(observed ? {
         lastCompletedAt: observed.at,
+        lastTrigger: observed.lastTrigger,
         lastShadowedItems: observed.shadowedItems,
         lastShadowedTokens: observed.shadowedTokens,
       } : {}),
@@ -547,6 +571,7 @@ export class DshSessionBridge implements SessionBridge {
     this.scheduleTurnHandler = undefined
     this.sessionModels.clear()
     this.compactionObserved.clear()
+    this.compactionStarts.clear()
     this.compactionPending.clear()
     this.completedCompactions.clear()
     const handles = [...this.handles.values()]
@@ -581,7 +606,18 @@ export class DshSessionBridge implements SessionBridge {
     if (!sessionId) return
     const type = (event as { type?: unknown })?.type
     const data = (event as { data?: Record<string, unknown> })?.data
-    if (this.handles.has(sessionId) && type === 'compaction/summary' && typeof data?.compactionId === 'string') {
+    if (this.handles.has(sessionId) && type === 'compaction/start' &&
+        typeof data?.compactionId === 'string') {
+      const key = sessionId + ':' + data.compactionId
+      // Upstream DSH: a numbered open turn is automatic; null is standalone manual.
+      // An absent or malformed turn cannot be classified safely.
+      const trigger: CompactionTrigger | undefined = data.turn === null ? 'manual'
+        : typeof data.turn === 'number' && Number.isSafeInteger(data.turn) && data.turn >= 0
+          ? 'automatic' : undefined
+      if (this.compactionStarts.size >= 512) this.compactionStarts.clear()
+      if (trigger) this.compactionStarts.set(key, trigger)
+    } else if (this.handles.has(sessionId) && type === 'compaction/summary' &&
+        typeof data?.compactionId === 'string') {
       const key = sessionId + ':' + data.compactionId
       // No summary text, tool data or raw events are read into Gateway state.
       const shadowedItems = Array.isArray(data.shadowedSeqs) ? data.shadowedSeqs.length : 0
@@ -589,22 +625,44 @@ export class DshSessionBridge implements SessionBridge {
         (data.shadowedTokenCount as number) >= 0 ? data.shadowedTokenCount as number : 0
       if (this.compactionPending.size >= 256) this.compactionPending.clear()
       this.compactionPending.set(key, { sessionId, shadowedItems, shadowedTokens })
-    } else if (this.handles.has(sessionId) && type === 'compaction/end' && typeof data?.compactionId === 'string') {
+    } else if (this.handles.has(sessionId) && type === 'compaction/end' &&
+        typeof data?.compactionId === 'string') {
       const key = sessionId + ':' + data.compactionId
       const pending = this.compactionPending.get(key)
+      const knownTrigger = this.compactionStarts.get(key)
       this.compactionPending.delete(key)
-      if (pending && !data.error && !this.completedCompactions.has(key)) {
+      this.compactionStarts.delete(key)
+      // Count each closed native transaction once, including errors with no summary.
+      if (!this.completedCompactions.has(key) && (pending || knownTrigger)) {
         this.completedCompactions.add(key)
         if (this.completedCompactions.size > 512) this.completedCompactions.clear()
-        const before = this.compactionObserved.get(sessionId)
+        const before = this.compactionObserved.get(sessionId) ?? {
+          count: 0, automaticCount: 0, manualCount: 0, unclassifiedCount: 0,
+          failedCount: 0, at: 0, shadowedItems: 0, shadowedTokens: 0,
+        }
         if (this.compactionObserved.size >= 500 && !this.compactionObserved.has(sessionId)) {
           const first = this.compactionObserved.keys().next().value
           if (first) this.compactionObserved.delete(first)
         }
-        this.compactionObserved.set(sessionId, {
-          count: (before?.count ?? 0) + 1, at: Date.now(),
-          shadowedItems: pending.shadowedItems, shadowedTokens: pending.shadowedTokens,
-        })
+        const now = Date.now()
+        if (data.error !== undefined && data.error !== null) {
+          // Errors may contain private provider details; preserve only a counter/time.
+          this.compactionObserved.set(sessionId, {
+            ...before, failedCount: before.failedCount + 1, lastFailedAt: now,
+          })
+        } else if (pending) {
+          const trigger = knownTrigger ?? 'unclassified'
+          this.compactionObserved.set(sessionId, {
+            ...before, count: before.count + 1, at: now,
+            automaticCount: before.automaticCount + (trigger === 'automatic' ? 1 : 0),
+            manualCount: before.manualCount + (trigger === 'manual' ? 1 : 0),
+            unclassifiedCount: before.unclassifiedCount + (trigger === 'unclassified' ? 1 : 0),
+            ...(trigger === 'automatic' ? { lastAutoCompletedAt: now } : {}),
+            lastTrigger: trigger,
+            shadowedItems: pending.shadowedItems,
+            shadowedTokens: pending.shadowedTokens,
+          })
+        }
       }
     }
     // Native DSH records the effective route under request/context (or

@@ -159,6 +159,16 @@ export async function readOpsSnapshot(dir, now = Date.now()) {
       compaction: {
         available: doc.compaction.available,
         completedInProcess: safeNum(doc.compaction.completedInProcess) ?? 0,
+        automaticCompletedInProcess: safeNum(doc.compaction.automaticCompletedInProcess) ?? 0,
+        manualCompletedInProcess: safeNum(doc.compaction.manualCompletedInProcess) ?? 0,
+        unclassifiedCompletedInProcess: safeNum(doc.compaction.unclassifiedCompletedInProcess) ?? 0,
+        failedInProcess: safeNum(doc.compaction.failedInProcess) ?? 0,
+        ...(safeNum(doc.compaction.lastAutoCompletedAt) !== undefined ?
+          { lastAutoCompletedAt: safeNum(doc.compaction.lastAutoCompletedAt) } : {}),
+        ...(safeNum(doc.compaction.lastFailedAt) !== undefined ?
+          { lastFailedAt: safeNum(doc.compaction.lastFailedAt) } : {}),
+        ...(['automatic', 'manual', 'unclassified'].includes(doc.compaction.lastTrigger) ?
+          { lastTrigger: doc.compaction.lastTrigger } : {}),
         ...(safeNum(doc.compaction.lastCompletedAt) !== undefined ?
           { lastCompletedAt: safeNum(doc.compaction.lastCompletedAt) } : {}),
         ...(safeNum(doc.compaction.lastShadowedItems) !== undefined ?

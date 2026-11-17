@@ -63,17 +63,29 @@ function FeishuSessionCenter({ compaction, compactionStale = false }) {
       h(FeishuSessionsInventory,{})),
     h('details',{className:'fgw-session-details fgw-context-compaction'},
       h('summary',null,'上下文压缩 · '+(compactionStale?'运行状态待更新':
-        compaction?.available===true?'DSH 原生引擎已就绪':
+        compaction?.available===true && compaction?.automaticCompletedInProcess>0?'已观察到自动压缩':
+        compaction?.available===true?'原生引擎可用 · 自动状态待验证':
         compaction?.available===false?'未检测到原生压缩引擎':'运行状态未同步')),
-      h('p',null,'自动压缩由 DSH 原生 compaction-basic 按模型上下文和输出预算触发。飞书网关不会使用累计 Token 消耗估计上下文，也不会另起 LLM 生成替代摘要。'),
-      h('p',null,'在飞书对话中发送 ',h('code',null,'/context'),' 查看当前会话状态；发送 ',
-        h('code',null,'/compact'),' 手动压缩较早的会话历史。压缩保留原生事件日志，不等于释放磁盘空间。'),
-      h('p',{className:'fgw-muted'},compactionStale?'Gateway 状态已过期，请确认服务是否运行。':
-        compaction?.lastCompletedAt?
-          '当前 Gateway 启动后观察到 '+compaction.completedInProcess+' 次完整压缩，最近一次：'+
-            opsDate(compaction.lastCompletedAt)+'。':
-          '当前 Gateway 启动后尚无已观察到的完整压缩记录。'),
-      h('p',{className:'fgw-muted'},'触发阈值和保留策略在 DSH 的 dsh-compaction-basic 配置中管理；切换模型时由 DSH 使用目标模型容量重新判定。')))
+      h('p',null,'DSH 原生 compaction-basic 决定何时自动压缩；飞书不会按累计 Token 用量重复触发，也不会创建第二套摘要。'),
+      h('div',{className:'fgw-session-meta'},
+        h('p',null,'自动压缩：',compactionStale?'状态待更新':
+          compaction?.available!==true?'尚不可确认':
+          compaction.automaticCompletedInProcess>0?'已观察到真实自动压缩':'未验证（不代表已关闭）'),
+        h('p',null,'本次运行完成：',compaction?.completedInProcess??'—',
+          ' 次 · 自动 ',compaction?.automaticCompletedInProcess??'—',
+          ' · 手动 ',compaction?.manualCompletedInProcess??'—',
+          ' · 未分类 ',compaction?.unclassifiedCompletedInProcess??'—'),
+        h('p',null,'本次运行失败：',compaction?.failedInProcess??'—',' 次'),
+        compaction?.lastAutoCompletedAt&&h('p',null,'最近自动压缩：',opsDate(compaction.lastAutoCompletedAt)),
+        compaction?.lastCompletedAt&&h('p',null,'最近完整压缩：',opsDate(compaction.lastCompletedAt),
+          ' · ',({automatic:'自动',manual:'手动',unclassified:'未分类'})[compaction.lastTrigger]||'来源未知',
+          ' · 替换历史项 ',compaction.lastShadowedItems??0,' 个')),
+      h('p',{className:'fgw-muted'},'只有宿主产生的原生事件才能证明自动压缩实际发生。引擎可用不等于 auto 已启用；当前接口无法可靠读取实时上下文百分比或配置值。'),
+      h('p',null,'在飞书发送 ',h('code',null,'/context'),' 查看当前聊天的事件统计；发送 ',
+        h('code',null,'/compact'),' 手动压缩旧历史。压缩不会删除原始 Session 日志。'),
+      h('p',{className:'fgw-muted'},'检查自动策略：在 feishu-channel Profile 确认已挂载 @deepseek-ai/dsh-compaction-basic、auto: true，并为小窗口模型调整 headroomTokens。'),
+      h('p',null,h('a',{href:'https://github.com/WeipengMO/dsh-plugin-feishu-gateway/blob/main/docs/CONTEXT-COMPACTION.md',
+        target:'_blank',rel:'noopener noreferrer'},'查看触发原理与验收步骤')))
 
 }
 function FeishuArchiveHub() {

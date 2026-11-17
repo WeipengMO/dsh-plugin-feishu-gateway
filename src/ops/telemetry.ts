@@ -62,6 +62,13 @@ export interface OpsSnapshot {
   readonly compaction?: {
     readonly available: boolean
     readonly completedInProcess: number
+    readonly automaticCompletedInProcess?: number
+    readonly manualCompletedInProcess?: number
+    readonly unclassifiedCompletedInProcess?: number
+    readonly failedInProcess?: number
+    readonly lastFailedAt?: number
+    readonly lastAutoCompletedAt?: number
+    readonly lastTrigger?: 'automatic' | 'manual' | 'unclassified'
     readonly lastCompletedAt?: number
     readonly lastShadowedItems?: number
     readonly lastShadowedTokens?: number
