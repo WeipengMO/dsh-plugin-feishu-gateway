@@ -1,59 +1,46 @@
-# Session 生命周期与数据所有权（开发参考）
+# Session 生命周期与安全删除（开发参考）
 
-普通用户从 [会话管理使用指南](SESSION-CENTER-UX.md) 开始。
+普通使用请阅读 [会话管理](SESSION-CENTER-UX.md)。
 
-## 数据并不是同一个东西
+## 数据归属
 
-| 数据 | 谁负责 | 删除/归档是否联动 |
+| 数据 | 管理方 | 删除边界 |
 | --- | --- | --- |
-| DSH 原生 Session 历史 | `ctx.sessionPersistence` | DSH 真正保存正文；**当前无通用 delete API** |
-| 原生侧栏归档 | DSH WorkspaceRegistry | 可隐藏/取消隐藏，不删除正文 |
-| 飞书聊天绑定 | Gateway `sessions.json` | 决定下一次聊天复用哪个 Session；解除绑定不删除正文 |
-| Web 回收站索引 | Web Admin `session-trash.json` | 记录暂存时间与原先状态；不含聊天正文 |
-| 回收与归档设置 | Web Admin `session-retention-settings.json` | 90 天候选/30 天到期统计，不直接删除 |
-| Inbox / Outbox | Gateway | 负责消息去重与投递，与原生聊天历史独立 |
+| DSH 原生 Session | `ctx.sessionPersistence` | 官方目前无统一 delete API；必须由经验证的持久化所有者操作 |
+| 工作区归档和显示 | DSH WorkspaceRegistry | 归档和恢复不删除事件日志 |
+| 飞书聊天关联 | Gateway `sessions.json` | 解除绑定不会删除 Session |
+| 旧版暂存索引 | Web Admin `session-trash.json` | 用于兼容旧回收站条目，不含聊天正文 |
+| 自动归档设置 | Web Admin `session-retention-settings.json` | 90 天默认值、显式启用、自动永久删除关闭 |
+| Inbox/Outbox | Gateway | 未处理消息与外部副作用必须独立保护 |
 
-## 状态流转
+## 当前可见状态
 
 ```text
-对话历史 -- 归档 --> 已归档 -- 恢复 --> 对话历史
-    |                       |
-    +--- 移入回收站 <-------+
-                 |
-                 +-- 恢复 --> 移入之前的可见状态
-                 |
-                 +-- 到期 --> 只标记到期（没有原生删除 API）
+对话历史 ──归档──> 已归档 ──恢复──> 对话历史
+                          │
+                          └──删除──> 原生历史真正删除（仅安全删除服务可用）
 ```
 
-原生会话必须仍没有关联且非活动状态才允许移入回收站；定时任务会话暂不允许执行该操作。需要 DSH 原生 `unarchiveSession` 支持才能保证恢复可用；没有该能力会禁用回收操作。
+旧版存于暂存索引的 Session 也归入「已归档」，恢复使用对应的原先状态。没有安全持久化删除服务时，删除不可用。
 
-Web Admin 保存的回收站索引使用服务端本地权限和原子写，记录的是原生 ID、时间戳与先前归档状态；浏览器只看到经过脱敏的 Session 引用。暂存时先通过原生 WorkspaceRegistry 归档，再记载回收状态。若记录持久化失败，不会报告操作成功；由于这是跨 DSH 和 Web 状态的操作，进程在两步之间崩溃时可能留下已归档但未标记回收的会话，应仍可在「已归档」找回。
+## 删除安全流程
 
-## 自动归档
+1. 仅对已经归档、没有飞书绑定且不属于定时任务的会话开放。Gateway 快照过期、有待处理消息或审批、原生活跃写入者仍存在时拒绝。
+2. `POST /sessions/native/delete/preview` 通过服务端索引解析哈希引用，使用 `sessionAdmin.inspect` 预览；只返回脱敏信息和 30 秒有效令牌。
+3. 前端显示页面内危险确认弹窗，勾选不可恢复后才提交。
+4. `POST /sessions/native/delete` 一次性消费令牌，再次检查全部状态，执行 `sessionAdmin.delete(id, { force:false, backup:false })`。只有支持的存储所有者才能负责完整日志、投影缓存、归档与工作区索引的一致性清理。
+5. 若删除服务提供 `presentSessionIds()`，额外检查日志已不在原生持久化中；写入脱敏审计记录；旧暂存索引同步清理。
+6. 不能仅依赖 Web 的过期快照断言安全，也不会使用 `fs.rm` 直接操作未知后端的存储目录。
 
-- 初始策略 `archiveAfterDays=90`、`trashKeepDays=30`、`autoArchiveEnabled=false`、`autoDeleteEnabled=false`。
-- 自动归档由 Web Admin 每小时检查一次，**需要用户启用**；不会自动从回收站清除记录。
-- 自动归档只使用已记录的可信最后活动时间（由此前 Gateway 绑定的活动时间在 Web 管理记录里观察得到），不会以 Header 创建时间补全缺失数据。
-- 当前绑定、非正常运行状态、定时任务会话、审批或消息在途以及 DSH 原生锁不允许的归档均会跳过。
-- `session-organization-settings.json` 的工作区自动归位是另一个设置，不能与 90 天保留策略混淆。
+可选删除服务从 Web Host 的 `ctx.get('sessionAdmin')` 检测；不要求用户安装特定来源的插件，**但运行时未提供相容服务时必须安全降级**。社区插件与部署兼容性需要独立验收。
 
-## API
+## API 与设置
 
-在 DSH Web 既有认证前缀 `/api/feishu-admin` 下：
+- `GET /sessions/ledger?status=current`：正常对话。
+- `GET /sessions/ledger?status=archived`：所有已归档，包括旧版暂存项。
+- `POST /sessions/native/archive`、`POST /sessions/native/restore`：侧栏归档与恢复。
+- `POST /sessions/native/delete/preview`、`POST /sessions/native/delete`：安全永久删除预览与一次性提交。
+- `GET /sessions/retention`、`PUT /sessions/retention/settings`：90 天自动归档设置；自动永久删除仍不启用。
+- 原有 `/sessions/trash/*` 兼容接口暂时保留，**不再展示额外回收站入口**，以便旧暂存记录恢复。
 
-| 方法与路径 | 用途 |
-| --- | --- |
-| `GET /sessions/ledger?status=current` | 当前未归档历史 |
-| `GET /sessions/ledger?status=archived` | 已归档列表 |
-| `GET /sessions/ledger?status=trashed` | 回收站暂存列表 |
-| `GET /sessions/retention` | 配置和候选/跳过/到期统计 |
-| `PUT /sessions/retention/settings` | 修改 90 天归档/30 天保留策略，不能打开永久删除 |
-| `POST /sessions/trash/preview` | 检查候选与生成 30 秒确认令牌 |
-| `POST /sessions/trash/move` | 令牌消费后原生归档+写回收索引 |
-| `POST /sessions/trash/restore` | 将暂存会话恢复到原先归档状态 |
-
-这些接口只操作 Web Admin 自身文件和 DSH 原生 WorkspaceRegistry；**没有任何实际永久删除 API**。代码和测试分别见 `web-admin/src/session-organizer.mjs`、`web-admin/src/server.mjs`、`web-admin/test/session-organizer.test.mjs`。
-
-## 后续：永久删除
-
-需要 DSH 为 SessionPersistence 提供经验证的原生 delete/retention 接口（含活动写入者、持久化后端、Workspace 索引、并发与恢复协调）才可以启用自动或手动真实删除。禁止直接推测 `.jsonl.zst` 文件路径并执行 `rm`。详见 [Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)。
+开发单元与 HTTP 安全测试见 `web-admin/test/session-organizer.test.mjs`、`web-admin/test/server.test.mjs`。真实删除仍需在匹配的 DSH Web 和第三方删除服务上进行人工数据与索引一致性验收。
