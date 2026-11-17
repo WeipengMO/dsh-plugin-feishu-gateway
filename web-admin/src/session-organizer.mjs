@@ -260,6 +260,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     orphanCount: data.records.filter(row => row.orphan).length,
     archivedCount: data.records.filter(row => row.archived && !trash.items[row.id]).length,
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
+    canArchive: !data.runtime.stale && typeof services.registry?.archiveSession === 'function',
     canTrash: !data.runtime.stale && typeof services.registry?.archiveSession === 'function' &&
       typeof services.registry?.unarchiveSession === 'function',
     canDelete: !data.runtime.stale && typeof services.deleter?.inspect === 'function' &&
