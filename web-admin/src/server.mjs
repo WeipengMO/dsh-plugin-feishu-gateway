@@ -22,6 +22,7 @@ import { parseSessionQuery, querySessions } from './session-read.mjs'
 import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNativeSession, restoreNativeSession,
   organizationSettings, saveOrganizationSettings, retentionSettings, saveRetentionSettings,
   previewRetention, previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
+  previewNativePermanentDelete, permanentlyDeleteNativeSession,
   autoArchiveExpiredSessions } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
@@ -961,6 +962,32 @@ export function createAdminHandler(options = {}) {
       }
       // DSH has no portable persistence.delete(). Recycle bin only tracks
       // reversible native archives; permanent deletion is intentionally absent.
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/delete/preview') {
+        const body = await readBody(req)
+        exactKeys(body, ['sessionRef'])
+        const preview = await previewNativePermanentDelete(stateDir, sessionServices(), body.sessionRef)
+        const token = randomUUID()
+        const expiresAt = Date.now() + 30_000
+        for (const [key, value] of nativePreviews)
+          if (value.expiresAt <= Date.now()) nativePreviews.delete(key)
+        if (nativePreviews.size >= 100) nativePreviews.clear()
+        nativePreviews.set(token, { action: 'hard-delete', sessionRef: preview.sessionRef, expiresAt })
+        return json(res, 200, { ok: true, preview: { ...preview, token, expiresAt } })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/delete') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['token'])
+          if (typeof body.token !== 'string' || !/^[0-9a-f-]{36}$/.test(body.token))
+            throw httpError(400, 'invalid confirmation token')
+          const pending = nativePreviews.get(body.token)
+          nativePreviews.delete(body.token)
+          if (!pending || pending.action !== 'hard-delete' || pending.expiresAt <= Date.now())
+            throw httpError(409, 'delete confirmation expired')
+          const result = await permanentlyDeleteNativeSession(stateDir, sessionServices(), pending.sessionRef)
+          return json(res, 200, { ok: true, result })
+        })
+      }
       if (req.method === 'GET' && route === PREFIX + '/sessions/retention') {
         const report = await previewRetention(stateDir, sessionServices())
         return json(res, 200, { ok: true, report })
@@ -1345,7 +1372,8 @@ export function apply(ctx, config = {}) {
     const unregister = webServer.register({ kind: 'prefix', path: PREFIX,
       handler: createAdminHandler({ ...config,
         sessionServices: () => ({ registry: ctx.get('workspaceRegistry'),
-          persistence: ctx.get('sessionPersistence'), query: ctx.get('sessionQuery') }),
+          persistence: ctx.get('sessionPersistence'), query: ctx.get('sessionQuery'),
+          deleter: ctx.get('sessionAdmin') }),
         requestRejection: req => connection.requestRejection(req),
         requestAdmission: typeof connection.admit === 'function' ? req => connection.admit(req) : undefined }) })
     ctx.logger.info('feishu-admin: management API registered on authenticated DSH Web')
