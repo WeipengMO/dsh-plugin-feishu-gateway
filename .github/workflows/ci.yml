@@ -63,6 +63,10 @@ jobs:
           # Guardrail: CI must never reach a real Feishu tenant.
           FEISHU_GATEWAY_OFFLINE: '1'
 
+      - name: Check Web Admin source syntax
+        run: |
+          for file in web-admin/src/*.js; do node --check "$file"; done
+
       - name: Web admin security tests
         run: timeout --signal=INT --kill-after=5s 45s node --test --test-reporter=spec web-admin/test/*.test.mjs && node --check web-admin/lib/client.js
 
