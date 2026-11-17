@@ -1414,6 +1414,7 @@ export class FeishuGateway {
       sharedProjectWorkspace: this.config.workspace,
       isolatedAgent: true,
       ...(this.modelCatalog ? { modelCatalog: this.modelCatalog } : {}),
+      ...(this.bridge.compactionStatus ? { compaction: this.bridge.compactionStatus() } : {}),
       ...(this.routeSnapshot() ? { agentRoute: this.routeSnapshot() } : {}),
       ...(this.profileDefaultRoute() ? { profileDefaultRoute: this.profileDefaultRoute() } : {}),
       tasks: [...this.activeTurns.values()].map(turn => ({
