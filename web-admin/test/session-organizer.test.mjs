@@ -10,6 +10,7 @@ import {
   previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
   autoArchiveExpiredSessions,
   previewNativePermanentDelete, permanentlyDeleteNativeSession,
+  archiveManagerDeleteAvailable, createArchiveManagerDeleter,
   organizationSettings,
   reconcileSessionOrganization,
   saveOrganizationSettings,
@@ -408,4 +409,69 @@ test('permanent delete rejects running, bound, stale, scheduled or live-owner se
   })
   await assert.rejects(previewNativePermanentDelete(f.stateDir,services,ref),{status:409})
   assert.equal(calls,0)
+})
+
+test('archive-manager is optional: only its complete workspaceRegistry API enables delete', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const registry = f.native.registry
+  assert.equal(archiveManagerDeleteAvailable(registry), false)
+  assert.equal(createArchiveManagerDeleter(registry, f.native.persistence), null)
+  registry.deleteSession = async () => ({ deleted: true })
+  assert.equal(archiveManagerDeleteAvailable(registry), false,
+    'unrelated or incomplete registry delete method must not be enough')
+  registry.archivedSessionMetadata = async () => ({ items: [] })
+  assert.equal(archiveManagerDeleteAvailable(registry), false)
+  registry.deleteArchivedSessions = async () => ({ deletedSessionIds: [] })
+  assert.equal(archiveManagerDeleteAvailable(registry), true)
+
+  const deletionCalls = []
+  registry.archivedSessionMetadata = async () => ({
+    items: f.archived.map(sessionId => ({ sessionId, createdAt: Date.now() })),
+  })
+  registry.deleteSession = async sessionId => {
+    deletionCalls.push(sessionId)
+    const index = f.snapshots.findIndex(x => x.header.id === sessionId)
+    if (index >= 0) f.snapshots.splice(index, 1)
+    const archivedIndex = f.archived.indexOf(sessionId)
+    if (archivedIndex >= 0) f.archived.splice(archivedIndex, 1)
+    return { deleted: true }
+  }
+  const sessions = { get: () => undefined }
+  const deleter = createArchiveManagerDeleter(registry, f.native.persistence, sessions)
+  const services = { ...f.native, deleter }
+  const list = await sessionOrganizationInventory(f.stateDir, services, { status: 'archived' })
+  assert.equal(list.canDelete, true)
+  assert.equal(list.deleteUnavailableReason, null)
+  const candidate = list.items.find(row => row.orphan && row.type !== 'schedule')
+  assert.ok(candidate)
+  const preview = await previewNativePermanentDelete(f.stateDir, services, candidate.sessionRef)
+  assert.equal(preview.permanent, true)
+  assert.equal(preview.estimatedBytes, null, 'archive manager does not supply size estimates')
+  const deleted = await permanentlyDeleteNativeSession(f.stateDir, services, candidate.sessionRef)
+  assert.equal(deleted.deleted, true)
+  assert.equal(deleted.bytesRemoved, null)
+  assert.deepEqual(deletionCalls, [ORPHAN])
+  assert.equal((await sessionOrganizationInventory(f.stateDir, services, { status: 'archived' })).total, 0)
+})
+
+test('archive manager adapter rejects a Session still held by the native DSH live store', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  let calls = 0
+  const registry = f.native.registry
+  registry.deleteSession = async () => { calls++; return { deleted: true } }
+  registry.deleteArchivedSessions = async () => ({ deletedSessionIds: [] })
+  registry.archivedSessionMetadata = async () => ({
+    items: [{ sessionId: ORPHAN, createdAt: Date.now() }],
+  })
+  const deleter = createArchiveManagerDeleter(registry, f.native.persistence,
+    { get(id) { return id === ORPHAN ? { id } : undefined } })
+  const candidate = (await sessionOrganizationInventory(f.stateDir, { ...f.native, deleter },
+    { status: 'archived' })).items[0]
+  await assert.rejects(previewNativePermanentDelete(f.stateDir,
+    { ...f.native, deleter }, candidate.sessionRef), { status: 409 })
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,
+    { ...f.native, deleter }, candidate.sessionRef), { status: 409 })
+  assert.equal(calls, 0)
 })
