@@ -29,7 +29,7 @@ pnpm run test:coverage
 pnpm run pack
 ```
 
-也可执行 `pnpm run verify` 完成类型检查、构建和主要测试。打包只验证 tarball 可生成，**不代表** DSH Host / Web 或飞书真实租户已加载成功。
+也可执行 `pnpm run verify` 完成文档链接检查、类型检查、构建和主要测试。仅验证 Markdown 链接可访问本仓库中的文件，不验证外部网站或标题锚点。打包只验证 tarball 可生成，**不代表** DSH Host / Web 或飞书真实租户已加载成功。
 
 ## 实机验收等级
 
