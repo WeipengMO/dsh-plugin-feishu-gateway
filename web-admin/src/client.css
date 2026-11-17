@@ -1203,6 +1203,7 @@
 }
 .fga-model-preset .fga-model-select{max-width:800px}
 .fga-model-preset .fga-hint{max-width:780px}
+.fga-model-unsaved{margin:0;font-size:12px;font-weight:600;line-height:1.55;color:var(--primary,#4e82df)}
 .fgw-advanced .fga-divider{display:none}
 .fgw-advanced .fga-settings-group{
   margin:18px 0 0;
