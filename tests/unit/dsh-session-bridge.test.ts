@@ -604,3 +604,65 @@ describe('abandoned native handles', () => {
     expect(fake.disposed).toHaveLength(2)
   })
 })
+
+describe('DSH native Session compaction port', () => {
+  it('uses the existing compaction service rather than generating a new assistant turn', async () => {
+    const { ctx, bridge, fake } = setup()
+    expect(bridge.compactionStatus('feishu-default-compact').available).toBe(false)
+    const calls: Array<{ agent: unknown; signal: AbortSignal }> = []
+    ctx.services.set('compaction', {
+      async compactNow(agent: unknown, signal: AbortSignal) {
+        calls.push({ agent, signal })
+        return { shadowedSeqs: [1,2,3], shadowedTokenCount: 1200,
+          summary: [{ type: 'text', text: 'PRIVATE SUMMARY NOT FOR FEISHU' }] }
+      }
+    })
+    await bridge.create('feishu-default-compact', '/tmp')
+    const signal = new AbortController().signal
+    const result = await bridge.compactNow('feishu-default-compact', signal)
+    expect(result).toEqual({outcome:'compacted',shadowedItems:3,shadowedTokens:1200})
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.signal).toBe(signal)
+    expect(fake.followups).toHaveLength(0)
+    await bridge.dispose()
+  })
+
+  it('observes only completed native compactions without copying summary text', async () => {
+    const {ctx,bridge} = setup()
+    ctx.services.set('compaction', { compactNow: async () => null })
+    await bridge.create('feishu-summary-a', '/tmp')
+    await bridge.create('feishu-summary-b', '/tmp')
+    ctx.emit('session/event',{id:'feishu-summary-a'},{type:'compaction/summary',
+      data:{compactionId:'test-1',shadowedSeqs:[9,10,11],shadowedTokenCount:600,
+        summary:[{type:'text',text:'PRIVATE STUFF'}]}})
+    expect(bridge.compactionStatus('feishu-summary-a').completedInProcess).toBe(0)
+    ctx.emit('session/event',{id:'feishu-summary-a'},{type:'compaction/end',
+      data:{compactionId:'test-1',turn:1}})
+    expect(bridge.compactionStatus('feishu-summary-a')).toMatchObject({
+      available:true,completedInProcess:1,lastShadowedItems:3,lastShadowedTokens:600
+    })
+    expect(bridge.compactionStatus('feishu-summary-a').lastCompletedAt).toBeGreaterThan(0)
+    ctx.emit('session/event',{id:'feishu-summary-a'},{type:'compaction/end',
+      data:{compactionId:'test-1',turn:1}})
+    ctx.emit('session/event',{id:'feishu-summary-b'},{type:'compaction/summary',
+      data:{compactionId:'test-2',shadowedSeqs:[15,16],shadowedTokenCount:400,
+        summary:[{type:'text',text:'PRIVATE B'}]}})
+    ctx.emit('session/event',{id:'feishu-summary-b'},{type:'compaction/end',
+      data:{compactionId:'test-2',turn:1,error:'summary failed'}})
+    expect(bridge.compactionStatus().completedInProcess).toBe(1)
+    expect(JSON.stringify(bridge.compactionStatus())).not.toContain('PRIVATE')
+    await bridge.dispose()
+  })
+
+  it('handles no compactable content and missing native engine without inventing a substitute summary', async () => {
+    const {ctx,bridge,fake}=setup()
+    await bridge.create('feishu-default-short', '/tmp')
+    await expect(bridge.compactNow('feishu-default-short',new AbortController().signal))
+      .rejects.toThrow('unavailable')
+    ctx.services.set('compaction',{compactNow: async () => null})
+    await expect(bridge.compactNow('feishu-default-short',new AbortController().signal))
+      .resolves.toEqual({outcome:'nothing-to-compact'})
+    expect(fake.followups).toHaveLength(0)
+    await bridge.dispose()
+  })
+})
