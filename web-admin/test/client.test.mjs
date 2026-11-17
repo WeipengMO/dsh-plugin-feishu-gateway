@@ -74,25 +74,28 @@ test('operations panels display real data and configuration actions', () => {
 })
 
 
-test('Session center combines archive and recycle bin while keeping chat routing separate', () => {
+test('Session center exposes one archive view and safe in-page dialogs', () => {
   const native = readFileSync(path.join(root, 'src/native-session-panel.js'), 'utf8')
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
   const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
-  assert.ok(pages.includes('FeishuSessionCenter'))
-  for (const section of ['对话历史', '已归档', '飞书聊天关联', '回收站', '自动整理规则']) {
-    assert.ok(native.includes(section), section)
-  }
   const workbench = readFileSync(path.join(root, 'src/workbench.js'), 'utf8')
+  assert.ok(pages.includes('FeishuSessionCenter'))
+  for (const title of ['对话历史','已归档','飞书聊天关联','恢复','删除']) {
+    assert.ok(native.includes(title), title)
+  }
+  assert.ok(native.includes("['archive','已归档']"))
+  assert.ok(!native.includes("['recycle','回收站']"))
+  assert.ok(!native.includes("['trash','回收站']"))
+  assert.ok(native.includes('/sessions/native/delete/preview'))
+  assert.ok(native.includes('/sessions/native/delete'))
+  assert.ok(native.includes('FeishuSessionModal'))
+  assert.ok(native.includes('aria-modal'))
+  assert.ok(!native.includes('window.confirm('))
+  assert.ok(!pages.slice(pages.indexOf('function FeishuSessionsInventory()')).includes('window.confirm('))
+  assert.ok(css.includes('.fgw-modal-backdrop'))
+  assert.ok(css.includes('.fgw-session-modal-ack'))
   assert.ok(workbench.includes("conversations: [['sessions', '会话管理'], ['tasks', '实时任务'], ['messages', '消息投递']]"))
   assert.ok(!workbench.includes("onConfig('settings') }, '模型与连接'"))
-  assert.ok(native.includes('/sessions/retention/settings'))
-  assert.ok(native.includes('/sessions/trash/move'))
-  assert.ok(native.includes('/sessions/trash/restore'))
-  assert.ok(native.includes('/sessions/native/restore'))
-  assert.ok(native.includes('report?.canRestore'))
-  assert.ok(native.includes('不会删除'))
-  assert.ok(css.includes('.fgw-session-tabs'))
-  assert.ok(css.includes('.fgw-session-center .fgw-table tr'))
 })
 
 test('Agent profile uses one focused editor instead of three persistent content columns', () => {
