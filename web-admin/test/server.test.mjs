@@ -110,6 +110,44 @@ test('every read and mutation requires authorized DSH browser session', async ()
   } finally { await f.close() }
 })
 
+test('agent preset dropdown uses the live DSH host roster', async () => {
+  const roster = {
+    defaultId: 'standard',
+    presets: [
+      { id: 'standard', name: 'Standard', isDefault: true },
+      { id: 'ptc' },
+      { id: 'cadence', name: '均衡模式', description: 'custom preset' },
+      { id: 'broken-one', broken: 'cannot activate' },
+      { id: 'standard', name: 'duplicate id' },
+      { id: 'bad id', name: 'invalid charset' },
+    ],
+  }
+  const f = await fixture({ agentPresets: () => ({
+    defaultId: roster.defaultId,
+    remoteExportList: async () => roster,
+  }) })
+  try {
+    const state = await f.request('/state')
+    assert.equal(state.status, 200)
+    const ap = state.json.agentPresets
+    assert.equal(ap.incomplete, false)
+    assert.equal(ap.defaultId, 'standard')
+    assert.deepEqual(ap.presets.map(p => p.id), ['standard', 'ptc', 'cadence', 'broken-one'])
+    assert.equal(ap.presets[0].isDefault, true)
+    assert.equal(ap.presets[3].broken, 'cannot activate')
+  } finally { await f.close() }
+})
+
+test('agent preset roster falls back to snapshot when the local service is unavailable', async () => {
+  const f = await fixture({ agentPresets: () => undefined })
+  try {
+    const state = await f.request('/state')
+    assert.equal(state.status, 200)
+    // No snapshot in the fixture and no live service -> null (unknown), never fabricated.
+    assert.equal(state.json.agentPresets, null)
+  } finally { await f.close() }
+})
+
 test('CSRF and content-type checks block non-browser and cross-site writes', async () => {
   const f = await fixture()
   try {

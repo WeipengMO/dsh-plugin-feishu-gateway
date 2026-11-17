@@ -52,6 +52,52 @@ const PROXY_TEST_TARGETS = { feishu: 'open.feishu.cn:443', lark: 'open.larksuite
 const PROBE_ERROR_CODES = new Set(['ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN',
   'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'EPIPE', 'ECONNABORTED', 'EPROTO'])
 
+/**
+ * Read the DSH Host's live Agent preset roster for the Web Admin selector.
+ *
+ * The admin plugin runs inside the Web profile, which mounts the real
+ * `agentPresets` registry (the same presets DSH itself offers). Reading it here
+ * keeps the dropdown in sync with DSH instead of depending on a channel-built
+ * snapshot. Every field is re-validated and bounded; the Host service is data,
+ * never trusted as-is. Returns null when unavailable so the caller can fall
+ * back to the snapshot.
+ */
+async function readLiveAgentPresets(getService) {
+  if (typeof getService !== 'function') return null
+  let service
+  try { service = getService() } catch { return null }
+  if (!service || (typeof service.remoteExportList !== 'function' && typeof service.list !== 'function')) return null
+  const clean = (v, max) => typeof v === 'string'
+    ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) || undefined
+    : undefined
+  const safeId = (v) => {
+    const id = clean(v, 160)
+    return id && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(id) ? id : undefined
+  }
+  try {
+    const roster = typeof service.remoteExportList === 'function'
+      ? await service.remoteExportList()
+      : { presets: await service.list() }
+    const source = Array.isArray(roster?.presets) ? roster.presets : []
+    const presets = []
+    const seen = new Set()
+    for (const entry of source) {
+      if (!entry || typeof entry !== 'object') continue
+      const id = safeId(entry.id)
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      const name = clean(entry.name, 100)
+      const description = clean(entry.description, 200)
+      const broken = clean(entry.broken, 200)
+      presets.push({ id, ...(name ? { name } : {}), ...(description ? { description } : {}),
+        ...(broken ? { broken } : {}), isDefault: entry.isDefault === true })
+      if (presets.length >= 100) break
+    }
+    const defaultId = safeId(service.defaultId)
+    return { ts: Date.now(), incomplete: false, ...(defaultId ? { defaultId } : {}), presets }
+  } catch { return null }
+}
+
 function httpError(status, message) { return Object.assign(new Error(message), { status }) }
 function object(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) }
 function exactKeys(value, allowed) {
@@ -802,6 +848,7 @@ export function createAdminHandler(options = {}) {
   const envFile = options.envFile ?? path.join(home, '.dsh', 'feishu-channel.env')
   const healthPort = options.healthPort ?? 18095
   const unit = options.serviceUnit ?? SERVICE
+  const getAgentPresets = options.agentPresets
   if (!/^[A-Za-z0-9@_.-]+\.service$/.test(unit)) throw new Error('invalid service unit')
   // Test-only override; production probes always use the documented 6s budget.
   const proxyTestTimeoutMs = options.proxyTestTimeoutMs ?? PROXY_TEST_TIMEOUT_MS
@@ -845,12 +892,16 @@ export function createAdminHandler(options = {}) {
       if (req.method === 'GET' && route === PREFIX + '/state') {
         const current = await configFile(managed)
         const bots = current.config.bots ?? [{ id: 'default', domain: 'feishu', enabled: true }]
-        const [health, service, credentials, networkProxy, snapshot] = await Promise.all([
+        const [health, service, credentials, networkProxy, snapshot, livePresets] = await Promise.all([
           loopback(healthPort, '/health'), unitState(unit), credentialStatus(envFile, bots),
           networkProxyStatus(envFile, proxyFile, current.config),
           // The model directory belongs to the Gateway Host, not this Web
           // Profile: read only the Gateway's whitelisted telemetry snapshot.
           readOpsSnapshot(stateDir).catch(() => null),
+          // The Agent preset roster belongs to THIS Web profile's DSH Host.
+          // Read the live service so all of DSH's presets show up; fall back to
+          // the channel snapshot only if the local service is unavailable.
+          readLiveAgentPresets(getAgentPresets),
         ])
         const startedAt = health?.health?.uptimeMs == null ? 0 : Date.now() - health.health.uptimeMs
         return json(res, 200, { ok: true, apiVersion: VERSION, config: current.config,
@@ -860,7 +911,7 @@ export function createAdminHandler(options = {}) {
           // Explicit selections for the admin form; null means "unknown", never
           // a fabricated default route.
           modelCatalog: snapshot?.modelCatalog ?? null,
-          agentPresets: snapshot?.agentPresets ?? null,
+          agentPresets: livePresets ?? snapshot?.agentPresets ?? null,
           agentRoute: snapshot?.agentRoute ?? null,
           profileDefaultRoute: snapshot?.profileDefaultRoute ?? null,
           modelDirectoryStale: snapshot ? snapshot.stale === true : null })
@@ -1473,6 +1524,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const unregister = webServer.register({ kind: 'prefix', path: PREFIX,
       handler: createAdminHandler({ ...config,
+        agentPresets: () => ctx.get('agentPresets'),
         sessionServices: () => {
           const registry = ctx.get('workspaceRegistry')
           const persistence = ctx.get('sessionPersistence')
