@@ -298,8 +298,8 @@ function Workbench() {
         WORKBENCH_NAV.map(([id, title, symbol]) =>
           h('button', { key: id, type: 'button', className: 'fgw-nav-item' + (selected === id ? ' is-active' : ''),
             'aria-current': selected === id ? 'page' : undefined, onClick: () => {
-              if (id !== selected && ((selected === 'agent-profile' && profileUnsaved) ||
-                (selected === 'skills' && skillsUnsaved)) &&
+              if (id !== selected && ((profileUnsaved && selected === 'agent-profile') ||
+                (skillsUnsaved && selected === 'skills')) &&
                 !window.confirm('当前内容尚未保存。确认离开并放弃修改？')) return
               setSelected(id)
             } },
