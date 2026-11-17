@@ -636,3 +636,36 @@ test('gateway workbench groups overlapping features instead of repeating nav ent
   assert.match(css, /fgw-shortcuts/)
   assert.match(css, /@media\(max-width:600px\)/)
 })
+
+
+test('bot management uses safe source switching, in-page confirmation and live checks', () => {
+  assert.match(workbench, /function BotManagementPanel\(/)
+  assert.match(workbench, /role: 'dialog', 'aria-modal': 'true'/)
+  assert.match(workbench, /确认切换机器人配置来源/)
+  assert.match(workbench, /使用 DSH 原有配置/)
+  assert.match(workbench, /在此页面管理/)
+  assert.match(workbench, /request\('\/health'\)/)
+  assert.match(workbench, /未发送测试消息/)
+  assert.match(workbench, /credential\?\.appIdMasked/)
+  assert.match(workbench, /expectedRevision: state\.revision/)
+  assert.match(workbench, /delete config\.bots/)
+  assert.match(workbench, /config\.bots = nextBots\.map/)
+  assert.doesNotMatch(source, /botsOverride|在此管理机器人（覆盖原 Profile/)
+  assert.match(source, /if \(Array\.isArray\(existing\.bots\)\) result\.bots = existing\.bots/)
+  assert.doesNotMatch(workbench, /initialTab: 'bots'/)
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /fgw-bot-source-grid/)
+  assert.match(css, /fgw-bot-modal-backdrop/)
+  assert.match(css, /@media\(max-width:460px\)/)
+
+  const block = workbench.slice(workbench.indexOf('function botListIssue('),
+    workbench.indexOf('function BotManagementPanel('))
+  const validate = runInNewContext(block + '\nbotListIssue')
+  const bot = { id: 'default', domain: 'feishu', enabled: true }
+  assert.equal(validate([bot]), '')
+  assert.match(validate([]), /空列表/)
+  assert.match(validate([{ ...bot, enabled: false }]), /不能全部禁用/)
+  assert.match(validate([{ ...bot, id: 'INVALID' }]), /标识/)
+  assert.match(validate([{ ...bot, id: 'a-b' }, { ...bot, id: 'a_b' }]), /冲突/)
+  assert.match(validate(Array.from({ length: 9 }, (_, i) => ({ ...bot, id: 'b' + i }))), /最多/)
+})
