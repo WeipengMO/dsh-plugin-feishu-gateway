@@ -85,7 +85,7 @@ function FeishuSessionCenter({ compaction, compactionStale = false }) {
         h('code',null,'/compact'),' 手动压缩旧历史。压缩不会删除原始 Session 日志。'),
       h('p',{className:'fgw-muted'},'检查自动策略：在 feishu-channel Profile 确认已挂载 @deepseek-ai/dsh-compaction-basic、auto: true，并为小窗口模型调整 headroomTokens。'),
       h('p',null,h('a',{href:'https://github.com/WeipengMO/dsh-plugin-feishu-gateway/blob/main/docs/CONTEXT-COMPACTION.md',
-        target:'_blank',rel:'noopener noreferrer'},'查看触发原理与验收步骤')))
+        target:'_blank',rel:'noopener noreferrer'},'查看触发原理与验收步骤'))))
 
 }
 function FeishuArchiveHub() {
