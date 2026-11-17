@@ -286,7 +286,7 @@ window.__ModuleLoader__.load({
       const [primaryProvider, setPrimaryProvider] = useState('')
       const [primaryModel, setPrimaryModel] = useState('')
       const [fallbacks, setFallbacks] = useState([])
-      const [agentPreset, setAgentPreset] = useState('')
+      const [agentPreset, setAgentPreset] = useState('__inherit__')
       const [primarySearch, setPrimarySearch] = useState('')
       const [fallbackSearch, setFallbackSearch] = useState('')
       const [timeout, setTimeout] = useState('')
@@ -456,9 +456,9 @@ window.__ModuleLoader__.load({
       const proxy = networkProxyView(state)
       const directory = modelDirectoryView(state)
       const presetDirectory = agentPresetView(state)
-      const presetSelectedVisible = presetDirectory.selected === '__inherit__' ||
-        !presetDirectory.selected ||
-        presetDirectory.presets.some(preset => preset.id === presetDirectory.selected)
+      const presetSelectedVisible = agentPreset === '__inherit__' ||
+        !agentPreset ||
+        presetDirectory.presets.some(preset => preset.id === agentPreset)
       const allModels = flatModelOptions(directory.providers)
       const primaryKey = primaryProvider && primaryModel ? primaryProvider + '/' + primaryModel : ''
       const routeMatches = (entry, query) => !query ||
@@ -531,7 +531,8 @@ window.__ModuleLoader__.load({
           directory.stale && h('p', { className: 'fga-model-note' }, '模型目录来自最近一次运行记录；建议刷新后确认。'),
           directory.catalogMissing && h('div', { className: 'fga-warning' },
             '还没有获取到模型列表。请确认飞书通道正在运行，然后刷新页面。'),
-          h('div', { className: 'fga-model-card' },
+          h('div', { className: 'fga-model-route-grid' },
+            h('div', { className: 'fga-model-card fga-model-primary' },
             h('div', { className: 'fga-model-card-head' },
               h('strong', null, '主模型'),
               h('span', { className: 'fga-hint' }, '正常情况下优先使用')),
@@ -549,7 +550,7 @@ window.__ModuleLoader__.load({
               : directory.primary?.source === 'saved' ? '已保存的模型配置。'
               : directory.primary?.source === 'effective' ? '当前通道正在使用的模型。'
               : '从上方目录选择一个模型。')),
-          h('div', { className: 'fga-model-card' },
+          h('div', { className: 'fga-model-card fga-model-fallback' },
             h('div', { className: 'fga-model-card-head' },
               h('strong', null, '备用模型'),
               h('span', { className: 'fga-hint' }, fallbacks.length + ' / 8')),
@@ -578,8 +579,8 @@ window.__ModuleLoader__.load({
                 ...fallbackChoices.map(item => h('option', { key: item.key, value: item.key },
                   item.name + '  ·  ' + item.key + (item.unlisted ? '（未在当前目录找到）' : ''))))),
             fallbackSelectionInvalid && h('p', { className: 'fga-error', role: 'alert' },
-              '备用模型不能重复或与主模型相同，最多添加 8 个。')),
-          h('div', { className: 'fga-model-card' },
+              '备用模型不能重复或与主模型相同，最多添加 8 个。'))),
+          h('div', { className: 'fga-model-card fga-model-preset' },
             h('div', { className: 'fga-model-card-head' },
               h('strong', null, 'Agent 预设（飞书工作模式）'),
               h('span', { className: 'fga-hint' },
@@ -588,13 +589,13 @@ window.__ModuleLoader__.load({
               '预设列表来自最近一次运行记录；建议刷新后确认。'),
             presetDirectory.catalogMissing && h('div', { className: 'fga-warning' },
               '还没有获取到预设列表，请确认飞书通道正在运行，然后刷新页面。'),
-            h('select', { className: 'fga-input fga-model-select', value: presetDirectory.selected,
+            h('select', { className: 'fga-input fga-model-select', value: agentPreset,
               'aria-label': 'Agent 预设', disabled: busy || !state,
               onChange: e => setAgentPreset(e.target.value) },
               h('option', { value: '__inherit__' }, '继承（不覆盖 Profile 配置）'),
               h('option', { value: '' }, '不指定（无预设，由 DSH 默认组合）'),
-              !presetSelectedVisible && h('option', { value: presetDirectory.selected },
-                presetDirectory.selected + '（未在当前目录找到）'),
+              !presetSelectedVisible && h('option', { value: agentPreset },
+                agentPreset + '（未在当前目录找到）'),
               ...presetDirectory.presets.map(preset => h('option', {
                 key: preset.id, value: preset.id, disabled: Boolean(preset.broken),
                 title: preset.description || undefined },
