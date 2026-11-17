@@ -566,7 +566,18 @@ export async function previewRetention(stateDir, services, now = Date.now()) {
   const skippedUnknownActivity = data.records.filter(row =>
     row.orphan && row.type !== 'schedule' && !row.archived && !trash.items[row.id] &&
     !ms(activity[row.id])).length
-  return { available: true, settings, candidates: candidates.length,
+  const candidatePreview = []
+  for (const row of candidates.slice(0, 20)) {
+    let title = row.scheduleTitle || null
+    try {
+      const value = await services.query?.readTitle?.(row.id)
+      if (typeof value === 'string') title = value
+      else if (typeof value?.title === 'string') title = value.title
+    } catch { /* optional title, no Agent resume */ }
+    candidatePreview.push({ sessionRef: row.idRef, title: (title || '未命名对话').slice(0, 100),
+      lastActiveAt: ms(activity[row.id]) })
+  }
+  return { available: true, settings, candidates: candidates.length, candidatePreview,
     skippedUnknownActivity,
     expiredTrash: Object.values(trash.items).filter(item =>
       now - item.trashedAt >= settings.trashKeepDays * 86400000).length,
