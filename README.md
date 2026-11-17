@@ -2,7 +2,7 @@
 
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。会话管理第二轮 UI 与回收站更新可查看 [PR #40](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/40)，状态以 GitHub 为准；请在测试环境验证后再部署。
+> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。会话管理第三轮 UI 与删除操作可查看 [PR #41](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/41)，状态以 GitHub 为准；请在测试环境验证后再部署。
 
 ## 能做什么
 
@@ -13,7 +13,7 @@
 - **管理后台**：模型与备用模型、机器人/群聊权限、Agent 档案、Token 用量、消息投递、代理及运行诊断。
 - **可靠性**：持久化 Inbox/Outbox、消息去重、保守重试与重启恢复；不自动重放可能已经产生副作用的任务。
 
-**当前支持可恢复的回收站暂存，但尚不支持永久删除或按期限物理清理**（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
+**已支持在检测到兼容 DSH 安全删除服务时手动永久删除已归档会话；不支持的运行时会明确禁用。自动永久删除与按期限物理清理尚未实现**（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
 
 ## 快速开始
 
@@ -59,7 +59,7 @@ dsh --profile web --dump-config
 | 运维与诊断 | 告警、连接和结构化日志 |
 | 模型与连接 | 主模型、多个备用模型、代理和消息卡片选项 |
 
-「会话管理」包含对话历史、已归档/回收站和飞书聊天关联；90 天自动归档需手动启用，回收站保留期为 30 天，但**物理删除仍不可用**。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
+「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**。已归档直接提供“恢复 / 删除”，删除依赖兼容的 DSH 存储管理服务；确认操作统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
 
 飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
 
