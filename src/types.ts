@@ -306,6 +306,27 @@ export interface ModelCatalog {
   readonly incomplete: boolean
 }
 
+/** Read-only facts from the native DSH compaction service, not a token-cost estimate. */
+export interface SessionCompactionStatus {
+  /** The DSH Host has a compaction engine with compactNow(). */
+  readonly available: boolean
+  /** True only for an observed native compaction; reset on Gateway restart. */
+  readonly completedInProcess: number
+  readonly lastCompletedAt?: number
+  /** Count of history items replaced by the last observed completed compaction. */
+  readonly lastShadowedItems?: number
+  /** Estimated token count of the old region, NOT net tokens saved. */
+  readonly lastShadowedTokens?: number
+}
+
+/** Native compaction is a maintenance action, not another Agent user turn. */
+export interface SessionCompactionResult {
+  readonly outcome: 'compacted' | 'nothing-to-compact'
+  readonly shadowedItems?: number
+  /** Estimated old-region tokens; net savings cannot be claimed from this. */
+  readonly shadowedTokens?: number
+}
+
 export interface SessionBridge {
   /** False when the required DSH services are not mounted in this profile. */
   readonly available: boolean
@@ -322,6 +343,10 @@ export interface SessionBridge {
   selectModel?(sessionId: string, provider: string, model: string): void
   titleSource?(sessionId: string): 'user' | 'automatic' | 'unknown'
   title?(sessionId: string, value: string): Promise<boolean>
+  /** DSH-native context compression is optional; the DSH Host owns all automatic triggers. */
+  compactionStatus?(sessionId?: string): SessionCompactionStatus
+  /** Manual maintenance via ctx.compaction.compactNow; never inject a summary as chat text. */
+  compactNow?(sessionId: string, signal: AbortSignal): Promise<SessionCompactionResult>
   /** Queue one user turn on a live Session. */
   submit(sessionId: string, text: string, signal: AbortSignal): Promise<void>
   /** Wait for the turn to settle and collect the assistant's reply text. */
