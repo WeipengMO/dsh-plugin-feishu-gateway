@@ -210,5 +210,5 @@ function SkillsPanel({ onDirtyChange }) {
           h('div', { className: 'fgw-skills-document-foot' },
             h('span', null, readable(bytes), ' / ', readable(maxFile), dirty ? ' · 未保存' : ' · 已保存'),
             h('span', null, '仅文本说明，不支持脚本自动安装或执行'))))
-  )
+  ))
 }
