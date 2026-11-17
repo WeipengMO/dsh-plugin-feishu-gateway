@@ -23,6 +23,7 @@
 | 模型 / 多模型回退 | [模型及用量](USAGE-AND-MODELS.md) | [历史用量](TOKEN-USAGE-ANALYTICS.md) |
 | 工具审批 / 任务卡片 | [卡片与审批](APPROVAL-STREAMING.md) | [安全与可靠性](RELIABILITY-AND-PROXY.md) |
 | Agent 档案 | [档案管理](AGENT-PROFILE-MANAGER.md) | [工作区隔离与旧配置迁移](AGENT-PROFILE-ISOLATION.md) |
+| 飞书专属 Skills | [Skills 管理](FEISHU-SKILLS.md) | 独立存储与隔离、权限、上下文限额 |
 | 网络代理 | [运维手册](OPERATIONS.md) | [代理技术实现](PROXY-CONFIG-FLOW.md) |
 
 ## 开发、维护与测试
