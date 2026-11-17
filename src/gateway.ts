@@ -595,7 +595,7 @@ export class FeishuGateway {
                 ' 次 DSH 原生自动压缩。'
               : '自动压缩：尚未观察到自动触发，auto 配置状态无法从当前原生接口确认；请检查 feishu-channel Profile。'
             : '自动压缩：未检测到原生引擎；请在 feishu-channel Profile 中检查 dsh-compaction-basic。',
-          '触发机制：DSH 按目标模型上下文、输出预留与安全余量判断；不是按累计 Token 消耗。',
+          '触发机制：DSH compaction-basic 按目标模型上下文、输出预留与安全余量判断；不是按累计 Token 消耗。',
           status?.available
             ? '已观察到的手动压缩：' + (status.manualCompletedInProcess ?? 0) +
               ' 次；来源未分类：' + (status.unclassifiedCompletedInProcess ?? 0) + ' 次。'
