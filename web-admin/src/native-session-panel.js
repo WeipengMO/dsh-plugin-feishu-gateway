@@ -266,7 +266,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         detail:preview.estimatedBytes===null?
           '会话历史、关联的投影与工作区索引将由删除服务处理。':
           '预计删除数据：'+(preview.estimatedBytes/1024).toFixed(1)+' KiB（实际以删除结果为准）',
-        note:'删除无法撤销。此操作不会清除飞书服务器已经发送的消息。',
+        note:'删除无法撤销；归档管理插件还可能清理此会话的子代理历史。此操作不会清除飞书服务器已经发送的消息。',
         onConfirm:async()=>{
           const {result}=await request('/sessions/native/delete','POST',{token:preview.token})
           setNotice('永久删除完成'+(result.bytesRemoved!=null?
