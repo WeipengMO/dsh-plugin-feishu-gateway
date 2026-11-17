@@ -94,7 +94,7 @@ function Workbench() {
   // authoritative Gateway read model (never inferred from /ops events).
   const [approvals, setApprovals] = useState(null)
   const [sectionTab, setSectionTab] = useState({
-    conversations: 'tasks', channels: 'bots', analytics: 'usage', operations: 'alerts',
+    conversations: 'sessions', channels: 'bots', analytics: 'usage', operations: 'alerts',
   })
   const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
