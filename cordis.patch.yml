@@ -22,3 +22,87 @@
         allowGroups: false
         offline: false
         autoConnect: true
+
+# ---------------------------------------------------------------------------
+# Agent preset roster for the "Feishu working mode" selector in Web Admin.
+#
+# The Gateway publishes this roster to Web Admin through the ops snapshot
+# (`agentPresets`), sourced from the Host's `agentPresets` service. Profiles
+# built on dsh-base (e.g. a chat channel) do not mount that service by default,
+# which leaves the selector empty. Shipping BOTH the registry service and one
+# preset here, inside the plugin's own bundle patch, makes the roster available
+# to any profile that installs this plugin without requiring profile edits.
+#
+# Preset plugin names resolve from the registry package in the DSH Host's global
+# node_modules, so every @deepseek-ai/dsh-tool-* used below is resolvable.
+- insert:
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: feishu-balanced
+        selectedDefault: feishu-balanced
+    - id: preset-feishu-balanced
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: feishu-balanced
+        order: 1
+        name: 飞书均衡模式
+        description: 飞书通道默认工作模式：通用编码工具 + 计划模式 + 上下文压缩；不开启自动续轮或重型编排。
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are a coding agent powered by the {{model}} model. Match
+                your effort to the task: answer simple requests directly and
+                briefly, and only plan, use todos, or delegate when the task
+                genuinely needs it.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 32768
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              applyPatch: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: false
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Do not modify files or run mutating commands; explore read-only to ground the plan in the actual repository. Ask the user only for choices that inspection cannot resolve. Produce a decision-complete plan (goal, success criteria, changes by subsystem, edge cases, tests, assumptions), then call exit_plan_mode with the full plan markdown as the only and final tool call in that response so the user can approve it. Imperative requests mean plan the implementation, not execute it. If the review is rejected, incorporate the feedback and present the plan again.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
