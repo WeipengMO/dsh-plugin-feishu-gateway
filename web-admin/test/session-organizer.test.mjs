@@ -6,6 +6,9 @@ import path from 'node:path'
 import {
   archiveNativeSession,
   restoreNativeSession,
+  retentionSettings, saveRetentionSettings, previewRetention,
+  previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
+  autoArchiveExpiredSessions,
   organizationSettings,
   reconcileSessionOrganization,
   saveOrganizationSettings,
@@ -210,4 +213,108 @@ test('restore rejects forged or stale Session references', async t => {
     { status: 400 })
   await assert.rejects(restoreNativeSession(f.stateDir, f.native, '0'.repeat(16)),
     { status: 409 })
+})
+
+test('recycle bin stages only unbound native history and restores original visibility', async t => {
+  const f = await fixture(t)
+  const current = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'current' })
+  const orphan = current.items.find(row => row.orphan && row.type !== 'schedule')
+  assert.ok(orphan)
+  await assert.rejects(previewTrashSession(f.stateDir, f.native,
+    (await sessionOrganizationInventory(f.stateDir, f.native)).items.find(row => row.botId === 'default').sessionRef),
+  { status: 409 })
+  const preview = await previewTrashSession(f.stateDir, f.native, orphan.sessionRef)
+  assert.equal(preview.nativeHistoryPreserved, true)
+  const moved = await moveNativeSessionToTrash(f.stateDir, f.native, orphan.sessionRef)
+  assert.equal(moved.trashed, true)
+  const recycled = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'trashed' })
+  assert.equal(recycled.total, 1)
+  assert.equal(recycled.items[0].sessionRef, orphan.sessionRef)
+  assert.equal(recycled.items[0].status, 'trashed')
+  assert.equal(recycled.items[0].previousArchived, false)
+  assert.equal((await sessionOrganizationInventory(f.stateDir, f.native, { status: 'current' })).total, current.total - 1)
+  assert.ok(f.archived.includes(ORPHAN) || f.archived.includes(NEXT))
+  const restored = await restoreNativeSessionFromTrash(f.stateDir, f.native, orphan.sessionRef)
+  assert.equal(restored.target, 'current')
+  assert.deepEqual(f.archived, [])
+  assert.equal((await sessionOrganizationInventory(f.stateDir, f.native, { status: 'trashed' })).total, 0)
+  await assert.rejects(restoreNativeSessionFromTrash(f.stateDir, f.native, orphan.sessionRef), { status: 409 })
+})
+
+test('recycle bin restores already archived history to archive, not active list', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir, f.native, ORPHAN)
+  const archived = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'archived' })
+  assert.equal(archived.total, 1)
+  const moved = await moveNativeSessionToTrash(f.stateDir, f.native, archived.items[0].sessionRef)
+  assert.equal(moved.nativeHistoryPreserved, true)
+  const result = await restoreNativeSessionFromTrash(f.stateDir, f.native, archived.items[0].sessionRef)
+  assert.equal(result.target, 'archived')
+  assert.ok(f.archived.includes(ORPHAN))
+  assert.equal((await sessionOrganizationInventory(f.stateDir, f.native, { status: 'archived' })).total, 1)
+})
+
+test('trash is denied if native restore is unavailable, runtime is stale or task is scheduled', async t => {
+  const f = await fixture(t)
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'unbound' })
+  const orphan = list.items.find(x => x.type !== 'schedule')
+  const scheduled = list.items.find(x => x.type === 'schedule')
+  await assert.rejects(previewTrashSession(f.stateDir, f.native, scheduled.sessionRef), { status: 409 })
+  delete f.native.registry.unarchiveSession
+  await assert.rejects(previewTrashSession(f.stateDir, f.native, orphan.sessionRef), { status: 501 })
+  f.native.registry.unarchiveSession = async id => {
+    const index = f.archived.indexOf(id)
+    if (index >= 0) f.archived.splice(index, 1)
+  }
+  await json(f.stateDir, 'ops-runtime.json', {
+    version: 1, ts: Date.now()-60000, workspace: f.cwd, isolatedAgent: true,
+    tasks: [], status: 'ok', stats: {}, transport: {},
+  })
+  await assert.rejects(moveNativeSessionToTrash(f.stateDir, f.native, orphan.sessionRef), { status: 409 })
+  assert.deepEqual(f.archived, [])
+})
+
+test('retention defaults to 90-day archive and 30-day trash without any auto-delete toggle', async t => {
+  const f = await fixture(t)
+  const defaults = await retentionSettings(f.stateDir)
+  assert.deepEqual(defaults, {autoArchiveEnabled:false, archiveAfterDays:90, trashKeepDays:30, autoDeleteEnabled:false})
+  assert.deepEqual(await saveRetentionSettings(f.stateDir, {autoArchiveEnabled:true, archiveAfterDays:180, trashKeepDays:7}),
+    {autoArchiveEnabled:true, archiveAfterDays:180, trashKeepDays:7, autoDeleteEnabled:false})
+  await assert.rejects(saveRetentionSettings(f.stateDir, {autoDeleteEnabled:true}), { status: 400 })
+  await assert.rejects(saveRetentionSettings(f.stateDir, {trashKeepDays:0}), { status: 400 })
+})
+
+test('auto archive acts only on tracked reliable last activity, skips unknown and never deletes', async t => {
+  const f = await fixture(t)
+  const now = Date.now()
+  await saveRetentionSettings(f.stateDir, {autoArchiveEnabled:true})
+  const oldActivity = now - 95 * 86400000
+  await json(f.stateDir, 'ops-session-organization.json', {
+    version: 1, bindings:{}, schedule:{}, missing:{}, handled:[],
+    pending:{}, retired:{}, activity:{[ORPHAN]:oldActivity}
+  })
+  const preview = await previewRetention(f.stateDir, f.native, now)
+  assert.equal(preview.candidates, 1)
+  assert.ok(preview.skippedUnknownActivity >= 1)
+  assert.equal(preview.physicalDeleteAvailable, false)
+  const result = await autoArchiveExpiredSessions(f.stateDir, f.native, now)
+  assert.equal(result.archived, 1)
+  assert.equal(result.physicalDeletePerformed, false)
+  assert.ok(f.archived.includes(ORPHAN))
+  assert.equal(f.snapshots.length, 4)
+  const second = await autoArchiveExpiredSessions(f.stateDir, f.native, now)
+  assert.equal(second.archived, 0)
+  assert.ok(!f.archived.includes(NEXT))
+  assert.ok(!f.archived.includes(SID))
+})
+
+test('trash age is previewed but physical deletion is impossible', async t => {
+  const f = await fixture(t)
+  const orphan = (await sessionOrganizationInventory(f.stateDir, f.native,
+    { status:'unbound' })).items.find(x => x.type !== 'schedule')
+  await moveNativeSessionToTrash(f.stateDir, f.native, orphan.sessionRef, Date.now() - 32*86400000)
+  const report = await previewRetention(f.stateDir, f.native)
+  assert.equal(report.expiredTrash, 1)
+  assert.equal(report.physicalDeleteAvailable, false)
+  assert.equal(f.snapshots.length, 4)
 })
