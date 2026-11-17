@@ -2,11 +2,11 @@
 
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。本仓库当前仍有待验收的 [会话管理重构 PR #38](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/38)，请在测试环境验证后再部署。
+> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。会话管理相关更新与验收记录可查看 [PR #38](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/38)，状态以 GitHub 为准；请在测试环境验证后再部署。
 
 ## 能做什么
 
-- **飞书聊天**：私聊与受控群聊、@ 触发、成员权限、按聊天隔离上下文、`/new`/`/cancel` 等命令。
+- **飞书聊天**：私聊与受控群聊、@ 触发、成员权限、按聊天隔离上下文、`/new`、`/cancel` 等命令。
 - **原生对话**：由 DSH 保存 Session 和历史；飞书端恢复上下文，后台可查看历史与关联、归档及（运行时支持时）恢复。
 - **任务和审批**：流式卡片、任务取消、DSH 原生工具审批、结果通知。
 - **自动化**：管理 DSH 原生定时任务，并把执行结果推送到授权的飞书聊天。
