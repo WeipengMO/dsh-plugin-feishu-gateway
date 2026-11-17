@@ -17,10 +17,25 @@
 - **归档**只是把 DSH 会话从常用侧栏隐藏。原始日志仍在，**不会回收磁盘空间**。
 - **恢复**将 DSH 会话重新显示，历史不变；不自动恢复已经解除的飞书聊天关联。
 - **删除**要求具备可验证的 **DSH 安全删除服务**，并在后台页面内确认，勾选不可恢复声明后才执行。它会真正删除原生存储，而不是简单地隐藏或解除绑定。
-- **没有安全删除服务时**，「删除」按钮禁用并说明原因。官方通用 `ctx.sessionPersistence` 目前没有 delete API；本项目不会直接推测日志路径然后 `rm`。
+- **没有安装可选的 `@michengai/dsh-archive-manager` 或未成功加载其删除接口时**，「删除」按钮保持灰色并说明原因；归档与恢复不受影响。官方 `ctx.sessionPersistence` 没有通用 delete API，本项目不会自行 `rm` 原生日志。
 - 当前仅允许删除**已归档、未关联、非定时任务、非活动中、无待审批/待投递消息**的会话。操作前后都校验，失败时不宣称成功。
 
-> 目前有社区维护的 DSH 会话管理扩展，例如 [dsh-delete](https://github.com/LowNGhoul/dsh-delete) 提供 `sessionAdmin` 服务。它属于独立第三方插件，**安装、版本兼容和真实删除必须另行验证**。本插件只会使用同时具备 `inspect` 和 `delete` 的服务，不会自行安装第三方插件。
+**永久删除是可选增强功能，不是飞书插件的必需依赖。**
+
+当前支持通过 [@michengai/dsh-archive-manager](https://github.com/MichengAI/dsh-archive-manager) 提供永久删除。它在 DSH `web` Profile 的 `workspaceRegistry` 上增加 `archivedSessionMetadata()`、`deleteArchivedSessions()` 和 `deleteSession(sessionId)` 接口，而**不是**单独的 `sessionAdmin` 服务。
+
+- **未安装或未启用**：后台「删除」按钮灰色，归档、恢复、会话搜索等功能照常使用。
+- **已安装并加载，且 Gateway 状态安全**：符合条件的已归档会话可点击「删除」，二次确认后调用原生 `workspaceRegistry.deleteSession(sessionId)`，不是单纯解绑或隐藏。
+- **即使接口已加载**，运行中、仍有飞书关联、属于定时任务或无法确认安全状态的会话仍不允许删除。
+
+仅当你想要永久删除时，可选在管理端所属的 DSH Web Profile 安装：
+
+```bash
+dsh plugin --profile web add @michengai/dsh-archive-manager
+dsh --profile web --dump-config
+```
+
+如果安装后按钮仍为灰色，请检查插件是否在 **`web` Profile** 中启用、DSH Web 是否已重新加载插件、Gateway 状态是否可用，以及当前会话是否符合删除条件。此插件不需要安装在 `feishu-channel` Profile。**目前仅核对了上游源码接口；在你的真实 DSH 环境中的成功调用仍需实机验收。**
 
 ## 页面内确认弹窗
 
