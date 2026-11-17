@@ -343,10 +343,15 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           h('input', { type: 'checkbox', checked: reveal,
             onChange: e => setReveal(e.target.checked) }), '显示完整技术标识（仅排查问题时使用）'),
         h('button', { type: 'submit', className:'fgw-refresh', disabled:busy }, busy?'加载中…':'刷新')),
-      mode==='archive'&&!report?.canDelete&&report?.available&&
+      mode==='archive'&&report?.available&&
         h('p',{className:'fgw-session-deletion-info'},
-          '当前 DSH 未提供可用的安全删除服务，因此“删除”按钮暂不可用。'+
-          '只有能够同时清理原生日志和工作区索引的删除服务可用时，才会允许真正删除。'),
+          report.canDelete?
+            '已检测到 @michengai/dsh-archive-manager 的删除接口。只有未关联、非运行中的已归档会话才能永久删除。':
+            h(React.Fragment,null,
+              report.deleteUnavailableReason || '暂时无法使用删除。',
+              ' 永久删除依赖可选插件 ',
+              h('code',null,'@michengai/dsh-archive-manager'),
+              '（安装在 DSH 的 web Profile 并启用）；未安装时按钮保持灰色，其他功能正常使用。')),
       h('button', { type:'button', className:'fgw-session-extra-toggle', onClick:()=>setShowAdvanced(x=>!x),
         'aria-expanded':showAdvanced }, showAdvanced?'收起筛选条件':'更多筛选条件'),
       error && h('div',{className:'fgw-caution',role:'alert'},error),
@@ -379,7 +384,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
                   onClick:()=>restore(x)},'恢复'),
                 h('button',{type:'button',className:'fgw-refresh fgw-archive-delete',
                   disabled:busy||!report?.canDelete||!x.orphan||x.type==='schedule',
-                  title:!report?.canDelete?'未安装支持的 DSH 安全删除服务':
+                  title:!report?.canDelete?(report?.deleteUnavailableReason||'未检测到 @michengai/dsh-archive-manager（web Profile）删除接口'):
                     !x.orphan?'仍有关联，不能删除':'永久删除 DSH 会话',
                   onClick:()=>void deleteArchived(x)},'删除')):
               x.orphan&&x.status==='unbound'?
