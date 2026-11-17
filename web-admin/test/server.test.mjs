@@ -1442,3 +1442,52 @@ test('native batch archive and restore require login, CSRF, one-time tokens, and
     assert.equal(snapshots.length,3)
   }finally{await f.close();await rm(dir,{recursive:true,force:true})}
 })
+
+
+test('Feishu Skills API is owner-only and targets the live isolated Gateway workspace', async () => {
+  const f = await fixture({ requestAdmission: () => ({ peer: { principal: { kind: 'owner' } } }) })
+  const markdown = ['---', 'name: test-skill', 'description: Skill API test', '---', '', '# Instructions', 'Use this for testing.'].join('\n')
+  try {
+    const noAuth = await f.request('/skills', 'GET', undefined, {})
+    assert.equal(noAuth.status, 401)
+    assert.equal((await f.request('/skills')).status, 503)
+    const workspace = path.join(f.dir, 'private-agent-workspace')
+    const sharedProjectWorkspace = path.join(f.dir, 'original-workspace')
+    await mkdir(f.stateDir, { recursive: true, mode: 0o700 })
+    await mkdir(workspace, { recursive: true, mode: 0o700 })
+    await mkdir(sharedProjectWorkspace, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(f.stateDir, 'ops-runtime.json'), JSON.stringify({
+      version: 1, ts: Date.now(), workspace, sharedProjectWorkspace,
+      status: 'ok', isolatedAgent: true, tasks: [], sessions: [], transport: {}, stats: {},
+    }), { mode: 0o600 })
+    const first = await f.request('/skills')
+    assert.equal(first.status, 200)
+    assert.equal(first.json.catalog.items.length, 0)
+    assert.equal((await f.request('/skills/file', 'PUT', {
+      name: 'test-skill', content: markdown, expectedRevision: 'absent',
+    }, { ...allowed, 'content-type': 'application/json' })).status, 403)
+    const created = await f.request('/skills/file', 'PUT', {
+      name: 'test-skill', content: markdown, expectedRevision: 'absent',
+    }, mutating)
+    assert.equal(created.status, 200)
+    assert.equal(created.json.result.skill.enabled, false)
+    const enabled = await f.request('/skills/enabled', 'PUT', {
+      name: 'test-skill', enabled: true, expectedRevision: created.json.result.skill.revision,
+    }, mutating)
+    assert.equal(enabled.status, 200)
+    const overlay = await readFile(path.join(workspace, 'AGENTS.local.md'), 'utf8')
+    assert.match(overlay, /### Skill: test-skill/)
+    assert.equal((await f.request('/skills/file?name=test-skill')).status, 200)
+    assert.equal((await f.request('/skills/delete', 'POST', {
+      name: 'test-skill', expectedRevision: created.json.result.skill.revision,
+    }, mutating)).status, 409)
+    assert.equal((await f.request('/skills/delete', 'POST', {
+      name: 'test-skill', expectedRevision: enabled.json.result.skill.revision,
+    }, mutating)).status, 200)
+    assert.equal((await f.request('/skills')).json.catalog.items.length, 0)
+  } finally { await f.close() }
+
+  const reader = await fixture({ requestAdmission: () => ({ peer: { principal: { kind: 'viewer' } } }) })
+  try { assert.equal((await reader.request('/skills')).status, 403) }
+  finally { await reader.close() }
+})
