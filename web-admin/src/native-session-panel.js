@@ -36,7 +36,7 @@ function FeishuSessionModal({ dialog, busy, error, onCancel, onConfirm }) {
         dialog.note&&h('p',{className:'fgw-muted'},dialog.note),
         dialog.danger&&h('label',{className:'fgw-session-modal-ack'},
           h('input',{type:'checkbox',checked:ack,disabled:busy,onChange:e=>setAck(e.target.checked)}),
-          h('span',null,'我了解删除后无法恢复这段 DSH 对话'))),
+          h('span',null,'我了解删除后无法恢复所选 DSH 对话'))),
       error&&h('p',{className:'fgw-caution',role:'alert'},error),
       h('div',{className:'fgw-session-modal-actions'},
         h('button',{type:'button',className:'fgw-refresh',disabled:busy,onClick:onCancel},'取消'),
@@ -160,6 +160,8 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // Selection is retained across pages of one search, capped at 20 records.
+  const [selected,setSelected]=useState([])
   const refresh = useCallback(async () => {
     setBusy(true)
     try {
@@ -181,7 +183,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
     finally { setBusy(false) }
   }, [query, reveal])
   useEffect(() => { void refresh() }, [refresh])
-  const filter = (key,value) => setQuery(old => ({ ...old, [key]:value, page:1 }))
+  const filter = (key,value) => {setSelected([]);setQuery(old => ({ ...old, [key]:value, page:1 }))}
   const saveSettings = async patch => {
     setBusy(true)
     try {
@@ -215,65 +217,75 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         await refresh()
       }})
   }
-  const archive=async row=>{
-    if(!row.orphan||row.status!=='unbound'||busy)return
-    setBusy(true)
-    try{
-      const lookup=await request('/sessions/ledger?'+new URLSearchParams({
-        status:'unbound',search:row.sessionRef,reveal:'1',pageSize:'25'
-      }).toString())
-      const native=lookup.report?.items?.find(x=>x.sessionRef===row.sessionRef&&x.orphan)
-      if(!native?.sessionId)throw Error('历史记录已变更，请刷新重试')
-      const {preview}=await request('/sessions/native/preview','POST',{sessionId:native.sessionId})
-      ask({title:'归档对话',confirmLabel:'归档',
-        description:'将「'+(row.sessionTitle||row.scheduleTitle||'未命名对话')+'」从常用列表隐藏。',
-        note:'历史记录仍会保留，不会释放磁盘空间。之后可在“已归档”中恢复。',
-        onConfirm:async()=>{
-          const result=await request('/sessions/native/archive','POST',{token:preview.token})
-          setNotice('已归档：'+result.result.sessionRef+'（历史记录已保留）')
-          await refresh()
-        }})
-    }catch(e){setError(e.message||String(e))}
-    finally{setBusy(false)}
+  const canSelect = row => mode==='archive' ?
+    Boolean(row && ['archived','trashed'].includes(row.status)) :
+    Boolean(report?.canArchive && row?.orphan && row?.status==='unbound' && row?.type!=='schedule')
+  const toggleSelection = (row,checked) => {
+    if(!canSelect(row)||busy||dialogBusy)return
+    setSelected(previous=>{
+      const items=previous.filter(item=>item.sessionRef!==row.sessionRef)
+      if(!checked)return items
+      if(previous.some(item=>item.sessionRef===row.sessionRef))return previous
+      if(items.length>=20){setNotice('每次最多选择 20 条对话，请先处理当前选择。');return previous}
+      return [...items,row]
+    })
   }
-  const restore= row=>{
-    if(!report?.canRestore||busy||!['archived','trashed'].includes(row.status))return
-    ask({title:'恢复对话',confirmLabel:'恢复',
-      description:'将「'+(row.sessionTitle||row.scheduleTitle||'未命名对话')+'」恢复到正常对话列表。',
-      note:'不会自动重新建立之前已经解除的飞书聊天关联。',
-      onConfirm:async()=>{
-        if(row.status==='trashed'){
-          const {result}=await request('/sessions/trash/restore','POST',{sessionRef:row.sessionRef})
-          // A legacy trash entry may have been archived before it was moved:
-          // "恢复" in today's single archive view must always make it visible.
-          if(result.target==='archived')
-            await request('/sessions/native/restore','POST',{sessionRef:row.sessionRef})
-        }else{
-          await request('/sessions/native/restore','POST',{sessionRef:row.sessionRef})
+  const selectCurrentPage = () => {
+    setSelected(previous=>{
+      const items=[...previous]
+      const rows=(report?.items||[]).filter(canSelect)
+      for(const row of rows) {
+        if(items.length>=20)break
+        if(!items.some(item=>item.sessionRef===row.sessionRef))items.push(row)
+      }
+      if(items.length===20&&rows.some(row=>!items.some(item=>item.sessionRef===row.sessionRef)))
+        setNotice('本次最多选择 20 条；其余记录请分批处理。')
+      return items
+    })
+  }
+  const startNativeAction = async (action,rows) => {
+    if(busy||dialogBusy||!rows?.length)return
+    setBusy(true);setError('');setNotice('')
+    try{
+      const {preview}=await request('/sessions/native/batch/preview','POST',{
+        action,sessionRefs:rows.map(row=>row.sessionRef)
+      })
+      if(preview.eligible===0){
+        setNotice('所选 '+preview.requested+' 条对话均不满足操作条件。'+
+          (preview.skippedItems||[]).slice(0,2).map(item=>item.reason).join('；'))
+        return
+      }
+      const verb={archive:'归档',restore:'恢复',delete:'永久删除'}[action]
+      const isDelete=action==='delete'
+      const sample=rows.slice(0,3).map(row=>row.sessionTitle||row.scheduleTitle||'未命名对话')
+      const details=[
+        '选择 '+preview.requested+' 条，可'+verb+' '+preview.eligible+' 条'+
+          (preview.skipped?'；将跳过 '+preview.skipped+' 条':'')+'。',
+        '对话：'+sample.join('、')+(rows.length>3?' 等 '+rows.length+' 条':''),
+        ...((preview.skippedItems||[]).slice(0,3).map(item=>'跳过原因：'+item.reason))
+      ]
+      ask({
+        title:rows.length===1?verb+'对话':'批量'+verb+'对话',
+        confirmLabel:rows.length===1?verb:'确认'+verb+' '+preview.eligible+' 条',
+        danger:isDelete,
+        description:isDelete?
+          '永久删除所选已归档的 DSH 对话，删除后无法恢复。':
+          action==='archive'?
+            '将所选旧对话从常用列表移到「已归档」，聊天记录会完整保留。':
+            '将所选已归档对话恢复到「对话历史」。',
+        detail:h('div',{className:'fgw-session-batch-preview'},
+          details.map((line,i)=>h('p',{key:i},line))),
+        note:isDelete?
+          '删除通过 @michengai/dsh-archive-manager 执行，可能同时清理子代理历史；不会删除飞书服务器已发送的消息。':
+          '操作前会重新检查每条会话；状态发生变化时会跳过，不会强制中断任务。',
+        onConfirm:async()=>{
+          const {result}=await request('/sessions/native/batch/execute','POST',{token:preview.token})
+          setSelected([])
+          setNotice(verb+'完成：成功 '+result.succeeded+' 条，未处理 '+result.failed+' 条。'+
+            (result.failedItems||[]).slice(0,3).map(item=>item.reason).join('；'))
+          await refresh()
         }
-        setNotice('对话已恢复：'+(row.sessionTitle||row.scheduleTitle||row.sessionRef))
-        await refresh()
-      }})
-  }
-  const deleteArchived=async row=>{
-    if(!row.orphan||!report?.canDelete||busy)return
-    setBusy(true)
-    try{
-      const {preview}=await request('/sessions/native/delete/preview','POST',{sessionRef:row.sessionRef})
-      const title=row.sessionTitle||row.scheduleTitle||'未命名对话'
-      ask({title:'永久删除对话',confirmLabel:'永久删除',danger:true,
-        description:'即将永久删除「'+title+'」的 DSH 原生会话记录。',
-        detail:preview.estimatedBytes===null?
-          '会话历史、关联的投影与工作区索引将由删除服务处理。':
-          '预计删除数据：'+(preview.estimatedBytes/1024).toFixed(1)+' KiB（实际以删除结果为准）',
-        note:'删除无法撤销；归档管理插件还可能清理此会话的子代理历史。此操作不会清除飞书服务器已经发送的消息。',
-        onConfirm:async()=>{
-          const {result}=await request('/sessions/native/delete','POST',{token:preview.token})
-          setNotice('永久删除完成'+(result.bytesRemoved!=null?
-            '，实际清理 '+(result.bytesRemoved/1024).toFixed(1)+' KiB':'')+
-            (result.indexCleanupPending?'（部分辅助索引需检查）':''))
-          await refresh()
-        }})
+      })
     }catch(e){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
@@ -313,7 +325,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
       h(WbBlock, { title: mode === 'archive'?'已归档的对话':mode==='trash'?'回收站中的对话':'对话历史',
       aside: mode==='archive'?'选择恢复，或在安全删除服务可用时永久删除':'只显示未归档的 DSH 对话' },
       h('form', { className: 'fgw-session-filters fgw-session-filters-native',
-        onSubmit: e => { e.preventDefault(); setQuery(old=>({...old,search:searchDraft,page:1})); if(searchDraft===query.search) void refresh() } },
+        onSubmit: e => { e.preventDefault(); setSelected([]); setQuery(old=>({...old,search:searchDraft,page:1})); if(searchDraft===query.search) void refresh() } },
         mode === 'all' && h('label', { className: 'fgw-session-filter' }, h('span', null, '状态'),
           h('select', { className: 'fga-input', value: query.status,
             onChange: e => filter('status', e.target.value) },
@@ -356,10 +368,48 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         'aria-expanded':showAdvanced }, showAdvanced?'收起筛选条件':'更多筛选条件'),
       error && h('div',{className:'fgw-caution',role:'alert'},error),
       notice && h('div',{className:'fgw-caution',role:'status'},notice),
+      report?.available && h('div',{className:'fgw-session-selection-toolbar',role:'group',
+        'aria-label':mode==='archive'?'已归档会话批量操作':'对话历史批量归档'},
+        h('div',{className:'fgw-session-selection-meta'},
+          h('strong',null,'已选 '+selected.length+' 条'),
+          h('span',{className:'fgw-muted'},'支持跨页选择，单次最多 20 条')),
+        h('div',{className:'fgw-session-selection-actions'},
+          h('button',{type:'button',className:'fgw-refresh',disabled:busy||dialogBusy||
+            !(report?.items||[]).some(row=>canSelect(row)&&!selected.some(item=>item.sessionRef===row.sessionRef))||
+            selected.length>=20,onClick:selectCurrentPage},'选择本页'),
+          h('button',{type:'button',className:'fgw-refresh',disabled:busy||dialogBusy||selected.length===0,
+            onClick:()=>setSelected([])},'清空选择'),
+          mode==='archive'?
+            h(React.Fragment,null,
+              h('button',{type:'button',className:'fgw-refresh fgw-ops-cta',
+                disabled:busy||dialogBusy||!report?.canRestore||selected.length===0,
+                onClick:()=>void startNativeAction('restore',selected)},'批量恢复'),
+              h('button',{type:'button',className:'fgw-refresh fgw-archive-delete',
+                disabled:busy||dialogBusy||!report?.canDelete||selected.length===0,
+                title:!report?.canDelete?report?.deleteUnavailableReason:
+                  '仅删除符合条件的已归档、未关联对话；其他会话将跳过',
+                onClick:()=>void startNativeAction('delete',selected)},'批量删除')):
+            h('button',{type:'button',className:'fgw-refresh fgw-ops-cta',
+              disabled:busy||dialogBusy||!report?.canArchive||selected.length===0,
+              onClick:()=>void startNativeAction('archive',selected)},'批量归档'))),
+      mode!=='archive'&&report?.available&&
+        h('p',{className:'fgw-session-selection-tip'},
+          '未关联且没有运行任务的对话可以归档；仍与飞书聊天关联或属于定时任务的记录暂不可归档。'),
       report?.titleSearchLimited&&h('p',{className:'fgw-muted'},'会话过多：标题搜索暂限前 1,000 条，请结合来源或日期筛选。'),
       !report?.available ? h(WbEmpty, {headline:'等待原生 Session 服务',description:report?.reason || '请确认 DSH Web 具备持久化和工作区服务。'}) :
       h(OpsTable, {rows:report.items, empty:'没有符合当前筛选条件的原生 Session',
         columns:[
+          {key:'selection',title:'选择',render:x=>h('input',{
+            type:'checkbox',className:'fgw-native-session-checkbox',
+            checked:selected.some(item=>item.sessionRef===x.sessionRef),
+            disabled:busy||dialogBusy||!canSelect(x),
+            'aria-label':'选择对话 '+(x.sessionTitle||x.scheduleTitle||'未命名对话'),
+            title:mode==='archive'?'选择此已归档对话':
+              !x.orphan?'仍与飞书聊天关联，请先解除关联':
+              x.type==='schedule'?'定时任务会话不支持手动归档':
+              !report?.canArchive?'运行状态未确认，暂不能归档':
+              x.status!=='unbound'?'正在运行或状态未知，暂不能归档':'选择此对话',
+            onChange:event=>toggleSelection(x,event.target.checked)} )},
           {key:'sessionTitle', title:'对话',render:x=>h('div',null,
             h('strong',null,x.sessionTitle || x.scheduleTitle || '未命名'),
             h('div',{className:'fgw-muted'},x.type==='schedule'?'定时':
@@ -379,17 +429,22 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             mode==='archive'?
               h(React.Fragment,null,
                 h('button',{type:'button',className:'fgw-refresh',
-                  disabled:busy||!report?.canRestore,
-                  title:report?.canRestore?'恢复到正常对话列表':'DSH 暂无可用的恢复接口',
-                  onClick:()=>restore(x)},'恢复'),
+                  disabled:busy||dialogBusy||!report?.canRestore,
+                  title:report?.canRestore?'恢复到正常对话列表':'当前 DSH 版本没有可用的恢复接口',
+                  onClick:()=>void startNativeAction('restore',[x])},'恢复'),
                 h('button',{type:'button',className:'fgw-refresh fgw-archive-delete',
-                  disabled:busy||!report?.canDelete||!x.orphan||x.type==='schedule',
-                  title:!report?.canDelete?(report?.deleteUnavailableReason||'未检测到 @michengai/dsh-archive-manager（web Profile）删除接口'):
-                    !x.orphan?'仍有关联，不能删除':'永久删除 DSH 会话',
-                  onClick:()=>void deleteArchived(x)},'删除')):
-              x.orphan&&x.status==='unbound'?
-                h('button',{type:'button',className:'fgw-refresh',disabled:busy,
-                  onClick:()=>void archive(x)},'归档'):'—')}
+                  disabled:busy||dialogBusy||!report?.canDelete||!x.orphan||x.type==='schedule',
+                  title:!report?.canDelete?(report?.deleteUnavailableReason||'缺少可选归档管理插件的删除接口'):
+                    !x.orphan?'此对话仍与飞书聊天关联':
+                    x.type==='schedule'?'定时任务会话不能直接删除':'永久删除 DSH 对话',
+                  onClick:()=>void startNativeAction('delete',[x])},'删除')):
+              h('button',{type:'button',className:'fgw-refresh',
+                disabled:busy||dialogBusy||!canSelect(x),
+                title:!report?.canArchive?'运行状态暂不能确认':
+                  !x.orphan?'仍与飞书聊天关联，请先解除关联':
+                  x.type==='schedule'?'定时任务历史暂不允许手动归档':
+                  x.status!=='unbound'?'此会话正在使用或状态不明确':'移到「已归档」',
+                onClick:()=>void startNativeAction('archive',[x])},'归档'))}
         ] }),
       report?.available && h('div',{className:'fgw-session-pages'},
         h('span',null,'共 '+wbCount(report.total)+' 条 · 第 '+query.page+'/'+Math.max(1,Math.ceil(report.total/25))+' 页'),

@@ -23,6 +23,7 @@ import { sessionOrganizationInventory, reconcileSessionOrganization, archiveNati
   organizationSettings, saveOrganizationSettings, retentionSettings, saveRetentionSettings,
   previewRetention, previewTrashSession, moveNativeSessionToTrash, restoreNativeSessionFromTrash,
   previewNativePermanentDelete, permanentlyDeleteNativeSession, createArchiveManagerDeleter,
+  validateNativeSessionBatch, previewNativeSessionBatch, executeNativeSessionBatch,
   autoArchiveExpiredSessions } from './session-organizer.mjs'
 import { parseUsageQuery, queryUsage, usageCsv } from './usage-read.mjs'
 import { listAgentFiles, readAgentFile, saveAgentFile, listAgentHistory,
@@ -918,6 +919,39 @@ export function createAdminHandler(options = {}) {
           exactKeys(body, [])
           const report = await reconcileSessionOrganization(stateDir, sessionServices(), { dryRun: false })
           return json(res, 200, { ok: true, report: publicPlan(report) })
+        })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/batch/preview') {
+        const body = await readBody(req)
+        const batch = validateNativeSessionBatch(body)
+        const preview = await previewNativeSessionBatch(stateDir, sessionServices(), batch)
+        const expiresAt = Date.now() + 30_000
+        let token = null
+        if (preview.eligible > 0) {
+          for (const [key, value] of nativePreviews)
+            if (value.expiresAt <= Date.now()) nativePreviews.delete(key)
+          if (nativePreviews.size >= 100) nativePreviews.clear()
+          token = randomUUID()
+          nativePreviews.set(token, {
+            action: 'native-batch', batch: { action: batch.action,
+              sessionRefs: preview.eligibleRefs }, expiresAt,
+          })
+        }
+        const { eligibleRefs, ...summary } = preview
+        return json(res, 200, { ok: true, preview: { ...summary, token, expiresAt } })
+      }
+      if (req.method === 'POST' && route === PREFIX + '/sessions/native/batch/execute') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['token'])
+          if (typeof body.token !== 'string' || !/^[0-9a-f-]{36}$/.test(body.token))
+            throw httpError(400, 'invalid confirmation token')
+          const pending = nativePreviews.get(body.token)
+          nativePreviews.delete(body.token)
+          if (!pending || pending.action !== 'native-batch' || pending.expiresAt <= Date.now())
+            throw httpError(409, 'confirmation expired')
+          const result = await executeNativeSessionBatch(stateDir, sessionServices(), pending.batch)
+          return json(res, 200, { ok: true, result })
         })
       }
       if (req.method === 'POST' && route === PREFIX + '/sessions/native/preview') {

@@ -1006,3 +1006,45 @@
   .fgw-session-modal-body{padding:0 15px 12px}
   .fgw-session-modal-actions button{flex:1}
 }
+
+/* Manual Session archiving + multi-select; selection stays explicit and bounded. */
+.fgw-session-selection-toolbar{
+  margin:12px 0 15px;padding:12px 14px;display:flex;align-items:center;
+  justify-content:space-between;gap:10px 18px;flex-wrap:wrap;
+  border:1px solid var(--border,#8884);border-radius:10px;background:var(--card,transparent)
+}
+.fgw-session-selection-meta{display:flex;align-items:center;gap:10px 13px;flex-wrap:wrap}
+.fgw-session-selection-meta strong{font-size:13px;font-weight:670}
+.fgw-session-selection-meta span{font-size:11px}
+.fgw-session-selection-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.fgw-session-selection-actions .fgw-refresh{min-height:34px;padding:7px 12px;font-size:12px}
+.fgw-session-selection-tip{font-size:12px;color:var(--muted-foreground,#929aa8);
+  margin:-6px 2px 12px;line-height:1.65}
+.fgw-native-session-checkbox{width:17px;height:17px;cursor:pointer;vertical-align:middle;
+  accent-color:var(--primary,#467cf4)}
+.fgw-native-session-checkbox:disabled{cursor:not-allowed;opacity:.35}
+.fgw-session-list .fgw-table th:first-child,
+.fgw-session-list .fgw-table td:first-child{width:46px;text-align:center}
+.fgw-session-list .fgw-table tr:has(.fgw-native-session-checkbox:checked){
+  background:color-mix(in srgb,var(--primary,#467cf4) 6%,var(--card,transparent))
+}
+.fgw-session-batch-preview p{margin:3px 0;line-height:1.6;overflow-wrap:anywhere}
+.fgw-session-batch-preview p:first-child{font-weight:650}
+@media(max-width:740px){
+  .fgw-session-list .fgw-table tr{
+    grid-template-columns:28px minmax(0,1fr);gap:9px 12px
+  }
+  .fgw-session-list .fgw-table td:first-child{
+    grid-column:1;grid-row:1;align-self:start;width:auto;text-align:left;padding-top:3px!important
+  }
+  .fgw-session-list .fgw-table td:first-child:before{display:none}
+  .fgw-session-list .fgw-table td:nth-child(2){grid-column:2;grid-row:1}
+  .fgw-session-list .fgw-table td:nth-child(3),
+  .fgw-session-list .fgw-table td:nth-child(4),
+  .fgw-session-list .fgw-table td:nth-child(5){grid-column:1/-1}
+  .fgw-session-selection-actions{justify-content:flex-start}
+}
+@media(max-width:440px){
+  .fgw-session-selection-toolbar{padding:11px}
+  .fgw-session-selection-actions .fgw-refresh{flex:1 1 auto}
+}

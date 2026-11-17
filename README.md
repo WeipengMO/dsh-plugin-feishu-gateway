@@ -59,7 +59,7 @@ dsh --profile web --dump-config
 | 运维与诊断 | 告警、连接和结构化日志 |
 | 模型与连接 | 主模型、多个备用模型、代理和消息卡片选项 |
 
-「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**。已归档直接提供“恢复 / 删除”；删除需要可选的 `@michengai/dsh-archive-manager` 扩展接口，没有安装时保持灰色；确认操作统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
+「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**，支持对历史执行单条或多选「归档」，以及对已归档历史多选「恢复 / 删除」（单次最多 20 条）。删除需要可选的 `@michengai/dsh-archive-manager` 扩展接口，没有安装时保持灰色；所有确认统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
 
 飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
 

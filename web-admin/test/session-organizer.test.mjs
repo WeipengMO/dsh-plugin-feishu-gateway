@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import {
   archiveNativeSession,
   restoreNativeSession,
@@ -11,6 +12,7 @@ import {
   autoArchiveExpiredSessions,
   previewNativePermanentDelete, permanentlyDeleteNativeSession,
   archiveManagerDeleteAvailable, createArchiveManagerDeleter,
+  validateNativeSessionBatch, previewNativeSessionBatch, executeNativeSessionBatch,
   organizationSettings,
   reconcileSessionOrganization,
   saveOrganizationSettings,
@@ -474,4 +476,142 @@ test('archive manager adapter rejects a Session still held by the native DSH liv
   await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,
     { ...f.native, deleter }, candidate.sessionRef), { status: 409 })
   assert.equal(calls, 0)
+})
+
+test('native Session batch archives multiple safe unbound histories and restores them', async t => {
+  const f = await fixture(t)
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, { status: 'current' })
+  const eligible = list.items.filter(row => row.orphan && row.type !== 'schedule')
+  assert.equal(eligible.length, 2)
+  const bound = list.items.find(row => !row.orphan && row.type !== 'schedule')
+  const refs = [eligible[0].sessionRef, bound.sessionRef, eligible[1].sessionRef]
+  const preview = await previewNativeSessionBatch(f.stateDir, f.native,
+    { action: 'archive', sessionRefs: refs })
+  assert.equal(preview.requested, 3)
+  assert.equal(preview.eligible, 2)
+  assert.equal(preview.skipped, 1)
+  assert.match(preview.skippedItems[0].reason, /关联/)
+  assert.ok(preview.eligibleRefs.every(ref => /^[0-9a-f]{16}$/.test(ref)))
+  const completed = await executeNativeSessionBatch(f.stateDir, f.native,
+    { action: 'archive', sessionRefs: preview.eligibleRefs })
+  assert.equal(completed.succeeded, 2)
+  assert.equal(completed.failed, 0)
+  assert.ok(f.archived.includes(ORPHAN))
+  assert.ok(f.archived.includes(NEXT))
+  assert.equal(f.snapshots.length, 4, 'archiving must not remove transcripts')
+  assert.equal((await sessionOrganizationInventory(f.stateDir, f.native, {status:'archived'})).total, 2)
+  const restored = await executeNativeSessionBatch(f.stateDir, f.native,
+    {action:'restore', sessionRefs: preview.eligibleRefs })
+  assert.equal(restored.succeeded, 2)
+  assert.equal(restored.failed, 0)
+  assert.equal(f.archived.length, 0)
+  assert.equal((await sessionOrganizationInventory(f.stateDir, f.native, {status:'current'})).total, 4)
+  assert.equal(f.snapshots.length, 4)
+})
+
+test('batch preview limits to 20, rejects duplicate IDs, and handles stale or changed Sessions safely', async t => {
+  const f = await fixture(t)
+  const all = await sessionOrganizationInventory(f.stateDir,f.native,{status:'current'})
+  const orphan = all.items.find(row=>row.orphan && row.type!=='schedule')
+  assert.throws(()=>validateNativeSessionBatch({action:'archive',sessionRefs:[]}),{status:400})
+  assert.throws(()=>validateNativeSessionBatch({action:'archive',
+    sessionRefs:Array(21).fill(orphan.sessionRef)}),{status:400})
+  assert.throws(()=>validateNativeSessionBatch({action:'archive',
+    sessionRefs:[orphan.sessionRef,orphan.sessionRef]}),{status:400})
+  assert.throws(()=>validateNativeSessionBatch({action:'not-real',
+    sessionRefs:[orphan.sessionRef]}),{status:400})
+  const initial=await previewNativeSessionBatch(f.stateDir,f.native,
+    {action:'archive',sessionRefs:[orphan.sessionRef]})
+  assert.equal(initial.eligible,1)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  const executed=await executeNativeSessionBatch(f.stateDir,f.native,
+    {action:'archive',sessionRefs:initial.eligibleRefs})
+  assert.equal(executed.succeeded,0)
+  assert.equal(executed.failed,1)
+  assert.ok(f.archived.includes(ORPHAN))
+  await json(f.stateDir,'ops-runtime.json',{
+    version:1,ts:Date.now()-60000,workspace:f.cwd,isolatedAgent:true,
+    tasks:[],status:'ok',stats:{},transport:{}
+  })
+  const stale=await previewNativeSessionBatch(f.stateDir,f.native,
+    {action:'restore',sessionRefs:[orphan.sessionRef]})
+  assert.equal(stale.eligible,0)
+  assert.equal(stale.skipped,1)
+})
+
+test('batch deletion requires the optional archive manager and returns per-item results', async t => {
+  const f = await fixture(t)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  await archiveNativeSession(f.stateDir,f.native,NEXT)
+  const refList=(await sessionOrganizationInventory(f.stateDir,f.native,
+    {status:'archived'})).items.map(row=>row.sessionRef)
+  const disabled=await previewNativeSessionBatch(f.stateDir,f.native,
+    {action:'delete',sessionRefs:refList})
+  assert.equal(disabled.eligible,0)
+  assert.equal(disabled.skipped,2)
+  assert.ok(disabled.skippedItems.every(item=>item.reason.includes('archive-manager')))
+  const removed=[]
+  const deleter={
+    isLive:()=>false,
+    inspect:async id=>({live:false}),
+    delete:async id=>{
+      removed.push(id)
+      f.snapshots.splice(f.snapshots.findIndex(row=>row.header.id===id),1)
+      f.archived.splice(f.archived.indexOf(id),1)
+      return {deleted:true}
+    },
+  }
+  const services={...f.native,deleter}
+  const preview=await previewNativeSessionBatch(f.stateDir,services,
+    {action:'delete',sessionRefs:refList})
+  assert.equal(preview.eligible,2)
+  const done=await executeNativeSessionBatch(f.stateDir,services,
+    {action:'delete',sessionRefs:preview.eligibleRefs})
+  assert.equal(done.succeeded,2)
+  assert.equal(done.failed,0)
+  assert.deepEqual(new Set(removed),new Set([ORPHAN,NEXT]))
+  assert.equal(f.snapshots.length,2)
+  assert.equal((await sessionOrganizationInventory(f.stateDir,services,{status:'archived'})).total,0)
+})
+
+test('batch restore understands legacy trash records and preserves native history', async t => {
+  const f=await fixture(t)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  const row=(await sessionOrganizationInventory(f.stateDir,f.native,
+    {status:'archived'})).items[0]
+  await moveNativeSessionToTrash(f.stateDir,f.native,row.sessionRef)
+  const preview=await previewNativeSessionBatch(f.stateDir,f.native,
+    {action:'restore',sessionRefs:[row.sessionRef]})
+  assert.equal(preview.eligible,1)
+  const result=await executeNativeSessionBatch(f.stateDir,f.native,
+    {action:'restore',sessionRefs:preview.eligibleRefs})
+  assert.equal(result.succeeded,1)
+  assert.equal(f.archived.length,0)
+  assert.equal(f.snapshots.length,4)
+})
+
+test('archived status never hides an active native writer from batch restore or delete checks', async t => {
+  const f=await fixture(t)
+  await archiveNativeSession(f.stateDir,f.native,ORPHAN)
+  const ref=(await sessionOrganizationInventory(f.stateDir,f.native,
+    {status:'archived'})).items[0].sessionRef
+  const activeRef=createHash('sha256').update(ORPHAN).digest('hex').slice(0,16)
+  await json(f.stateDir,'ops-runtime.json',{
+    version:1,ts:Date.now(),workspace:f.cwd,isolatedAgent:true,
+    tasks:[{ref:activeRef,botId:'default',session:activeRef,phase:'running'}],status:'ok',stats:{},transport:{}
+  })
+  const services={...f.native,deleter:{
+    inspect:async()=>({live:false}),delete:async()=>{throw Error('must not run')}
+  }}
+  const row=(await sessionOrganizationInventory(f.stateDir,services,
+    {status:'archived'})).items[0]
+  assert.equal(row.running,true)
+  assert.equal(row.status,'archived')
+  assert.equal((await previewNativeSessionBatch(f.stateDir,services,
+    {action:'restore',sessionRefs:[ref]})).eligible,0)
+  assert.equal((await previewNativeSessionBatch(f.stateDir,services,
+    {action:'delete',sessionRefs:[ref]})).eligible,0)
+  await assert.rejects(restoreNativeSession(f.stateDir,services,ref),{status:409})
+  await assert.rejects(permanentlyDeleteNativeSession(f.stateDir,services,ref),{status:409})
+  assert.equal(f.snapshots.length,4)
 })
