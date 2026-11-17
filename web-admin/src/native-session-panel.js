@@ -44,7 +44,7 @@ function FeishuSessionModal({ dialog, busy, error, onCancel, onConfirm }) {
           disabled:busy||(dialog.danger&&!ack),onClick:onConfirm},
           busy?'处理中…':dialog.confirmLabel||'确认'))))
 }
-function FeishuSessionCenter() {
+function FeishuSessionCenter({ compaction, compactionStale = false }) {
   const [view,setView]=useState('history')
   const tabs=[['history','对话历史'],['archive','已归档'],['bindings','飞书聊天关联']]
   return h('section',{className:'fgw-session-center'},
@@ -60,7 +60,21 @@ function FeishuSessionCenter() {
     view==='bindings'&&h('div',{className:'fgw-session-advanced-area'},
       h('p',{className:'fgw-session-lead'},
         '飞书聊天关联决定下一条消息沿用哪段 DSH 对话。解除关联只创建新上下文，不会删除旧聊天记录。'),
-      h(FeishuSessionsInventory,{})))
+      h(FeishuSessionsInventory,{})),
+    h('details',{className:'fgw-session-details fgw-context-compaction'},
+      h('summary',null,'上下文压缩 · '+(compactionStale?'运行状态待更新':
+        compaction?.available===true?'DSH 原生引擎已就绪':
+        compaction?.available===false?'未检测到原生压缩引擎':'运行状态未同步')),
+      h('p',null,'自动压缩由 DSH 原生 compaction-basic 按模型上下文和输出预算触发。飞书网关不会使用累计 Token 消耗估计上下文，也不会另起 LLM 生成替代摘要。'),
+      h('p',null,'在飞书对话中发送 ',h('code',null,'/context'),' 查看当前会话状态；发送 ',
+        h('code',null,'/compact'),' 手动压缩较早的会话历史。压缩保留原生事件日志，不等于释放磁盘空间。'),
+      h('p',{className:'fgw-muted'},compactionStale?'Gateway 状态已过期，请确认服务是否运行。':
+        compaction?.lastCompletedAt?
+          '当前 Gateway 启动后观察到 '+compaction.completedInProcess+' 次完整压缩，最近一次：'+
+            opsDate(compaction.lastCompletedAt)+'。':
+          '当前 Gateway 启动后尚无已观察到的完整压缩记录。'),
+      h('p',{className:'fgw-muted'},'触发阈值和保留策略在 DSH 的 dsh-compaction-basic 配置中管理；切换模型时由 DSH 使用目标模型容量重新判定。')))
+
 }
 function FeishuArchiveHub() {
   const [policy,setPolicy]=useState(null)
