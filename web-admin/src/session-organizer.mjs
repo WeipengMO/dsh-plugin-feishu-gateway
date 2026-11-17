@@ -260,7 +260,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
     orphanCount: data.records.filter(row => row.orphan).length,
     archivedCount: data.records.filter(row => row.archived && !trash.items[row.id]).length,
     trashCount: data.records.filter(row => Boolean(trash.items[row.id])).length,
-    canTrash: typeof services.registry?.archiveSession === 'function' &&
+    canTrash: !data.runtime.stale && typeof services.registry?.archiveSession === 'function' &&
       typeof services.registry?.unarchiveSession === 'function',
     note: 'Native DSH header inventory only. Archive hides Session history; no native data is deleted.' }
 }
@@ -558,10 +558,11 @@ export async function previewRetention(stateDir, services, now = Date.now()) {
     privateJson(stateDir, CURSOR_FILE), readTrash(stateDir) ])
   const cursor = isObj(cursorDoc) && cursorDoc.version === 1 ? cursorDoc : emptyCursor()
   const activity = isObj(cursor.activity) ? cursor.activity : {}
+  const handled = new Set(Array.isArray(cursor.handled) ? cursor.handled : [])
   const cutoff = now - settings.archiveAfterDays * 86400000
   const candidates = data.records.filter(row =>
     row.orphan && row.type !== 'schedule' && !row.archived && !trash.items[row.id] &&
-    ms(activity[row.id]) > 0 && ms(activity[row.id]) <= cutoff)
+    !handled.has(row.id) && ms(activity[row.id]) > 0 && ms(activity[row.id]) <= cutoff)
   const skippedUnknownActivity = data.records.filter(row =>
     row.orphan && row.type !== 'schedule' && !row.archived && !trash.items[row.id] &&
     !ms(activity[row.id])).length
