@@ -333,6 +333,17 @@ export interface SessionCompactionStatus {
   readonly available: boolean
   /** True only for an observed native compaction; reset on Gateway restart. */
   readonly completedInProcess: number
+  /** Count only when the native start marker identifies a numbered agent turn. */
+  readonly automaticCompletedInProcess?: number
+  /** Count standalone manual transactions (turn: null). */
+  readonly manualCompletedInProcess?: number
+  /** Older/partial event streams may not contain the native start marker. */
+  readonly unclassifiedCompletedInProcess?: number
+  readonly failedInProcess?: number
+  readonly lastFailedAt?: number
+  readonly lastAutoCompletedAt?: number
+  /** Source of the last COMPLETED compaction, never inferred from /compact calls. */
+  readonly lastTrigger?: 'automatic' | 'manual' | 'unclassified'
   readonly lastCompletedAt?: number
   /** Count of history items replaced by the last observed completed compaction. */
   readonly lastShadowedItems?: number

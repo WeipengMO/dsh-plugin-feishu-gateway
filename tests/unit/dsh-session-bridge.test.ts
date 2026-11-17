@@ -654,6 +654,49 @@ describe('DSH native Session compaction port', () => {
     await bridge.dispose()
   })
 
+  it('distinguishes actual native automatic/manual compactions and failed attempts from start/end markers', async () => {
+    const {ctx,bridge,fake} = setup()
+    ctx.services.set('compaction', { compactNow: async () => null })
+    await bridge.create('feishu-trigger-a', '/tmp')
+    await bridge.create('feishu-trigger-b', '/tmp')
+    const emit = (id: string, type: string, data: Record<string, unknown>) =>
+      ctx.emit('session/event', {id}, {type, data})
+
+    emit('feishu-trigger-a','compaction/start',{compactionId:'a-auto',turn:2})
+    emit('feishu-trigger-a','compaction/summary',{compactionId:'a-auto',
+      shadowedSeqs:[1,2],shadowedTokenCount:850,summary:'PRIVATE AUTO SUMMARY'})
+    emit('feishu-trigger-a','compaction/end',{compactionId:'a-auto',turn:2})
+    emit('feishu-trigger-a','compaction/end',{compactionId:'a-auto',turn:2})
+    emit('feishu-trigger-a','compaction/start',{compactionId:'a-manual',turn:null})
+    emit('feishu-trigger-a','compaction/summary',{compactionId:'a-manual',
+      shadowedSeqs:[3],shadowedTokenCount:100})
+    emit('feishu-trigger-a','compaction/end',{compactionId:'a-manual',turn:null})
+    emit('feishu-trigger-a','compaction/start',{compactionId:'a-failed',turn:3})
+    emit('feishu-trigger-a','compaction/end',{compactionId:'a-failed',turn:3,
+      error:'PRIVATE ERROR DETAILS'})
+    emit('feishu-trigger-a','compaction/end',{compactionId:'a-failed',turn:3,
+      error:'PRIVATE ERROR DETAILS'})
+    emit('feishu-trigger-b','compaction/summary',{compactionId:'b-legacy',
+      shadowedSeqs:[4],shadowedTokenCount:30})
+    emit('feishu-trigger-b','compaction/end',{compactionId:'b-legacy',turn:5})
+    const a = bridge.compactionStatus('feishu-trigger-a')
+    expect(a).toMatchObject({
+      available:true,completedInProcess:2,automaticCompletedInProcess:1,
+      manualCompletedInProcess:1,unclassifiedCompletedInProcess:0,
+      failedInProcess:1,lastTrigger:'manual',
+    })
+    expect(a.lastAutoCompletedAt).toBeGreaterThan(0)
+    expect(a.lastFailedAt).toBeGreaterThan(0)
+    const all = bridge.compactionStatus()
+    expect(all).toMatchObject({
+      completedInProcess:3,automaticCompletedInProcess:1,
+      manualCompletedInProcess:1,unclassifiedCompletedInProcess:1,failedInProcess:1,
+    })
+    expect(JSON.stringify(all)).not.toContain('PRIVATE')
+    expect(fake.followups).toHaveLength(0)
+    await bridge.dispose()
+  })
+
   it('handles no compactable content and missing native engine without inventing a substitute summary', async () => {
     const {ctx,bridge,fake}=setup()
     await bridge.create('feishu-default-short', '/tmp')
