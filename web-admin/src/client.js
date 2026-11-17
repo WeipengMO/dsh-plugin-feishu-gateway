@@ -601,6 +601,9 @@ window.__ModuleLoader__.load({
                 title: preset.description || undefined },
                 (preset.name || preset.id) + (preset.isDefault ? '（默认）' : '') +
                   (preset.broken ? ' ⚠ ' + preset.broken : '')))),
+            agentPreset !== presetDirectory.selected && h('p', {
+              className: 'fga-model-unsaved', role: 'status' },
+              '预设已修改，请点击页面底部「保存配置」；重启通道后对新会话生效。'),
             h('p', { className: 'fga-hint' },
               '新会话按所选预设工作；已存在会话保持原模式；保存后需重启飞书通道并对新会话生效（旧会话可 /new 切换）。')),
           h('div', { className: 'fga-divider' }),
