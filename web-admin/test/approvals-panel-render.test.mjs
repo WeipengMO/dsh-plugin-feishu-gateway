@@ -135,7 +135,7 @@ test('approvals tab renders pending, permanent rules and recent decisions', () =
   }
   assert.match(text, /待审批数量 1 /)
   assert.match(text, /永久授权数量 1 /)
-  assert.match(text, /最近审批条数 4 /)
+  assert.match(text, /最近审批条数\s+4/)
   assert.match(text, /10 分钟/)
   assert.match(text, /最多保留 200 条/)
   // Pending row: tool + command summary + live countdown.
@@ -186,7 +186,7 @@ test('approvals tab tolerates malformed arrays, hostile fields and expired pendi
   const text = renderText(tree)
   assert.match(text, /已过期/) // countdown clamps at 0
   assert.match(text, /当前没有等待中的审批请求|暂无永久授权规则|暂无审批记录/)
-  assert.match(text, /审批等待时长（分钟） —/) // non-numeric timeout is unknown
+  assert.match(text, /审批等待时长（分钟）\s+—/) // non-numeric timeout is unknown
   assert.match(text, /最多保留 200 条/) // bounded fallback
 })
 
