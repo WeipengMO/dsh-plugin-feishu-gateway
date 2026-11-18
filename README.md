@@ -9,7 +9,7 @@
 
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **首次测试版**：Gateway 和 Web Admin 均计划采用 `0.1.0-beta.1`，分别分发和安装；GitHub 测试包不代表已发布到 npm。
+> **当前测试版**：[`v0.1.0-beta.1`](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 已在 GitHub Releases 提供 Gateway 和 Web Admin 两个安装包；npm 发布情况请以 npm Registry 为准。
 
 > **版本说明**：源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。npm 徽章显示的是**已发布版本**，不代表当前源码或 VPS 安装的版本。测试与升级前请核对两个安装包的具体版本。
 
@@ -24,34 +24,98 @@
 
 **手动永久删除通过可选的 `@michengai/dsh-archive-manager` 提供**（安装于 DSH Web `web` Profile）；没有安装时「删除」按钮保持灰色，其他功能正常运行。自动永久删除和按期限物理清理尚未实现（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
 
-## 快速开始
+## 安装与首次使用
 
-环境要求：Node.js `>=24.9.0`、匹配 `package.json` 中 `engines.dsh` 的 DSH、pnpm，以及一个配置了机器人和长连接事件的飞书应用。
+本插件由两个独立的包组成，需要安装在**同一台 DSH 主机、同一运行用户**的不同 Profile 中：
 
-| DSH Profile | 安装包 | 用途 |
+| 安装包 | DSH Profile | 作用 |
 | --- | --- | --- |
-| `feishu-channel` | `dsh-plugin-feishu-gateway` | 常驻 WebSocket、原生 Agent/Session、上下文压缩命令、消息与定时任务投递 |
-| `web` | `dsh-plugin-feishu-admin` | DSH Web 侧栏「飞书管理」和受认证保护的管理 API |
+| `dsh-plugin-feishu-gateway` | `feishu-channel` | 连接飞书、处理消息并调用 DSH Agent |
+| `dsh-plugin-feishu-admin` | `web` | 在 DSH Web 中提供「飞书管理」界面 |
 
-**两个插件必须装在各自的 Profile；不要把 Gateway 安装到 `web`。**
+**不要将 Gateway 安装到 `web` Profile。** 已有 DSH Web 的用户仍需要单独配置并运行 `feishu-channel`；安装插件不会自动创建完整的 Agent/模型环境。
 
-在仓库根目录构建并安装**当前检出的源码版本**：
+### 1. 安装前准备
+
+- 已安装可用的 DSH，Node.js 版本 **≥24.9.0**，DSH 版本满足 **`>=0.2.2-rc.1 <0.3.0-0`**。先运行 `node -v` 和 `dsh --version` 检查。
+- `web` Profile 已能正常启动 DSH Web；`feishu-channel` Profile 已配置相应的 DSH Agent/模型。初次配置 Profile 可以参考[首次部署指南](docs/GETTING-STARTED.md)。
+- 已在[飞书开放平台](https://open.feishu.cn/app)（国际版：[Lark 开放平台](https://open.larksuite.com/app)）创建企业自建应用，启用机器人、长连接事件 `im.message.receive_v1`，申请消息权限并发布应用版本。详见[飞书应用配置](docs/FEISHU-APP.md)。
+
+### 2. 下载并安装插件（当前推荐）
+
+当前 GitHub 测试版为 **`v0.1.0-beta.1`**。打开[GitHub Releases 下载页面](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1)，下载以下三个文件并放在同一目录：
+
+- `dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz`
+- `dsh-plugin-feishu-admin-0.1.0-beta.1.tgz`
+- `SHA256SUMS`（用于校验下载的安装包）
+
+> 仓库当前为 Private；在公开仓库之前，只有获得仓库访问权限的用户才能下载这些 GitHub Release 资源。
+
+在**运行 DSH 的机器**上打开终端，进入刚才存放三个文件的目录，执行：
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run verify
-pnpm run pack
+# 进入安装包所在目录：替换成你的真实路径
+cd /path/to/downloads
 
-GATEWAY_VERSION=$(node -p "require('./package.json').version")
-ADMIN_VERSION=$(node -p "require('./web-admin/package.json').version")
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-$GATEWAY_VERSION.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-$ADMIN_VERSION.tgz"
+# 检查安装包是否与发布文件一致（Linux）
+sha256sum -c SHA256SUMS
 
+# 分别安装到对应 DSH Profile
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+
+# 检查 Profile 解析的配置
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-**安装包更新不等于常驻服务已重启加载。** 首次配置飞书 App ID/Secret、白名单、权限、长连接和系统服务的完整步骤见 **[首次部署](docs/GETTING-STARTED.md)**。已经部署过的用户请直接阅读 **[升级和运维](docs/OPERATIONS.md)**。
+macOS 可以使用 `shasum -a 256 -c SHA256SUMS` 检查包。**如果校验失败，请不要安装**，重新获取完整的三个文件。
+
+### 通过 npm 安装（包发布到 npm 后）
+
+如果两个版本已出现在 npm 上，也可以不下载 `.tgz`，直接执行：
+
+```bash
+dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
+dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
+```
+
+可先用 `npm view dsh-plugin-feishu-gateway@0.1.0-beta.1 version` 和 `npm view dsh-plugin-feishu-admin@0.1.0-beta.1 version` 检查是否已经发布。**GitHub Release 存在不代表 npm 已发布**，测试期间请固定版本号，不要直接安装 `latest`。
+
+### 3. 配置飞书机器人
+
+1. 进入 **DSH Web → 设置 → 飞书 Gateway**，填写飞书应用的 **App ID** 和 **App Secret**。若使用独立通道服务，也可以按[首次部署指南](docs/GETTING-STARTED.md)通过受保护的环境变量文件配置。
+2. 进入 **飞书管理 → 接入与权限**，添加允许与机器人对话的用户 `open_id`。**白名单为空时，所有私聊均会被拒绝**；群聊默认关闭，需要单独配置。
+3. 确认 `feishu-channel` 的 Agent 和模型可用，并按照[部署与启动说明](docs/GETTING-STARTED.md#4-启动通道)启动通道进程或 systemd 服务。安装包更新不会自动重启已经运行的进程。
+
+**不要**把真实 App Secret 写进 Git、README 或截图；不要同时运行两个使用同一 App ID 的 Gateway。
+
+### 4. 验证是否安装成功
+
+- 在 DSH Web 左侧找到 **飞书管理**，查看 Gateway 连接和运行状态。
+- 用已加入白名单的飞书账号私聊机器人，发送 `/status`、`/models` 和一条普通消息；确认收到回复。
+- 连续发送几条消息验证上下文，再发送 `/new` 检查能否创建新会话。
+
+如果机器人不回复，优先检查：飞书应用的**事件订阅和权限是否已发布**、用户 `open_id` 是否在白名单、Gateway 是否已启动并连接、通道 Profile 的模型凭据是否正常。进一步排障见[运维手册](docs/OPERATIONS.md)。
+
+### 已有安装？如何升级
+
+先备份 Gateway 状态、Profile 配置及飞书凭据，在维护窗口安装匹配的新版本并重启对应服务。不要为了升级而清空会话或状态目录。参见[升级与回滚](docs/OPERATIONS.md#安全升级)。
+
+### 从源码构建（仅开发者需要）
+
+普通用户**无需**下载源码、安装 pnpm 或运行测试。只有需要修改插件或验证开发分支时，才使用：
+
+```bash
+git clone https://github.com/WeipengMO/dsh-plugin-feishu-gateway.git
+cd dsh-plugin-feishu-gateway
+pnpm install --frozen-lockfile
+pnpm run verify
+pnpm run pack
+pnpm run release:check
+```
+
+生成的两个 `.tgz` 位于 `dist/`，可按上方“下载并安装插件”的方式安装。
 
 ## 界面预览
 
