@@ -262,7 +262,7 @@ DurableOutbox（幂等键 schedule:<taskId>:<messageId>）→ 已授权飞书 ch
 | 去重 vs 恢复 | 以 Inbox 为准；running/failed 不自动重放 | 避免重复执行不可逆 Agent 操作 |
 | 群聊 | 已实现受控群聊 | v0.1 初期硬编码拒绝已被后续显式群策略、@ 规则和成员授权取代；见 [群聊说明](GROUP-CHAT.md) |
 | 存储 | 原子 JSON / JSONL | 零原生依赖、易审计；v0.2.0 可换 SQLite |
-| 真实凭据 | 完全不接触 | 用户明确要求；测试全 Mock |
+| 真实凭据 | 由受控环境变量或管理接口提供；密钥不进仓库 | **初期研发阶段仅 Mock** 的历史记录，不等于当前插件无法连接真实租户；见 [飞书应用配置](FEISHU-APP.md) |
 | `allow-version` | 绝不使用 | 兼容性靠如实声明 `engines.dsh` |
 
 ---
