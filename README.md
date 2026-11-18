@@ -85,7 +85,7 @@ DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早�
 
 ## 文档导航
 
-**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md)
+**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md) · [测试版发布检查](docs/PRERELEASE.md)
 
 历史版本变更、早期架构设计与验收快照集中在 [历史资料](docs/archive/README.md)，**不应作为当前版本的安装指令**。
 
