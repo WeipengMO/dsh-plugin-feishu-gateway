@@ -48,9 +48,10 @@ jobs:
           RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.prerelease) || format('{0}', github.event.release.prerelease) }}
         run: |
           set -euo pipefail
-          # Releases must be cut from the current default branch HEAD, never old or arbitrary tags.
-          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)" || {
-            echo "::error::Release tag does not point at current main HEAD"
+          # A release must be a commit reachable from main. Allow safe retries
+          # after workflow-only fixes have advanced the default branch.
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "::error::Release tag does not belong to main history"
             exit 1
           }
           node --input-type=module <<'NODE'
@@ -171,7 +172,7 @@ jobs:
               echo "::error::${name}@${RELEASE_VERSION} exists with different archive bytes"
               return 1
             fi
-            npm publish "$archive" --tag "$NPM_DIST_TAG" --access public --registry=https://registry.npmjs.org/
+            npm publish "./$archive" --tag "$NPM_DIST_TAG" --access public --registry=https://registry.npmjs.org/
           }
           publish_one dsh-plugin-feishu-gateway
           publish_one dsh-plugin-feishu-admin
