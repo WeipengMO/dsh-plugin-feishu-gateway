@@ -113,7 +113,9 @@ test('Session center exposes one archive view and safe in-page dialogs', () => {
   assert.ok(!pages.slice(pages.indexOf('function FeishuSessionsInventory()')).includes('window.confirm('))
   assert.ok(css.includes('.fgw-modal-backdrop'))
   assert.ok(css.includes('.fgw-session-modal-ack'))
-  assert.ok(workbench.includes("conversations: [['sessions', '会话管理'], ['tasks', '实时任务'], ['messages', '消息投递']]"))
+  assert.ok(workbench.includes("conversations: [['tasks', '实时任务'], ['messages', '消息投递']]"))
+  assert.ok(workbench.includes("['sessions', '会话管理'"))
+  assert.match(workbench, /selected === 'sessions'/)
   assert.ok(!workbench.includes("onConfig('settings') }, '模型与连接'"))
 })
 
@@ -416,13 +418,13 @@ test('model route helpers aggregate all providers, retain saved routes, and seri
 
 test('settings expose the agent preset selector and persist the chosen working mode', () => {
   assert.match(source, /Agent 预设（飞书工作模式）/)
-  assert.match(source, /继承（不覆盖 Profile 配置）/)
-  assert.match(source, /不指定（无预设，由 DSH 默认组合）/)
+  assert.match(source, /沿用现有设置（继承）/)
+  assert.match(source, /使用 DSH 默认组合（不指定预设）/)
   assert.match(source, /还没有获取到预设列表/)
   assert.match(source, /result\.agentPreset = agentPreset/)
   assert.match(source, /setAgentPreset\(/)
   assert.match(source, /const \[agentPreset, setAgentPreset\] = useState\('__inherit__'\)/)
-  assert.match(source, /value: agentPreset,\s*'aria-label': 'Agent 预设'/)
+  assert.match(source, /selectedKey: agentPreset, onChoose: setAgentPreset/)
   assert.doesNotMatch(source, /value: presetDirectory\.selected,\s*'aria-label': 'Agent 预设'/)
   assert.match(source, /const presetSelectedVisible = agentPreset === '__inherit__'/)
   assert.match(built, /Agent 预设（飞书工作模式）/)
@@ -675,7 +677,8 @@ test('usage chart buckets maintain partial and unavailable coverage', () => {
 
 test('gateway workbench groups overlapping features instead of repeating nav entries', () => {
   const nav = workbench.slice(workbench.indexOf('const WORKBENCH_NAV = ['), workbench.indexOf('const WORKBENCH_TABS'))
-  assert.match(nav, /'conversations', '会话与消息'/)
+  assert.match(nav, /'conversations', '任务与消息'/)
+  assert.match(nav, /'sessions', '会话管理'/)
   assert.match(nav, /'channels', '接入与权限'/)
   assert.match(nav, /'analytics', '用量与审计'/)
   assert.doesNotMatch(nav, /\['bots',|\['security',|\['messages',|\['approvals',/)
@@ -862,4 +865,14 @@ test('empty approval lists use a compact row instead of three repeated giant car
     assert.ok(ops.includes("empty: '" + label + "', compactEmpty: true"), label)
   }
   assert.match(css, /\.fgw-approval-view \.fgw-table-empty\{/)
+})
+
+test('Agent preset dropdown uses themed accessible options and legacy cwd stays protected', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(source, /h\(ModelPicker, \{ id: 'fga-agent-preset'/)
+  assert.match(source, /key: '__inherit__'/)
+  assert.match(source, /key: '', name: '使用 DSH 默认组合/)
+  assert.doesNotMatch(source, /field\('原 DSH 工作目录（仅兼容）'/)
+  assert.match(source, /if \(typeof existing.workspace === 'string' && existing.workspace.trim\(\)\)/)
+  assert.match(css, /\.fga-model-preset \.fga-search-picker/)
 })

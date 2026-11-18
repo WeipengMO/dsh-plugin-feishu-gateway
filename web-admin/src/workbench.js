@@ -5,7 +5,8 @@
 const WORKBENCH_PANEL_ID = 'feishu-management'
 const WORKBENCH_NAV = [
   ['overview', '总览', '▦'],
-  ['conversations', '会话与消息', '⇄'],
+  ['sessions', '会话管理', '▤'],
+  ['conversations', '任务与消息', '⇄'],
   ['automation', '定时任务', '◷'],
   ['channels', '接入与权限', '◉'],
   ['agent-profile', 'Agent 档案', '▤'],
@@ -15,18 +16,19 @@ const WORKBENCH_NAV = [
   ['advanced', '模型与连接', '⚙'],
 ]
 const WORKBENCH_GROUPS = [
-  { label: '日常管理', ids: ['overview', 'conversations', 'automation'] },
+  { label: '日常管理', ids: ['overview', 'sessions', 'conversations', 'automation'] },
   { label: '机器人与 Agent', ids: ['channels', 'agent-profile', 'skills', 'advanced'] },
   { label: '统计与诊断', ids: ['analytics', 'operations'] },
 ]
 const WORKBENCH_TABS = {
-  conversations: [['sessions', '会话管理'], ['tasks', '实时任务'], ['messages', '消息投递']],
+  conversations: [['tasks', '实时任务'], ['messages', '消息投递']],
   channels: [['bots', '机器人'], ['groups', '群聊管理'], ['security', '安全与权限']],
   analytics: [['usage', 'Token 用量'], ['approvals', '审批审计']],
   operations: [['alerts', '告警中心'], ['diagnostics', '连接与日志']],
 }
 const WORKBENCH_DESCRIPTIONS = {
-  conversations: '管理对话历史、查看正在运行的任务和消息投递情况。',
+  sessions: '整理对话历史、已归档记录和飞书聊天关联。',
+  conversations: '查看正在执行的任务和飞书消息投递情况。',
   automation: '管理 DSH 原生定时任务、运行记录和飞书通知。',
   channels: '统一管理机器人、群聊、白名单与工具执行权限。',
   'agent-profile': '管理飞书 Agent 的独立工作区身份和记忆。',
@@ -316,7 +318,7 @@ function Workbench() {
   // authoritative Gateway read model (never inferred from /ops events).
   const [approvals, setApprovals] = useState(null)
   const [sectionTab, setSectionTab] = useState({
-    conversations: 'sessions', channels: 'bots', analytics: 'usage', operations: 'alerts',
+    conversations: 'tasks', channels: 'bots', analytics: 'usage', operations: 'alerts',
   })
   const [operatorNotice, setOperatorNotice] = useState('')
   const [selected, setSelected] = useState('overview')
@@ -503,6 +505,13 @@ function Workbench() {
     // to configured bots, allowlist users and enabled groups without a second
     // round trip. Rendered only when the workbench has a valid state.
     body = h(SchedulePanel, { state, onChanged: load, onDirtyChange: setScheduleUnsaved })
+  } else if (selected === 'sessions') {
+    // Native DSH session management has its own filters and refresh; keeping
+    // it a first-level page avoids three redundant nested navigation layers.
+    body = h(FeishuSessionCenter, {
+      compaction: ops?.snapshot?.compaction,
+      compactionStale: ops?.snapshot?.stale === true,
+    })
   } else if (selected === 'conversations' || selected === 'analytics' || selected === 'operations') {
     body = h(OpsPage, { kind: sectionTab[selected], ops, approvals, onConfig, onCommand,
       onApprovalsRefresh: load })
@@ -545,8 +554,9 @@ function Workbench() {
           !tabs.length && h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected])),
         h('div', { className: 'fgw-top-actions' },
           selected !== 'agent-profile' && selected !== 'skills' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
-          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
-            onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
+          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && selected !== 'sessions' &&
+            h('button', { className: 'fgw-refresh fgw-refresh-action', type: 'button', disabled: updating,
+              onClick: refresh }, updating ? '刷新中…' : '刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
         h('div', null, h('div', { className: 'fgw-hero-kicker' }, '服务运行概览'),
           h('h2', null, online ? '飞书机器人运行正常' : '请检查飞书通道状态'),

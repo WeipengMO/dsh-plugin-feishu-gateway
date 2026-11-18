@@ -1464,3 +1464,13 @@
  background:var(--fgw-ui-inset);color:var(--muted-foreground,#8995a4);
  font-size:12px;line-height:1.6
 }
+
+/* Agent preset list stays in the DSH theme rather than invoking the native
+   OS select popup (black on some Windows light-mode deployments). */
+.fga-model-preset .fga-search-picker{max-width:800px}
+.fga-model-preset .fga-search-picker-dropdown{
+  background:var(--popover,var(--card,var(--background,#fff)));
+  color:var(--popover-foreground,var(--foreground,inherit));
+  border-color:var(--border,#8885)
+}
+.fga-search-picker-option:disabled{opacity:.48;cursor:not-allowed}

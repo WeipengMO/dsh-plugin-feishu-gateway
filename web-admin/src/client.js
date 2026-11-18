@@ -30,7 +30,8 @@ window.__ModuleLoader__.load({
     }
     // One accessible, searchable combobox for both primary and fallback models.
     function ModelPicker({ options, selectedKey = '', onChoose, placeholder, ariaLabel,
-      disabled = false, inline = false, id }) {
+      disabled = false, inline = false, id, compactLabel = false,
+      emptyText = '没有匹配的模型' }) {
       const [open, setOpen] = useState(false)
       const [query, setQuery] = useState('')
       const [active, setActive] = useState(0)
@@ -40,6 +41,7 @@ window.__ModuleLoader__.load({
         [item.name, item.model, item.providerName, item.provider, item.key]
           .some(value => String(value || '').toLowerCase().includes(term))).slice(0, 150)
       const choose = item => {
+        if (item.disabled) return
         onChoose(item.key)
         setQuery('')
         setActive(0)
@@ -55,7 +57,8 @@ window.__ModuleLoader__.load({
         }
         if (event.key === 'Enter' && open && matches.length) {
           event.preventDefault()
-          choose(matches[Math.min(active, matches.length - 1)])
+          const current = matches[Math.min(active, matches.length - 1)]
+          if (current && !current.disabled) choose(current)
         }
       }
       return h('div', { className: 'fga-search-picker' + (inline ? ' is-inline' : ''),
@@ -69,7 +72,8 @@ window.__ModuleLoader__.load({
             'aria-activedescendant': open && matches.length ? id + '-option-' + active : undefined,
             autoComplete: 'off', spellCheck: false, disabled,
             placeholder: placeholder || '搜索模型名称或提供方',
-            value: open ? query : (selected ? selected.name + ' · ' + selected.providerName : ''),
+            value: open ? query : (selected ?
+              selected.name + (compactLabel ? '' : ' · ' + selected.providerName) : ''),
             onFocus: () => { setOpen(true); setQuery(''); setActive(0) },
             onChange: event => { setOpen(true); setQuery(event.target.value); setActive(0) },
             onKeyDown: keydown }),
@@ -82,14 +86,17 @@ window.__ModuleLoader__.load({
               className: 'fga-search-picker-option' + (active === index ? ' is-active' : '') +
                 (selectedKey === item.key ? ' is-selected' : ''),
               'aria-selected': selectedKey === item.key,
+              'aria-disabled': item.disabled === true,
+              disabled: item.disabled === true,
               onMouseEnter: () => setActive(index),
               onMouseDown: event => event.preventDefault(),
               onClick: () => choose(item) },
               h('span', { className: 'fga-search-picker-option-name' }, item.name),
-              h('small', null, item.providerName + ' · ' + item.key),
+              h('small', null, compactLabel ? item.providerName :
+                item.providerName + ' · ' + item.key),
               selectedKey === item.key && h('span', { className: 'fga-search-picker-check',
                 'aria-hidden': true }, '✓')))
-          : h('div', { className: 'fga-search-picker-empty' }, '没有匹配的模型')))
+          : h('div', { className: 'fga-search-picker-empty' }, emptyText)))
     }
     /*__PROXY_HELPERS_START__*/
     // Pure helpers for the network-proxy block. No closure state: the built
@@ -344,7 +351,6 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState('')
       const [allowOverride, setAllowOverride] = useState(false)
       const [allowText, setAllowText] = useState('')
-      const [workspace, setWorkspace] = useState('')
       const [agentWorkspace, setAgentWorkspace] = useState('')
       const [primaryProvider, setPrimaryProvider] = useState('')
       const [primaryModel, setPrimaryModel] = useState('')
@@ -369,7 +375,7 @@ window.__ModuleLoader__.load({
       // Only field changes count: polling and search input edits do not.
       const [savedSignature, setSavedSignature] = useState(null)
       const draftSignature = JSON.stringify([
-        allowOverride, allowText, workspace, agentWorkspace, primaryProvider,
+        allowOverride, allowText, agentWorkspace, primaryProvider,
         primaryModel, fallbacks, agentPreset, timeout, proxyEnabled, proxyFallback,
         proxyUrl, proxyCleared, retry, interval, autoConnect, replyFormat,
         approvalCards, streamCards, approvalTimeout, streamInterval,
@@ -387,7 +393,6 @@ window.__ModuleLoader__.load({
         const c = data.config || {}
         setAllowOverride(Array.isArray(c.allowlist))
         setAllowText(Array.isArray(c.allowlist) ? c.allowlist.join('\n') : '')
-        setWorkspace(c.workspace || '')
         setAgentWorkspace(c.agentWorkspace || '')
         // Current route comes from the Gateway Host's DSH snapshot, never from
         // a blank "inherit Profile" placeholder. Saved values win when the Host
@@ -438,7 +443,12 @@ window.__ModuleLoader__.load({
         // Bot source is managed exclusively in the dedicated robot panel.
         // Other settings must never silently remove or overwrite this list.
         if (Array.isArray(existing.bots)) result.bots = existing.bots
-        if (workspace.trim()) result.workspace = workspace.trim()
+        // Legacy/shared workspace is still the isolation boundary for the
+        // Feishu Agent. Hide it from day-to-day UI, but preserve any managed
+        // value so saving other settings cannot accidentally reset the guard.
+        if (typeof existing.workspace === 'string' && existing.workspace.trim()) {
+          result.workspace = existing.workspace
+        }
         if (agentWorkspace.trim()) result.agentWorkspace = agentWorkspace.trim()
         const route = modelRoutePayload({
           provider: primaryProvider.trim(), model: primaryModel.trim(),
@@ -649,33 +659,41 @@ window.__ModuleLoader__.load({
               '预设列表来自最近一次运行记录；建议刷新后确认。'),
             presetDirectory.catalogMissing && h('div', { className: 'fga-warning' },
               '还没有获取到预设列表，请确认飞书通道正在运行，然后刷新页面。'),
-            h('select', { className: 'fga-input fga-model-select', value: agentPreset,
-              'aria-label': 'Agent 预设', disabled: busy || !state,
-              onChange: e => setAgentPreset(e.target.value) },
-              h('option', { value: '__inherit__' }, '继承（不覆盖 Profile 配置）'),
-              h('option', { value: '' }, '不指定（无预设，由 DSH 默认组合）'),
-              !presetSelectedVisible && h('option', { value: agentPreset },
-                agentPreset + '（未在当前目录找到）'),
-              ...presetDirectory.presets.map(preset => h('option', {
-                key: preset.id, value: preset.id, disabled: Boolean(preset.broken),
-                title: preset.description || undefined },
-                (preset.name || preset.id) + (preset.isDefault ? '（默认）' : '') +
-                  (preset.broken ? ' ⚠ ' + preset.broken : '')))),
+            h(ModelPicker, { id: 'fga-agent-preset',
+              ariaLabel: 'Agent 预设', placeholder: '搜索或选择工作模式',
+              selectedKey: agentPreset, onChoose: setAgentPreset,
+              compactLabel: true, emptyText: '没有匹配的工作模式',
+              disabled: busy || !state,
+              options: [
+                { key: '__inherit__', name: '沿用现有设置（继承）',
+                  providerName: '保留 DSH Profile 已配置的预设' },
+                { key: '', name: '使用 DSH 默认组合（不指定预设）',
+                  providerName: '明确不使用 Profile 中的预设' },
+                ...(!presetSelectedVisible ? [{ key: agentPreset,
+                  name: agentPreset + '（当前目录不可用）',
+                  providerName: '此前保存的预设，可切换到其他模式' }] : []),
+                ...presetDirectory.presets.map(preset => ({
+                  key: preset.id,
+                  name: (preset.name || preset.id) +
+                    (preset.isDefault ? '（默认）' : '') +
+                    (preset.broken ? '（不可用）' : ''),
+                  providerName: preset.broken || preset.description || 'DSH 预设',
+                  disabled: Boolean(preset.broken),
+                })),
+              ] }),
             agentPreset !== presetDirectory.selected && h('p', {
               className: 'fga-model-unsaved', role: 'status' },
               '预设有未保存的修改；点击下方「仅保存」或「保存并重启」。'),
             h('p', { className: 'fga-hint' },
               '新会话按所选预设工作；已存在会话保持原模式；保存后需重启飞书通道并对新会话生效（旧会话可 /new 切换）。')),
           h('div', { className: 'fga-divider' }),
-          h('h3', { className: 'fga-settings-group' }, '回复与工作目录'),
+          h('h3', { className: 'fga-settings-group' }, '回复与 Agent 工作目录'),
           field('回复格式', h('select', { className: 'fga-input', value: replyFormat,
             onChange: e => setReplyFormat(e.target.value) },
             h('option', { value: 'inherit' }, '继承 Profile（默认普通文本）'),
             h('option', { value: 'text' }, '普通文本（最兼容）'),
             h('option', { value: 'markdown' }, 'Markdown 富文本（post/md）'))),
-          field('原 DSH 工作目录（仅兼容）', textInput(workspace, setWorkspace, '原 DSH 项目目录，仅用于迁移/配置对照'),
-            '新飞书 Agent 不再从此目录启动；不会复制这里的 SOUL / MEMORY。'),
-          field('飞书 Agent 独立工作目录', textInput(agentWorkspace, setAgentWorkspace,
+          field('飞书 Agent 专属工作目录', textInput(agentWorkspace, setAgentWorkspace,
             '留空自动创建隔离目录；或输入服务器上的绝对路径'),
             '新飞书 Session 的原生 cwd。不可与普通 DSH 项目目录相同或存在父子关系；修改后需重启通道，并在飞书发送 /new。'),
           h('div', { className: 'fga-divider' }),
