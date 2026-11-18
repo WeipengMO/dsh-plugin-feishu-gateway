@@ -888,3 +888,13 @@ test('refresh actions and inline desktop date+metric controls share consistent C
   assert.match(css, /\.fgw-refresh-action::before\{/)
   assert.match(css, /\.fgw-usage-primary-fields > \.fgw-usage-date-range\{grid-column:auto\}/)
 })
+
+test('security editor uses a consistent heading/field rhythm without duplicate hints', () => {
+  const editor = readFileSync(path.join(root, 'src/exec-policy-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(editor, /只在「工作区可写」模式下使用/)
+  assert.doesNotMatch(editor, /仅在「工作区可写」模式下生效，留空即不额外开放目录/)
+  assert.match(css, /\.fgw-security-field-head\{margin:20px 0 10px/)
+  assert.match(css, /\.fga-savebar\{margin-top:24px/)
+  assert.match(css, /@container \(max-width:760px\)/)
+})

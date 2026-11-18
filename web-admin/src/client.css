@@ -1500,3 +1500,36 @@
  .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
  .fgw-usage-primary-fields > .fgw-usage-date-range{padding:11px 12px}
 }
+
+/* Execution permission editor: repeat the same 20/10px heading-to-field rhythm
+   for access mode, approval mode and optional writable roots. */
+.fgw-security-field-head{margin:20px 0 10px;gap:4px}
+.fgw-security-field-head:first-of-type{margin-top:4px}
+.fgw-security-field-head strong{font-size:13px;line-height:1.45}
+.fgw-security-field-head p{font-size:12px;line-height:1.6}
+.fgw-security-field-head + .fga-exec-grid,
+.fgw-security-field-head + .fga-seg,
+.fgw-security-field-head + .fga-roots{margin-top:0}
+.fga-exec-grid{gap:12px;align-items:stretch}
+.fga-exec-grid .fga-mode-card{min-height:88px;justify-content:center;gap:8px}
+.fga-mode-card-title{line-height:1.5}
+.fga-mode-card-desc{line-height:1.55}
+.fga-seg{min-height:38px;align-items:stretch}
+.fga-seg-btn{min-height:38px}
+.fga-roots{display:flex;flex-direction:column;gap:10px}
+.fga-root-row{display:flex;align-items:center;gap:10px;min-width:0}
+.fga-root-row>.fga-input{min-width:0;min-height:38px}
+.fga-root-row>.fga-button{min-height:38px;flex:none;white-space:nowrap}
+.fga-roots>.fga-inline-actions{margin-top:0}
+.fga-savebar{margin-top:24px;padding-top:16px;border-color:var(--fgw-ui-stroke);align-items:center;gap:12px}
+.fga-savebar-status{line-height:1.6}
+@container (max-width:760px){
+ .fga-exec-grid{grid-template-columns:minmax(0,1fr)}
+ .fga-savebar{align-items:stretch}
+ .fga-savebar .fga-inline-actions{justify-content:flex-start;flex-wrap:wrap}
+}
+@container (max-width:410px){
+ .fga-root-row{gap:8px}
+ .fga-root-row>.fga-button{padding-inline:11px}
+ .fga-savebar .fga-inline-actions>.fga-button{flex:1 1 132px;white-space:normal}
+}

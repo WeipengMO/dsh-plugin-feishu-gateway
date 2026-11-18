@@ -112,10 +112,9 @@ function ExecPolicyPanel({ onDirtyChange }) {
 
       h('div', { className: 'fgw-security-field-head' },
         h('strong', null, '额外允许写入的目录'),
-        h('p', null, '仅在「工作区可写」模式下生效，留空即不额外开放目录。')),
-      h('p', { className: 'fga-hint' }, writable
-        ? '请输入服务器上真实存在的绝对路径，不能是软链接。'
-        : '当前模式不会使用下方目录。切换到「工作区可写」后才会生效。'),
+        h('p', null, writable
+          ? '只在「工作区可写」模式下使用。请输入服务器上的真实绝对路径，不能是软链接。'
+          : '当前模式不使用这些目录；切换到「工作区可写」后才会生效。')),
       h('div', { className: 'fga-roots' },
         roots.length === 0 && h('p', { className: 'fga-hint' }, '暂无额外可写目录。'),
         ...roots.map((r, i) => h('div', { className: 'fga-root-row', key: i },
