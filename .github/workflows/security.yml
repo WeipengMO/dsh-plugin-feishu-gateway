@@ -91,6 +91,16 @@ jobs:
           pnpm run pack
       - name: Reject private data and unexpected files inside npm tarballs
         run: node scripts/security/check-package-contents.mjs
+      - name: Install checksum-verified Gitleaks for package payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="gitleaks_8.30.1_linux_x64.tar.gz"
+          curl -fLSs --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/$archive"
+          (cd "$RUNNER_TEMP" && echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum -c -)
+          mkdir -p "$RUNNER_TEMP/security-tools"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/security-tools" gitleaks
       - name: Install and update ClamAV signatures
         shell: bash
         run: |
@@ -111,4 +121,6 @@ jobs:
             mkdir -p "$extract_dir/$name"
             tar -xzf "$archive" -C "$extract_dir/$name"
           done
+          # Scan the exact unpacked npm publish payload for secrets too.
+          "$RUNNER_TEMP/security-tools/gitleaks" dir --no-banner --redact=100 "$extract_dir"
           clamscan --recursive --infected dist "$extract_dir"
