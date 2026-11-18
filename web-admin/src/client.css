@@ -570,8 +570,14 @@
 .fgw-usage-filters .fgw-refresh { min-height:35px; }
 .fgw-usage-filters .fgw-usage-presets { gap:6px; }
 .fgw-usage-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
-.fgw-usage-primary-fields { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); align-items:end; gap:11px; }
-.fgw-usage-primary-fields > .fgw-usage-field:nth-child(3) { grid-column:span 3; }
+/* Single source of truth for usage date + metric layout. */
+.fgw-usage-primary-fields { display:grid; grid-template-columns:minmax(0,2fr) minmax(170px,1fr); align-items:end; gap:12px; }
+.fgw-usage-primary-fields > .fgw-usage-date-range { grid-column:auto; }
+.fgw-usage-primary-fields > .fgw-usage-more { grid-column:1/-1; justify-self:start; align-self:end; }
+.fgw-usage-date-range { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;
+  padding:9px 12px; min-width:0; border:1px solid var(--border,#8884); border-radius:10px;
+  background:var(--card,transparent); }
+.fgw-usage-date-range .fgw-usage-field { min-width:0; }
 .fgw-usage-field-title { display:block; font-size:12px; color:var(--muted-foreground,#9298a3); margin-bottom:6px; }
 .fgw-usage-primary-fields .fgw-usage-field { gap:6px; }
 .fgw-usage-primary-fields .fgw-usage-field select { min-height:38px; }
@@ -631,14 +637,10 @@
 .fgw-usage-dashboard .fgw-heatmap-inner { margin:0 auto; }
 .fgw-usage-dashboard .fgw-heatmap-weekdays { width:15px; }
 @media(max-width:1160px) {
-  .fgw-usage-primary-fields { grid-template-columns:repeat(3,minmax(0,1fr)); }
-  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3) { grid-column:auto; }
   .fgw-usage-facets { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .fgw-usage-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media(max-width:900px) {
-  .fgw-usage-primary-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3) { grid-column:span 2; }
   .fgw-usage-chart-grid { grid-template-columns:minmax(0,1fr); }
   .fgw-usage-filters-top { flex-wrap:wrap; }
   .fgw-usage-facets { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -658,8 +660,6 @@
   .fgw-usage-filters .fgw-usage-presets { flex-wrap:nowrap; overflow-x:auto; padding-bottom:3px; }
   .fgw-usage-filters .fgw-usage-presets button { flex:none; }
   .fgw-usage-actions { justify-content:flex-start; }
-  .fgw-usage-primary-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3) { grid-column:auto; }
   .fgw-usage-primary-fields .fgw-usage-field { min-width:0; }
   .fgw-usage-more { display:inline-flex; justify-content:center; align-items:center; }
   .fgw-usage-facets { display:none; grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:12px; }
@@ -676,7 +676,6 @@
 }
 @media(max-width:390px) {
   .fgw-usage-facets { grid-template-columns:minmax(0,1fr); }
-  .fgw-usage-primary-fields { grid-template-columns:minmax(0,1fr); }
   .fgw-usage-chart-heading { flex-wrap:wrap; }
   .fgw-usage-filter-foot { flex-direction:column; gap:5px; }
 }
@@ -1221,8 +1220,6 @@
 @container (max-width:1000px){
   .fgw-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .fgw-two-column,.fgw-usage-chart-grid{grid-template-columns:minmax(0,1fr)}
-  .fgw-usage-primary-fields{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3){grid-column:auto}
 }
 @container (max-width:840px){
   .fga-model-route-grid{grid-template-columns:minmax(0,1fr)}
@@ -1235,12 +1232,11 @@
   .fgw-hero-status{align-items:flex-start}
   .fgw-topbar{flex-wrap:wrap;align-items:flex-start}
   .fgw-top-actions{width:100%;justify-content:space-between}
-  .fgw-usage-primary-fields,.fgw-usage-facets{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .fgw-usage-primary-fields > .fgw-usage-field:nth-child(3){grid-column:auto}
+  .fgw-usage-facets{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @container (max-width:410px){
   .fgw-metrics,.fgw-usage-metrics,.fgw-approval-metrics{grid-template-columns:minmax(0,1fr)}
-  .fgw-usage-primary-fields,.fgw-usage-facets{grid-template-columns:minmax(0,1fr)}
+  .fgw-usage-facets{grid-template-columns:minmax(0,1fr)}
   .fgw-top-actions{flex-wrap:wrap}
   .fga-model-card{padding:14px}
   .fga-model-multiselect{flex-direction:column;align-items:stretch}
@@ -1251,17 +1247,9 @@
 /* UI refinement: predictable placement and accessible density at every zoom. */
 .fga-model-preset{grid-column:1/-1;max-width:none;width:100%}
 .fga-model-preset .fga-model-select{max-width:800px}
-.fgw-usage-date-range{grid-column:span 2;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:0;min-width:0}
-.fgw-usage-date-range .fgw-usage-field{min-width:0}
 .fgw-usage-model-value{font-size:12px;font-weight:680;white-space:nowrap;font-variant-numeric:tabular-nums}
 .fgw-heatmap-dismiss{font-size:11px;padding:5px 9px}
 .fgw-sched-detail-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:9px;padding:7px 0 12px;border-bottom:1px solid var(--border,#8883);margin-bottom:8px}
-@container (max-width:650px){
-  .fgw-usage-date-range{grid-column:1/-1}
-}
-@container (max-width:410px){
-  .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
-}
 
 /* Unified navigation and editing controls; scoped to this Admin workbench. */
 .fgw-nav-group{display:flex;flex-direction:column;gap:3px;margin-bottom:16px;min-width:0}
@@ -1309,30 +1297,6 @@
 }
 .fgw-hero h2{font-size:18px}
 .fgw-hero-kicker{color:var(--muted-foreground,#83909f);letter-spacing:.05em}
-.fgw-usage-primary-fields{grid-template-columns:minmax(0,2fr) minmax(140px,.9fr) minmax(110px,auto)}
-.fgw-usage-date-range{
- grid-column:auto;
- border:1px solid var(--border,#8884);
- border-radius:10px;
- padding:9px 12px;
- background:var(--card,transparent);
- gap:10px
-}
-.fgw-usage-primary-fields .fgw-usage-more{align-self:end}
-@container (max-width:1000px){
- .fgw-usage-primary-fields{grid-template-columns:minmax(0,2fr) minmax(130px,1fr)}
- .fgw-usage-date-range{grid-column:1/-1}
-}
-@container (max-width:650px){
- .fgw-usage-primary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
- .fgw-usage-date-range{grid-column:1/-1}
-}
-@container (max-width:410px){
- .fgw-usage-primary-fields{grid-template-columns:minmax(0,1fr)}
- .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
- .fgw-usage-more{width:100%}
-}
-
 /* Native model dropdowns replaced by a single keyboard-searchable combobox. */
 .fga-search-picker{position:relative;min-width:0;width:100%;z-index:2}
 .fga-search-picker:focus-within{z-index:30}
@@ -1385,12 +1349,13 @@
 .fgw-block-head>.fgw-muted{font-size:11px;line-height:1.5}
 .fgw-block-body{padding:10px 20px 20px}
 .fgw-data-row{border-bottom:0;padding:9px 0;gap:16px;line-height:1.5}
-.fgw-section-tabs,.fgw-session-tabs{
+.fgw-section-tabs,.fgw-session-tabs,.fgw-sched-tabs{
  border:0;border-bottom:0;padding:4px;gap:3px;
- border-radius:10px;background:var(--fgw-ui-inset);width:max-content;max-width:100%
+ border-radius:10px;background:var(--fgw-ui-inset);width:max-content;max-width:100%;
+ overflow-x:auto;flex:0 1 auto
 }
-.fgw-section-tab,.fgw-session-tab{min-height:36px;padding:8px 14px;border:0;border-radius:8px}
-.fgw-section-tab.is-active,.fgw-session-tab.is-active{
+.fgw-section-tab,.fgw-session-tab,.fgw-sched-tab{min-height:36px;padding:8px 14px;border:0;border-radius:8px}
+.fgw-section-tab.is-active,.fgw-session-tab.is-active,.fgw-sched-tab.is-active{
  background:var(--fgw-ui-panel);color:var(--foreground,inherit);
  border:0;box-shadow:0 1px 5px rgba(0,0,0,.07)
 }
@@ -1484,13 +1449,7 @@
 }
 .fgw-top-actions{gap:9px}
 .fgw-top-actions .fgw-refresh-action{min-width:78px}
-/* Desktop date range and metric share a row; narrow content stacks. */
-.fgw-usage-primary-fields{display:grid;grid-template-columns:minmax(0,2fr) minmax(170px,1fr);align-items:end;gap:12px}
-.fgw-usage-primary-fields > .fgw-usage-date-range{grid-column:auto}
-.fgw-usage-primary-fields > .fgw-usage-more{grid-column:1/-1;justify-self:start;align-self:end}
-.fgw-usage-date-range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.fgw-usage-date-range .fgw-usage-field{min-width:0}
-.fgw-usage-primary-fields .fgw-usage-field>select{width:100%}
+/* Only these content-width breakpoints change the usage primary grid. */
 @container (max-width:730px){
  .fgw-usage-primary-fields{grid-template-columns:minmax(0,1fr)}
  .fgw-usage-primary-fields > .fgw-usage-date-range{grid-column:1}
@@ -1618,3 +1577,10 @@
 .fga-seg { border-radius: var(--fgw-control-radius, 9px); }
 .fga-seg-btn { min-height: var(--fgw-control-height, 38px); font-size: var(--fgw-control-font-size, 13px); }
 
+
+/* Same-level page tabs use one visual language. The Skills Markdown editor
+   "Edit / Preview" tabs intentionally remain underlined (different level). */
+.fgw-sched-tabs{border-bottom:0;min-height:44px}
+.fgw-sched-tab{color:var(--muted-foreground,#919baa);font-weight:550}
+.fgw-sched-tab:hover{color:var(--foreground,inherit);background:var(--muted,#8882)}
+@container (max-width:650px){.fgw-sched-tabs{width:100%;flex:1 1 100%}}
