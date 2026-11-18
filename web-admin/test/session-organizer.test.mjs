@@ -95,6 +95,36 @@ test('opt-in disabled by default: preview reads headers without writes or agent 
     'orphan Session createdAt must never be presented as known last use')
 })
 
+test('chat type comes from the recorded event, not the oc_ chat id prefix', async t => {
+  const f = await fixture(t)
+  // Feishu p2p chat ids also start with oc_, so the prefix is not a chat type.
+  await json(f.stateDir, 'admin-config.json', { config: { groups: [
+    { chatId: 'oc_configured_group', name: 'Configured group', enabled: true },
+  ] } })
+  const bound = (sessionId, chatId, chatType) => ({
+    sessionId, chatId, createdAt: Date.now(), lastActiveAt: Date.now(), persisted: true,
+    ...(chatType ? { chatType } : {}),
+  })
+  await f.writeBindings({
+    'default:oc_d1d5a5': bound(SID, 'oc_d1d5a5', 'p2p'),
+    'default:oc_configured_group': bound(NEXT, 'oc_configured_group'),
+    'default:oc_not_in_group_list': bound(ORPHAN, 'oc_not_in_group_list', 'group'),
+  })
+  const list = await sessionOrganizationInventory(f.stateDir, f.native, { reveal: true })
+  const bySession = new Map(list.items.map(row => [row.sessionId, row]))
+  assert.equal(bySession.get(SID)?.type, 'p2p', 'recorded p2p must win over the oc_ prefix')
+  assert.equal(bySession.get(NEXT)?.type, 'group', 'older binding falls back to configured groups')
+  assert.equal(bySession.get(ORPHAN)?.type, 'group', 'recorded group must win even when not configured')
+
+  // A legacy p2p binding with no recorded type and no group config entry.
+  await f.writeBindings({
+    'default:oc_legacy_p2p': bound(SID, 'oc_legacy_p2p'),
+  })
+  const legacy = await sessionOrganizationInventory(f.stateDir, f.native, { reveal: true })
+  assert.equal(legacy.items.find(row => row.sessionId === SID)?.type, 'p2p',
+    'unknown legacy oc_ chat must default to p2p, not group')
+})
+
 test('idempotent reconciliation adopts bound sessions, not unconfirmed historical orphans', async t => {
   const f = await fixture(t)
   await saveOrganizationSettings(f.stateDir, { enabled: true })

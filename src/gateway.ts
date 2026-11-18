@@ -1174,7 +1174,7 @@ export class FeishuGateway {
       } catch (error) {
         throw new Error(`cannot create native DSH Session: ${String(error)}`)
       }
-      await this.registry.bind(key, sessionId, Date.now(), this.isolatedWorkspace)
+      await this.registry.bind(key, sessionId, Date.now(), this.isolatedWorkspace, chatType)
       await this.setChatTitle(sessionId, botId, chatId, senderId, chatType)
       return sessionId
     }
@@ -1191,6 +1191,12 @@ export class FeishuGateway {
       // A closed host, missing factory, or broken persistence needs an explicit
       // recovery decision. Keep the original binding for diagnosis / retry.
       throw new SessionResumeError(existing.sessionId, error)
+    }
+    // Older bindings predate the recorded chat type; backfill from the
+    // authoritative inbound event so the admin never guesses from the chat id.
+    if (chatType && !existing.chatType) {
+      try { await this.registry.setChatType(key, chatType) }
+      catch { this.logger.warn('Feishu Session chat type backfill unavailable; continuing normally') }
     }
     await this.setChatTitle(existing.sessionId, botId, chatId, senderId, chatType)
     return existing.sessionId

@@ -48,6 +48,32 @@ describe('SessionRegistry', () => {
     await registry.bind(key, 'session-2', 3000)
     expect(registry.get(key)).toMatchObject({ sessionId: 'session-2', createdAt: 1000, lastActiveAt: 3000 })
   })
+
+  it('records the authoritative chat type and backfills older bindings', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const p2pKey = chatKey('default', 'oc_0ab1e947d08b9bd60b0efdd6ded1d5a5')
+    const groupKey = chatKey('default', 'oc_group')
+
+    await registry.bind(p2pKey, 'session-p2p', 1000, undefined, 'p2p')
+    await registry.bind(groupKey, 'session-group', 1000, undefined, 'group')
+    expect(registry.get(p2pKey)?.chatType).toBe('p2p')
+    expect(registry.get(groupKey)?.chatType).toBe('group')
+
+    const reopened = make()
+    await reopened.open()
+    expect(reopened.get(p2pKey)?.chatType).toBe('p2p')
+    expect(reopened.get(groupKey)?.chatType).toBe('group')
+
+    const legacyKey = chatKey('default', 'oc_legacy')
+    await reopened.bind(legacyKey, 'session-legacy', 1000)
+    expect(reopened.get(legacyKey)?.chatType).toBeUndefined()
+    await reopened.setChatType(legacyKey, 'p2p')
+    expect(reopened.get(legacyKey)?.chatType).toBe('p2p')
+    // Backfill must not disturb activity or drop the binding.
+    expect(reopened.get(legacyKey)).toMatchObject({ lastActiveAt: 1000, sessionId: 'session-legacy' })
+  })
 })
 
 describe('Issue #16 lifecycle: native DSH data is not owned by the registry', () => {

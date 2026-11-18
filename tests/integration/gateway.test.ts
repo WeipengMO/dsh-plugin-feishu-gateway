@@ -87,6 +87,18 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await gateway.stop()
   })
 
+  it('records the authoritative chat type for oc_-prefixed p2p chats', async () => {
+    const { gateway, transport, stateDir } = await harness({}, 'ok')
+    const chatId = 'oc_0ab1e947d08b9bd60b0efdd6ded1d5a5'
+    await transport.emitMessage(alice({ chatId, messageId: 'om_p2p_oc' }))
+    await gateway.whenIdle()
+
+    const registry = new SessionRegistry(stateDir)
+    await registry.open()
+    expect(registry.get('default:' + chatId)?.chatType).toBe('p2p')
+    await gateway.stop()
+  })
+
   it('drops messages from senders outside the allowlist', async () => {
     const { gateway, transport, bridge } = await harness()
     await transport.emitMessage(alice({ senderId: 'ou_mallory' }))

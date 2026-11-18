@@ -9,6 +9,11 @@ export interface SessionBinding {
   readonly lastActiveAt: number
   /** True when the Session has been persisted by DSH and can be resumed. */
   readonly persisted: boolean
+  /**
+   * Authoritative Feishu chat type from the inbound event. Optional because
+   * bindings created before this field existed have no recorded type.
+   */
+  readonly chatType?: 'p2p' | 'group'
   /** Gateway-local UI archive marker; never archives or deletes a native DSH Session. */
   readonly archived?: boolean
 }
@@ -39,20 +44,32 @@ export class SessionRegistry {
     return this.state.bindings[chatKey]
   }
 
-  async bind(chatKey: string, sessionId: string, now = Date.now(), workspace?: string): Promise<SessionBinding> {
+  async bind(chatKey: string, sessionId: string, now = Date.now(), workspace?: string,
+    chatType?: 'p2p' | 'group'): Promise<SessionBinding> {
     this.state = await this.store.update((current) => {
       const existing = current.bindings[chatKey]
+      const recordedChatType = chatType ?? existing?.chatType
       const binding: SessionBinding = {
         sessionId,
         ...(workspace ? { workspace } : {}),
         createdAt: existing?.createdAt ?? now,
         lastActiveAt: now,
         persisted: existing?.persisted ?? false,
+        ...(recordedChatType ? { chatType: recordedChatType } : {}),
         ...(existing?.archived ? { archived: true } : {}),
       }
       return { bindings: { ...current.bindings, [chatKey]: binding } }
     })
     return this.state.bindings[chatKey]!
+  }
+
+  /** Record the authoritative chat type on an older binding without touching activity. */
+  async setChatType(chatKey: string, chatType: 'p2p' | 'group'): Promise<void> {
+    this.state = await this.store.update((current) => {
+      const existing = current.bindings[chatKey]
+      if (!existing || existing.chatType === chatType) return current
+      return { bindings: { ...current.bindings, [chatKey]: { ...existing, chatType } } }
+    })
   }
 
   /** Abandon a potentially still-running Session after a timeout. */

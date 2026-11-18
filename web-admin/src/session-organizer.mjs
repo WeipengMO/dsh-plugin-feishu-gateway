@@ -130,6 +130,7 @@ async function sourceData(stateDir, persistence, registry) {
     const chatId = chatKey.slice(index + 1).split(':group:')[0]
     current[hash(chatKey)] = binding.sessionId
     bindings.set(binding.sessionId, { botId, chatId, chatRef: hash(chatId),
+      chatType: binding.chatType === 'group' || binding.chatType === 'p2p' ? binding.chatType : undefined,
       lastActiveAt: ms(binding.lastActiveAt), createdAt: ms(binding.createdAt),
       bindingArchived: binding.archived === true })
   }
@@ -142,11 +143,21 @@ async function sourceData(stateDir, persistence, registry) {
     tasks.set(id, task.title || '定时任务')
     activeTasks[id] = 1
   }
+  const groupChatIds = new Set()
   const nameMap = new Map()
   for (const group of managedConfig?.config?.groups || []) {
+    if (typeof group.chatId === 'string') groupChatIds.add(group.chatId)
     if (typeof group.chatId === 'string' && typeof group.name === 'string') {
       nameMap.set(group.chatId, group.name.slice(0, 100))
     }
+  }
+  // Feishu uses `oc_` for both group and p2p chat ids, so the prefix is NOT a
+  // chat type. Prefer the type recorded from the inbound event; for older
+  // bindings fall back to the configured group list and otherwise p2p.
+  const chatTypeOf = binding => {
+    if (binding?.chatType === 'group' || binding?.chatType === 'p2p') return binding.chatType
+    if (binding?.chatId && groupChatIds.has(binding.chatId)) return 'group'
+    return 'p2p'
   }
   const archived = new Set(registry.archivedSessionIds || [])
   // A stale snapshot is sufficient for offline history inventory but never
@@ -175,8 +186,7 @@ async function sourceData(stateDir, persistence, registry) {
       id, idRef: hash(id), root: canonical, legacy,
       botId: binding?.botId || (isScheduled ? 'schedule' : ''),
       chatId: binding?.chatId || null, chatRef: binding?.chatRef || null,
-      chatName: chatName || null, type: isScheduled ? 'schedule' :
-        (binding?.chatId?.startsWith('oc_') ? 'group' : 'p2p'),
+      chatName: chatName || null, type: isScheduled ? 'schedule' : chatTypeOf(binding),
       scheduleTitle: scheduleTitle || null, bound: Boolean(binding),
       bindingArchived: binding?.bindingArchived === true,
       status, running, archived: archived.has(id), orphan: !binding && !scheduleTitle,
