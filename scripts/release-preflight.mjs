@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Offline prerelease gate: validate the two installable tarballs. Never publish.
+// Offline release gate: validate the two installable tarballs. Never publish.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -72,11 +72,16 @@ try {
   mkdirSync(dist, { recursive: true })
   const packages = []
   let sharedEngines
+  let releaseChannel
   for (const spec of specs) {
     const pkg = JSON.parse(readFileSync(path.join(root, spec.dir, 'package.json'), 'utf8'))
     if (pkg.name !== spec.name) fail('unexpected package name: ' + pkg.name)
-    if (!/^\d+\.\d+\.\d+-(?:alpha|beta|rc)\.\d+(?:\+[\w.-]+)?$/.test(pkg.version))
-      fail(pkg.name + ': use a prerelease version, not a stable version')
+    if (!/^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(pkg.version))
+      fail(pkg.name + ': invalid release version (stable, alpha, beta or rc expected)')
+    const channel = pkg.version.includes('-') ? 'prerelease' : 'stable'
+    if (releaseChannel && channel !== releaseChannel)
+      fail('Gateway and Admin cannot mix stable and prerelease channels')
+    releaseChannel = channel
     if (!pkg.dsh?.bundle?.patch || !pkg.engines?.dsh || !pkg.engines?.node)
       fail(pkg.name + ': missing DSH manifest or engine constraints')
     const engines = JSON.stringify(pkg.engines)
@@ -104,7 +109,7 @@ try {
       ' entries; ' + checkedImports + ' imports checked')
   }
   writeFileSync(path.join(dist, 'release-manifest.json'),
-    JSON.stringify({ schemaVersion: 1, channel: 'prerelease', packages }, null, 2) + '\n')
+    JSON.stringify({ schemaVersion: 1, channel: releaseChannel, packages }, null, 2) + '\n')
   writeFileSync(path.join(dist, 'SHA256SUMS'),
     packages.map(pkg => pkg.sha256 + '  ' + pkg.file).join('\n') + '\n')
   console.log('PASS: two tarballs verified; release manifest and SHA256SUMS generated. No publish performed.')
