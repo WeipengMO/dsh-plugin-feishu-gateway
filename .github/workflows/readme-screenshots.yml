@@ -45,5 +45,8 @@ jobs:
             echo 'No screenshot changes'
           else
             git commit -m 'docs: capture Chrome screenshots for README'
+            # README/documentation commits may land while Chrome is capturing.
+            # Rebase our generated PNG commit instead of losing the screenshots.
+            git pull --rebase origin "$GITHUB_REF_NAME"
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
