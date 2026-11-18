@@ -9,7 +9,7 @@
 
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **测试版发布渠道**：通过 npm 的 `beta` 标签安装两个插件；[GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases) 提供对应版本的安装包及 SHA256 校验文件。
+> **当前测试版：`0.1.0-beta.2`**。通过 npm 的 `beta` 标签安装两个插件；[GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.2) 也提供同版安装包及 SHA256 校验文件。
 
 > **版本说明**：源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。npm 徽章显示的是**已发布版本**，不代表当前源码或 VPS 安装的版本。测试与升级前请核对两个安装包的具体版本。
 
@@ -50,7 +50,7 @@ dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@beta
 dsh plugin --profile web add dsh-plugin-feishu-admin@beta
 ```
 
-可以在 [Gateway npm](https://www.npmjs.com/package/dsh-plugin-feishu-gateway) 和 [Admin npm](https://www.npmjs.com/package/dsh-plugin-feishu-admin) 查看可用版本。用于生产或需要精确复现的环境，建议把 `@beta` 替换成已验证的具体版本号（例如 `@0.1.0-beta.1`），不要使用 `@latest` 安装测试版。安装后检查两个 Profile：
+可以在 [Gateway npm](https://www.npmjs.com/package/dsh-plugin-feishu-gateway) 和 [Admin npm](https://www.npmjs.com/package/dsh-plugin-feishu-admin) 查看可用版本。用于生产或需要精确复现的环境，建议把 `@beta` 替换成已验证的具体版本号（例如 `@0.1.0-beta.2`），不要使用 `@latest` 安装测试版。安装后检查两个 Profile：
 
 ```bash
 dsh --profile feishu-channel --dump-config
@@ -59,14 +59,14 @@ dsh --profile web --dump-config
 
 #### 从 GitHub Release 安装（可选）
 
-如果你更愿意下载安装包，可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases) 选择对应测试版，下载 Gateway、Admin 的 `.tgz` 和 `SHA256SUMS`，放在 DSH 主机同一个目录。以下以 `0.1.0-beta.1` 为例：
+如果你更愿意下载安装包，可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases) 选择对应测试版，下载 Gateway、Admin 的 `.tgz` 和 `SHA256SUMS`，放在 DSH 主机同一个目录。以下以 `0.1.0-beta.2` 为例：
 
 ```bash
 cd /path/to/downloads
 sha256sum -c SHA256SUMS  # macOS: shasum -a 256 -c SHA256SUMS
 
-dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
-dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.2.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.2.tgz
 ```
 
 若校验失败请不要安装。上述两种方式二选一，首次部署仍需要配置并启动独立的飞书通道。
