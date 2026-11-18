@@ -44,14 +44,31 @@ dsh --profile web --dump-config
 
 **安装包更新不等于常驻服务已重启加载。** 首次配置飞书 App ID/Secret、白名单、权限、长连接和系统服务的完整步骤见 **[首次部署](docs/GETTING-STARTED.md)**。已经部署过的用户请直接阅读 **[升级和运维](docs/OPERATIONS.md)**。
 
+## 界面预览
+
+以下截图由 **Google Chrome** 对仓库当前的 Web Admin React 前端进行渲染。为避免暴露凭据、聊天内容和服务器信息，截图使用本地**演示数据**，并非真实飞书租户的运行快照。
+
+**管理后台 · 总览**
+
+![飞书管理后台总览（Chrome 渲染，演示数据）](docs/screenshots/admin-overview.png)
+
+**模型与连接**
+
+![飞书管理后台模型与连接（Chrome 渲染，演示数据）](docs/screenshots/admin-model-routing.png)
+
+**DSH 设置 · 飞书 Gateway 凭据**
+
+![DSH 飞书 Gateway 设置页（Chrome 渲染，演示数据）](docs/screenshots/gateway-settings.png)
+
 ## 管理界面怎么用
 
-在 DSH Web 左侧打开 **飞书管理**：
+在 DSH Web 左侧打开 **飞书管理**；凭据设置位于 DSH 设置中的 **飞书 Gateway**：
 
 | 入口 | 管理内容 |
 | --- | --- |
 | 总览 | Gateway 连接状态、运行摘要 |
-| 会话与消息 | **会话管理**、实时任务、消息投递 |
+| 会话管理 | 对话历史、已归档、聊天关联与安全整理 |
+| 任务与消息 | 实时任务与消息投递 |
 | 定时任务 | 创建、暂停、运行、删除任务及查看执行历史 |
 | 接入与权限 | 机器人、群聊、成员白名单和工具执行策略 |
 | Agent 档案 | 飞书专用身份、指令、记忆文件与历史版本 |
