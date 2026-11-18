@@ -23,13 +23,14 @@ const sdkState = vi.hoisted(() => ({
   suppressReady: false,
 }))
 
-// https-proxy-agent@5 is a CommonJS factory; mock it so tests never build a
-// real agent and can assert exactly which URL the transport selected.
+// Mock the named constructor; no outgoing proxy connections occur during tests.
 vi.mock('https-proxy-agent', () => ({
-  __esModule: true,
-  default: (url: string) => {
-    sdkState.proxyAgentCalls.push(url)
-    return { mockedAgentFor: url }
+  HttpsProxyAgent: class {
+    readonly mockedAgentFor: string
+    constructor(url: string) {
+      sdkState.proxyAgentCalls.push(url)
+      this.mockedAgentFor = url
+    }
   },
 }))
 
