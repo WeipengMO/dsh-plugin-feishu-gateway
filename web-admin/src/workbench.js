@@ -326,6 +326,7 @@ function Workbench() {
   const [botUnsaved, setBotUnsaved] = useState(false)
   const [execUnsaved, setExecUnsaved] = useState(false)
   const [settingsUnsaved, setSettingsUnsaved] = useState(false)
+  const [scheduleUnsaved, setScheduleUnsaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState('')
@@ -375,7 +376,8 @@ function Workbench() {
     : undefined
   const online = health?.status === 'ok'
   const refresh = () => { void load() }
-  const dirtyForCurrent = selected === 'agent-profile' ? profileUnsaved
+  const dirtyForCurrent = selected === 'automation' ? scheduleUnsaved
+    : selected === 'agent-profile' ? profileUnsaved
     : selected === 'skills' ? skillsUnsaved
     : selected === 'advanced' ? settingsUnsaved
     : selected === 'channels' ? sectionTab.channels === 'bots' ? botUnsaved
@@ -507,7 +509,7 @@ function Workbench() {
     // `/state` is passed through so the delivery target select is constrained
     // to configured bots, allowlist users and enabled groups without a second
     // round trip. Rendered only when the workbench has a valid state.
-    body = h(SchedulePanel, { state, onChanged: load })
+    body = h(SchedulePanel, { state, onChanged: load, onDirtyChange: setScheduleUnsaved })
   } else if (selected === 'conversations' || selected === 'analytics' || selected === 'operations') {
     body = h(OpsPage, { kind: sectionTab[selected], ops, approvals, onConfig, onCommand,
       onApprovalsRefresh: load })

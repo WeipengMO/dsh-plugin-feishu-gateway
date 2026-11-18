@@ -778,3 +778,12 @@ test('UX regression: operations wording distinguishes queued actions from comple
   assert.match(pages, /飞书审批卡片/)
   assert.match(pages, /wbStateLabel\(item.state\)/)
 })
+
+test('UX regression: schedule draft is guarded across workbench navigation', () => {
+  const schedule = readFileSync(path.join(root, 'src/schedule-panel.js'), 'utf8')
+  assert.match(workbench, /selected === 'automation' \? scheduleUnsaved/)
+  assert.match(workbench, /onDirtyChange: setScheduleUnsaved/)
+  assert.match(schedule, /const formDirty = formOpen && JSON.stringify\(form\) !== formBaseline/)
+  assert.match(schedule, /setFormBaseline\(JSON.stringify\(next\)\)/)
+  assert.match(schedule, /onDirtyChange\?\.\(formDirty\)/)
+})

@@ -153,8 +153,8 @@ test('approvals tab renders pending, permanent rules and recent decisions', () =
   assert.match(text, /超时/)
   assert.match(text, /lark-cli im \+send/)
   // The page must state that revoke is only authoritative after the Gateway acts.
-  assert.match(text, /approval-revoke/)
-  assert.match(text, /Gateway 处理该请求后永久授权才真正失效/)
+  assert.match(text, /撤销申请需要由飞书通道处理/)
+  assert.match(text, /原授权仍可能有效/)
 })
 
 test('approvals tab renders an unavailable model without fabricating rows', () => {

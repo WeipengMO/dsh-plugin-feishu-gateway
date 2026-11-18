@@ -155,7 +155,7 @@ function SchedStatusPill({ value }) {
     h('span', { className: 'fgw-dot' }), labels[status] || schedBound(status, 32))
 }
 
-function SchedulePanel({ state, onChanged }) {
+function SchedulePanel({ state, onChanged, onDirtyChange }) {
   const [model, setModel] = useState(null)
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
@@ -171,9 +171,15 @@ function SchedulePanel({ state, onChanged }) {
   const [form, setForm] = useState(schedDefaultForm())
   const [editing, setEditing] = useState(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [formBaseline, setFormBaseline] = useState('')
   const [preview, setPreview] = useState(null)
   const [runTask, setRunTask] = useState('all')
   const [runDate, setRunDate] = useState('')
+  const formDirty = formOpen && JSON.stringify(form) !== formBaseline
+  useEffect(() => {
+    onDirtyChange?.(formDirty)
+    return () => onDirtyChange?.(false)
+  }, [formDirty, onDirtyChange])
 
   const loadModel = useCallback(async () => {
     setLoading(true)
@@ -264,16 +270,19 @@ function SchedulePanel({ state, onChanged }) {
   const setF = (key, value) => setForm(previous => ({ ...previous, [key]: value }))
 
   const openCreate = () => {
-    setEditing(null); setForm(schedDefaultForm()); setFormOpen(true)
+    const next = schedDefaultForm()
+    setEditing(null); setForm(next); setFormBaseline(JSON.stringify(next)); setFormOpen(true)
     setTab('tasks'); setExpanded(null); setPreview(null)
   }
   const openEdit = task => {
-    setEditing(task); setForm(schedFormFromTask(task)); setFormOpen(true)
+    const next = schedFormFromTask(task)
+    setEditing(task); setForm(next); setFormBaseline(JSON.stringify(next)); setFormOpen(true)
     setTab('tasks'); setExpanded(null); setPreview(null)
   }
   const openClone = task => {
     const copy = schedFormFromTask(task)
-    setEditing(null); setForm({ ...copy, title: (copy.title + '（副本）').slice(0, 120) })
+    const next = { ...copy, title: (copy.title + '（副本）').slice(0, 120) }
+    setEditing(null); setForm(next); setFormBaseline(JSON.stringify(next))
     setFormOpen(true); setTab('tasks'); setExpanded(null); setPreview(null)
   }
   const save = () => {

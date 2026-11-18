@@ -62,11 +62,11 @@ function FeishuSessionCenter({ compaction, compactionStale = false }) {
         '飞书聊天关联决定下一条消息沿用哪段 DSH 对话。解除关联只创建新上下文，不会删除旧聊天记录。'),
       h(FeishuSessionsInventory,{})),
     h('details',{className:'fgw-session-details fgw-context-compaction'},
-      h('summary',null,'上下文压缩 · '+(compactionStale?'运行状态待更新':
+      h('summary',null,'上下文自动压缩 · '+(compactionStale?'运行状态待更新':
         compaction?.available===true && compaction?.automaticCompletedInProcess>0?'已观察到自动压缩':
         compaction?.available===true?'原生引擎可用 · 自动状态待验证':
         compaction?.available===false?'未检测到原生压缩引擎':'运行状态未同步')),
-      h('p',null,'DSH 原生 compaction-basic 决定何时自动压缩；飞书不会按累计 Token 用量重复触发，也不会创建第二套摘要。'),
+      h('p',null,'历史对话接近上下文容量时，DSH 可以压缩旧内容以继续对话。该功能由原生压缩组件负责。'),
       h('div',{className:'fgw-session-meta'},
         h('p',null,'自动压缩：',compactionStale?'状态待更新':
           compaction?.available!==true?'尚不可确认':
