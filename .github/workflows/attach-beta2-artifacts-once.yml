@@ -66,3 +66,33 @@ jobs:
             dist/SHA256SUMS dist/release-manifest.json \
             --repo "$GITHUB_REPOSITORY" --clobber
           gh release view v0.1.0-beta.2 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          ## v0.1.0-beta.2 — npm Trusted Publishing beta
+
+          This release contains both independently installable DSH plugins:
+          - `dsh-plugin-feishu-gateway@0.1.0-beta.2` (Profile `feishu-channel`)
+          - `dsh-plugin-feishu-admin@0.1.0-beta.2` (Profile `web`)
+
+          Install the current beta channel:
+          ```bash
+          dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@beta
+          dsh plugin --profile web add dsh-plugin-feishu-admin@beta
+          ```
+
+          **What's new:** README and first-time deployment steps prioritize npm installation;
+          both packages use the same beta version and were published through GitHub Actions
+          using npm Trusted Publishing (OIDC), with signed provenance and no stored npm token.
+
+          **Validation:** CI, Security, archive validation and SHA256 verification passed.
+          Both npm packages were published successfully and verified through npm registry.
+          The two `.tgz` files attached here are the identical checked release artifacts.
+
+          **Compatibility:** Node.js >=24.9.0, DSH >=0.2.2-rc.1 <0.3.0-0.
+          **Limitations:** automated physical deletion of DSH history and bidirectional
+          image/file transfer are not included. Real tenant deployment must still be validated
+          in each environment.
+
+          See [README](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/blob/main/README.md)
+          and [publishing guide](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/blob/main/docs/PUBLISHING.md).
+          EOF
+          gh release edit v0.1.0-beta.2 --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"
