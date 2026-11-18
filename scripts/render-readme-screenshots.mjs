@@ -100,6 +100,13 @@ try{
    '--disable-dev-shm-usage','--hide-scrollbars','--force-device-scale-factor=1',
    '--window-size='+width+','+height,'--virtual-time-budget=4000',
    '--screenshot='+file,url],{timeout:45000,maxBuffer:1024*1024})
+  const {stdout:dom}=await execFileAsync(chrome,['--headless=new','--no-sandbox',
+   '--disable-dev-shm-usage','--disable-gpu','--dump-dom',
+   '--virtual-time-budget=4000',url],{timeout:45000,maxBuffer:8*1024*1024})
+  const expected=view==='overview'?'飞书机器人运行正常':
+    view==='models'?'Agent 预设（飞书工作模式）':'飞书 Gateway 凭据'
+  if(!dom.includes(expected) || (!dom.includes('fga-root') && !dom.includes('fgw-root')))
+    throw Error('React view did not render correctly: '+view)
   const size=fs.statSync(file).size
   if(size<15000)throw Error('Screenshot unexpectedly small: '+name)
   console.log('Google Chrome rendered '+name+' ('+size+' bytes)')
