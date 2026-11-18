@@ -80,5 +80,9 @@
     "e2e:feishu": "node scripts/e2e/run.mjs feishu --llm real",
     "release:check": "node scripts/release-preflight.mjs"
   },
-  "packageManager": "pnpm@12.18.0"
+  "packageManager": "pnpm@12.18.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WeipengMO/dsh-plugin-feishu-gateway"
+  }
 }
