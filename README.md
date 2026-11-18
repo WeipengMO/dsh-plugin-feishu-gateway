@@ -86,7 +86,7 @@ dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
 
 1. 进入 **DSH Web → 设置 → 飞书 Gateway**，填写飞书应用的 **App ID** 和 **App Secret**。若使用独立通道服务，也可以按[首次部署指南](docs/GETTING-STARTED.md)通过受保护的环境变量文件配置。
 2. 进入 **飞书管理 → 接入与权限**，添加允许与机器人对话的用户 `open_id`。**白名单为空时，所有私聊均会被拒绝**；群聊默认关闭，需要单独配置。
-3. 确认 `feishu-channel` 的 Agent 和模型可用，并按照[部署与启动说明](docs/GETTING-STARTED.md#4-启动通道)启动通道进程或 systemd 服务。安装包更新不会自动重启已经运行的进程。
+3. 确认 `feishu-channel` 的 Agent 和模型可用，并按照[部署与启动说明](docs/GETTING-STARTED.md#4-启动通道)启动通道进程或 systemd 服务。**仓库提供的启动脚本不包含在 npm 安装包中，需要单独获取**；安装包更新不会自动重启已经运行的进程。
 
 **不要**把真实 App Secret 写进 Git、README 或截图；不要同时运行两个使用同一 App ID 的 Gateway。
 
@@ -104,7 +104,7 @@ dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
 
 ### 从源码构建（仅开发者需要）
 
-普通用户**无需**下载源码、安装 pnpm 或运行测试。只有需要修改插件或验证开发分支时，才使用：
+普通用户**无需自行编译**安装包；如需使用仓库提供的服务启动脚本，可以单独获取该脚本。只有需要修改插件或验证开发分支时，才使用下方源码构建命令：
 
 ```bash
 git clone https://github.com/WeipengMO/dsh-plugin-feishu-gateway.git
