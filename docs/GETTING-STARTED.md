@@ -11,7 +11,34 @@
 
 完整的事件、权限与平台操作见 [飞书应用配置](FEISHU-APP.md)；群聊独立见 [群聊管理](GROUP-CHAT.md)。
 
-## 2. 构建两个独立安装包
+## 2. 安装 Gateway 和 Web Admin
+
+插件分为两个包：**Gateway 安装到 `feishu-channel` Profile，Web Admin 安装到 `web` Profile**，请勿交叉安装。安装前先确认相应 Profile 已正确创建并配置 DSH Agent/模型及 Web 运行时。
+
+**目前推荐 GitHub 测试包（v0.1.0-beta.1）：** 在 [Releases 页面](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 下载两个 `.tgz` 和 `SHA256SUMS` 到 DSH 主机上的同一目录。仓库在公开前仅对授权用户可见。
+
+```bash
+# 替换为存放安装包的目录
+cd /path/to/downloads
+sha256sum -c SHA256SUMS
+
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+dsh --profile feishu-channel --dump-config
+dsh --profile web --dump-config
+```
+
+如果两个包已经发布到 npm，可以改用以下命令。先用 `npm view <包名>@0.1.0-beta.1 version` 核对版本可用；**GitHub Release 创建不代表 npm 已发布**。
+
+```bash
+dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
+dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
+```
+
+安装程序不会自动配置 DSH Agent、LLM 或独立服务。初次 Profile 配置请参照仓库[示例 patch](../cordis.patch.yml)和[测试 Profile 指南](TEST-PROFILE.md)；不要直接照抄他人绝对路径或飞书 App ID。
+
+<details>
+<summary>开发者：从源码自行构建</summary>
 
 ```bash
 git clone https://github.com/WeipengMO/dsh-plugin-feishu-gateway.git
@@ -19,21 +46,12 @@ cd dsh-plugin-feishu-gateway
 pnpm install --frozen-lockfile
 pnpm run verify
 pnpm run pack
-
-GATEWAY_VERSION=$(node -p "require('./package.json').version")
-ADMIN_VERSION=$(node -p "require('./web-admin/package.json').version")
+pnpm run release:check
 ```
 
-**注意**：上面命令构建的是当前检出的 Git 分支，不代表 npm 的正式发布版本。不要把开发分支的功能或版本直接当作生产发布。
+两个安装包位于 `dist/`。源码构建只面向需要修改或测试开发分支的用户。
 
-```bash
-dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-$GATEWAY_VERSION.tgz"
-dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-$ADMIN_VERSION.tgz"
-dsh --profile feishu-channel --dump-config
-dsh --profile web --dump-config
-```
-
-核对 `web` Profile 中只有 Admin，`feishu-channel` 中只有 Gateway。不要同时在 `web` 中运行第二个 Gateway。首次 Profile 配置请参照仓库 [示例 patch](../cordis.patch.yml) 和 [测试 Profile 指南](TEST-PROFILE.md)；**不要直接照抄其他用户的绝对路径或机器人 ID**。
+</details>
 
 ## 3. 配置凭据与访问范围
 
@@ -50,7 +68,7 @@ FEISHU_GATEWAY_DEFAULT_APP_SECRET=替换为你自己的AppSecret
 
 ## 4. 启动通道
 
-项目提供一个长期运行的启动脚本，支持以下只读状态和运行命令：
+项目提供一个长期运行的启动脚本，支持以下状态查询和运行命令。**该脚本不包含在 npm 安装包中**：若使用这种启动方式，需要另外获取仓库中的 `scripts/channel/start-feishu-channel.sh` 并在其所在仓库目录运行；仅安装两个 `.tgz` 不会自动启动长连接。
 
 ```bash
 scripts/channel/start-feishu-channel.sh --status
