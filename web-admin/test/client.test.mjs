@@ -810,3 +810,17 @@ test('model inputs are searchable comboboxes without duplicate native selectors'
   assert.match(source, /event.key === 'ArrowDown'/)
   assert.match(source, /event.key === 'Escape'/)
 })
+
+test('usage trends expose real pointer, click and keyboard data inspection', () => {
+  const panel = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  const chart = panel.slice(panel.indexOf('function UsageTrendChart('),
+    panel.indexOf('function UsagePanel()'))
+  assert.match(chart, /onPointerMove: movePoint/)
+  assert.match(chart, /onClick: togglePoint/)
+  assert.match(chart, /onKeyDown: onChartKeys/)
+  assert.match(chart, /fgw-usage-chart-inspector/)
+  assert.match(chart, /fgw-usage-hover-guide/)
+  assert.match(chart, /setFocusedIndex\(next\)/)
+  assert.match(css, /\.fgw-usage-chart-inspector\{/)
+})

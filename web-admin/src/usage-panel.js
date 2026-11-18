@@ -259,6 +259,8 @@ function UsageTrendChart({ title, value, unit, rows, kind, description, granular
   // zoom, embedded workbench). Measure this chart's actual available width.
   const rootRef = React.useRef(null)
   const [compact, setCompact] = useState(false)
+  const [focusedIndex, setFocusedIndex] = useState(null)
+  const [pinned, setPinned] = useState(false)
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
@@ -302,6 +304,42 @@ function UsageTrendChart({ title, value, unit, rows, kind, description, granular
     (amount === null ? '无历史覆盖' : wbCount(amount) + ' ' + unit) +
     (row.partial ? ' · 部分覆盖' : '')
   const hasData = known.length > 0
+  const currentIndex = Number.isInteger(focusedIndex) && focusedIndex >= 0 &&
+    focusedIndex < rows.length ? focusedIndex : null
+  const currentRow = currentIndex === null ? null : rows[currentIndex]
+  const currentValue = currentRow ? currentRow[kind] : null
+  const pointAt = event => {
+    if (!rows.length) return null
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (!rect.width) return null
+    const axisX = (event.clientX - rect.left) / rect.width * viewWidth
+    const ratio = rows.length <= 1 ? 0 : (axisX - left) / plotWidth
+    return Math.max(0, Math.min(rows.length - 1,
+      Math.round(ratio * (rows.length - 1))))
+  }
+  const movePoint = event => {
+    if (pinned) return
+    const next = pointAt(event)
+    if (next !== null) setFocusedIndex(next)
+  }
+  const togglePoint = event => {
+    const next = pointAt(event)
+    if (next === null) return
+    if (pinned && currentIndex === next) { setPinned(false); setFocusedIndex(null) }
+    else { setFocusedIndex(next); setPinned(true) }
+  }
+  const onChartKeys = event => {
+    if (!rows.length) return
+    if (event.key === 'Escape') { setPinned(false); setFocusedIndex(null); return }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' ||
+        event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 :
+        Math.max(0, Math.min(rows.length - 1,
+          (currentIndex === null ? 0 : currentIndex) + (event.key === 'ArrowRight' ? 1 : -1)))
+      setFocusedIndex(next); setPinned(true)
+    }
+  }
   return h('section', { ref: rootRef, className: 'fgw-usage-chart-card' },
     h('div', { className: 'fgw-usage-chart-heading' },
       h('div', null,
@@ -310,7 +348,11 @@ function UsageTrendChart({ title, value, unit, rows, kind, description, granular
       h('strong', null, wbCount(value))),
     hasData ? h('div', { className: 'fgw-usage-chart-canvas' },
       h('svg', { className: 'fgw-usage-svg fgw-usage-svg-' + kind,
-        viewBox: '0 0 ' + viewWidth + ' 262', role: 'img', 'aria-label': title + '趋势图' },
+        viewBox: '0 0 ' + viewWidth + ' 262', role: 'group', tabIndex: 0,
+        'aria-label': title + '趋势图。鼠标移动查看数据，点击锁定；键盘方向键逐点查看，Escape 关闭',
+        onPointerMove: movePoint,
+        onPointerLeave: () => { if (!pinned) setFocusedIndex(null) },
+        onClick: togglePoint, onKeyDown: onChartKeys },
         h('defs', null,
           h('linearGradient', { id: 'fgw-usage-requests-gradient', x1: '0',
             x2: '0', y1: '0', y2: '1' },
@@ -352,11 +394,28 @@ function UsageTrendChart({ title, value, unit, rows, kind, description, granular
             r: rows.length <= 40 ? 3 : 2,
             className: 'fgw-usage-area-dot' },
             h('title', null, titleFor(row, row.calls)))),
+        currentIndex !== null && h('line', { x1: x(currentIndex), x2: x(currentIndex),
+          y1: top, y2: bottom, className: 'fgw-usage-hover-guide',
+          'aria-hidden': true, pointerEvents: 'none' }),
+        currentIndex !== null && currentValue !== null &&
+          h('circle', { cx: x(currentIndex), cy: y(currentValue), r: 6,
+            className: 'fgw-usage-hover-point', 'aria-hidden': true,
+            pointerEvents: 'none' }),
         ...ticks.map(index => h('text', { key: 'tick-' + index,
           x: x(index), y: bottom + 22, textAnchor: 'middle',
           className: 'fgw-usage-axis fgw-usage-x-axis' },
           rows[index]?.label || ''))))
       : h('div', { className: 'fgw-usage-chart-empty' }, '当前时间段尚无可绘制的历史数据'),
+    h('div', { className: 'fgw-usage-chart-inspector', role: 'status', 'aria-live': 'polite' },
+      currentRow ? h(React.Fragment, null,
+        h('strong', null, currentRow.start +
+          (currentRow.end !== currentRow.start ? ' — ' + currentRow.end : '')),
+        h('span', null, currentValue === null ? '无历史记录' :
+          wbCount(currentValue) + ' ' + unit),
+        currentRow.partial && h('small', null, '部分数据未上报'),
+        pinned && h('button', { type: 'button', className: 'fgw-usage-chart-unpin',
+          onClick: () => { setPinned(false); setFocusedIndex(null) } }, '清除选择'))
+        : h('span', { className: 'fgw-muted' }, '将鼠标移到图上查看数值，点按可固定，方向键可逐项查看')),
     h('div', { className: 'fgw-usage-chart-foot' },
       h('span', null, '按' + ({ day: '日', week: '周', month: '月' }[granularity] || '日') +
         '展示 · 不补零'),

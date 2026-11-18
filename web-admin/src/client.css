@@ -1355,3 +1355,15 @@
 .fga-model-multiselect{overflow:visible}
 .fga-model-card{overflow:visible}
 .fgw-overview-footnote{font-size:12px;line-height:1.6;color:var(--muted-foreground,#8995a4);margin:0 0 4px}
+
+/* Readable chart inspector: hover, tap/click to pin, keyboard to inspect. */
+.fgw-usage-chart-canvas{position:relative}
+.fgw-usage-svg{cursor:crosshair;touch-action:pan-y;outline-offset:4px}
+.fgw-usage-svg:focus-visible{outline:2px solid var(--ring,var(--primary,#467cf4));border-radius:6px}
+.fgw-usage-hover-guide{stroke:var(--primary,#467cf4);stroke-width:1.4;stroke-dasharray:4 4;opacity:.85}
+.fgw-usage-hover-point{fill:var(--primary,#467cf4);stroke:var(--card,#fff);stroke-width:3}
+.fgw-usage-chart-inspector{min-height:38px;display:flex;flex-wrap:wrap;align-items:center;gap:5px 14px;padding:9px 12px;border-radius:8px;background:var(--muted,#8881);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}
+.fgw-usage-chart-inspector strong{font-weight:660}
+.fgw-usage-chart-inspector small{color:var(--muted-foreground,#8995a4)}
+.fgw-usage-chart-inspector>.fgw-muted{font-size:11px}
+.fgw-usage-chart-unpin{margin-left:auto;font:inherit;font-size:11px;color:var(--primary,#467cf4);padding:4px 6px;border:0;background:transparent;cursor:pointer}
