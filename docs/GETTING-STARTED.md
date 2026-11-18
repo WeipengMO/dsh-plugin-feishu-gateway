@@ -15,11 +15,11 @@
 
 插件分为两个包：**Gateway 安装到 `feishu-channel` Profile，Web Admin 安装到 `web` Profile**，请勿交叉安装。安装前先确认相应 Profile 已正确创建并配置 DSH Agent/模型及 Web 运行时。
 
-**推荐直接从 npm 安装**，不需要从 GitHub 下载源码、安装 pnpm 或自行编译：
+**推荐直接从 npm 的 beta 渠道安装**，不需要从 GitHub 下载源码、安装 pnpm 或自行编译；需要固定版本时把 `@beta` 替换成特定版本号：
 
 ```bash
-dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
-dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
+dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@beta
+dsh plugin --profile web add dsh-plugin-feishu-admin@beta
 
 dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
