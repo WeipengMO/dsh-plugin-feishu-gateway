@@ -18,9 +18,9 @@
 | Node.js | `v24.22.2` | `node -v` |
 | pnpm | `12.18.0` | `pnpm -v` |
 | npm | `11.13.0` | `npm -v` |
-| `@larksuiteoapi/node-sdk` | `1.76.0`（发布最新版，已安装） | `npm view` / `pnpm-lock.yaml` |
-| TypeScript | `5.9.3`（固定） | `devDependencies` |
-| Vitest | `3.2.7`（固定） | `devDependencies` |
+| `@larksuiteoapi/node-sdk` | `1.76.0`（记录时的锁定版本；不代表当前最新版） | `npm view` / `pnpm-lock.yaml` |
+| TypeScript | 历史版本 `5.9.3`；当前源码 `7.0.2` | `devDependencies` |
+| Vitest | 历史版本 `3.2.7`；当前源码 `4.1.12` | `devDependencies` |
 
 DSH CLI 自身声明 `"engines": { "node": ">=24.9.0" }`，本插件因此也声明 `>=24.9.0`
 （不是 Cordis 文档里更宽松的 `>=22.19.0` —— 运行 DSH 的约束更严格）。
@@ -160,11 +160,14 @@ SDK 依赖 `protobufjs`（有 postinstall）与 `ws`；pnpm 12 的构建脚本�
 
 ## 7. 复核命令
 
+以下版本号为历史实例。发布 RC 前还需核对当前两个 package.json 的 engines 与测试机真实 DSH 版本，并参照 [测试版发布检查](PRERELEASE.md) 记录双包验收。
+
 ```bash
-dsh --version                       # 应输出 0.2.2-rc.1
+dsh --version                       # 记录实际输出；不得假定仍为 0.2.2-rc.1
 node -p "require('./package.json').engines"
 pnpm run verify                     # typecheck + build + tests（数量以 CI 为准）
-pnpm pack --pack-destination dist   # 检查发布内容
-# 如需确认兼容性判定（只读）：
+pnpm run pack                       # 分别生成 Gateway 与 Admin 两个 tarball
+pnpm run release:check              # 检查双包入口、版本、文件与哈希
+# 如需复核历史 DSH 0.2.2-rc.1 的兼容性判定（只读）：
 node -e "const s=require('semver'); console.log(s.satisfies('0.2.2-rc.1','>=0.2.2-rc.1 <0.3.0-0',{includePrerelease:true}))"
 ```

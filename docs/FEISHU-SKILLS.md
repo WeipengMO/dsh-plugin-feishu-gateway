@@ -62,8 +62,8 @@ pnpm run verify
 node --test web-admin/test/skills-manager.test.mjs
 ~~~
 
-按仓库 README 的双 Profile 打包安装流程，将当前分支构建的 Gateway / Web Admin 安装到 feishu-channel / web Profile，随后重启服务。
+按仓库 README 的双 Profile 打包安装流程部署 Gateway / Web Admin。**发布前实机验收必须使用隔离测试 Profile**，不能覆盖正在运行的 `feishu-channel` / `web`；详见 [测试环境指南](TEST-PROFILE.md)。
 
 验收路径：新建→保存（默认停用）→启用→飞书 /new 触发→编辑→停用→/new 验证不再应用→删除。另测试未认证 API、超限、非法 YAML frontmatter、重复标记、版本冲突、移动端布局。
 
-此分支为开发验证版，不代表已发布到 npm 或已通过真实飞书租户验收。
+源码分支与 npm 发布状态是两件事；这份功能说明不证明当前版本已经正式发布或通过真实飞书租户验收。测试版还需完成 [双包发布检查](PRERELEASE.md)。

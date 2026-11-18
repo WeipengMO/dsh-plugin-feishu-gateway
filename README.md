@@ -1,8 +1,15 @@
 # DSH Feishu Gateway
 
+[![CI](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/actions/workflows/ci.yml)
+[![Security](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/actions/workflows/security.yml)
+[![Gateway npm](https://img.shields.io/npm/v/dsh-plugin-feishu-gateway?label=Gateway%20npm)](https://www.npmjs.com/package/dsh-plugin-feishu-gateway)
+[![Admin npm](https://img.shields.io/npm/v/dsh-plugin-feishu-admin?label=Admin%20npm)](https://www.npmjs.com/package/dsh-plugin-feishu-admin)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A524.9-4267b2)](package.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。会话管理第三轮 UI 与删除操作可查看 [PR #41](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/41)，状态以 GitHub 为准；请在测试环境验证后再部署。
+> **版本说明**：源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。npm 徽章显示的是**已发布版本**，不代表当前源码或 VPS 安装的版本。测试与升级前请核对两个安装包的具体版本。
 
 ## 能做什么
 
@@ -95,6 +102,12 @@ DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早�
 仓库通过 [Security CI](.github/workflows/security.yml) 在 PR、主分支更新以及定期扫描中执行：**Git 历史与当前源码的密钥泄露检测、依赖漏洞审计、npm 发布包隐私检查，以及 ClamAV 恶意文件扫描**。常规构建 CI 同时禁止将凭据、会话历史、数据库和日志打入发布包。
 
 安全扫描只提供分层风险检测，**不能保证所有代码绝对无恶意或绝对不泄露隐私**。如发现安全问题，请遵循 [安全报告与处理说明](SECURITY.md)，不要将敏感值粘贴到公开 Issue。公开仓库前还应审查完整 Git 历史，并在仓库规则中将 CI 和 Security 检查设为必需。
+
+## 开源前与测试版验收
+
+运行 `pnpm run pack` 后，执行 `pnpm run release:check` 可对 Gateway 和 Admin 两个 npm 安装包进行发行前检查，并生成 `dist/release-manifest.json` 和 `dist/SHA256SUMS`；CI 也会保存经过检查的双包工件。
+
+**CI 通过不等于真实 DSH / 飞书环境已经验收。** 请按照 [双包发布检查](docs/PRERELEASE.md) 在隔离环境确认安装、权限、群聊、定时任务、Web Admin、升级和回滚。此 CI 不会自动发布 npm。
 
 ## 安全与升级原则
 

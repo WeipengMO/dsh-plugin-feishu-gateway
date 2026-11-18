@@ -1,8 +1,8 @@
-# 飞书独立 Profile 网络代理配置流程（rc.10 起，rc.11 简化 UI）
+# 飞书 Gateway 网络代理：当前配置与旧版兼容
 
-> **网络代理实现参考**：本文记录 rc.10/rc.11 时代理方案与字段迁移，部分版本描述属于历史。当前操作入口是 **飞书管理 → 模型与连接 → 网络代理**；具体配置、升级与排障以 [运维手册](OPERATIONS.md) 和当前源码为准，勿按历史版本直接删除运行中的配置文件。
+> **当前操作**：使用 **飞书管理 → 模型与连接 → 网络代理**。文末保留 rc.9–rc.11 迁移背景；发布测试版请执行 [双包预发布门禁](PRERELEASE.md)。旧版回滚操作不应直接应用到现有生产配置，尤其不可手工删除正在使用的凭据或状态文件。
 
-目标：代理地址**直接在 DSH Web → 飞书管理 → 模型与配置 → 网络代理** 中填写、测试、保存、重启生效，
+代理地址可**直接在 DSH Web → 飞书管理 → 模型与连接 → 网络代理** 中填写、测试、保存并重启生效，
 不再需要手工编辑 `~/.dsh/feishu-channel.env` 或其它 Linux 配置文件。
 
 ## 1. 存储与优先级
@@ -41,7 +41,7 @@
   "fallbackDirect": true,
   "source": "managed",          // managed | env | none
   "configured": true,
-  "display": "http://100.75.51.18:2080",  // 去掉 userinfo/path/query，可给管理员看
+  "display": "http://proxy.example.invalid:8080",  // 示例域名；去掉 userinfo/path/query
   "envName": "FEISHU_CHANNEL_PROXY_URL",
   "envConfigured": true
 }
@@ -107,7 +107,7 @@
 
 ## 6. 前端（`web-admin/src/client.js`）
 
-「模型与配置 → 网络代理（仅飞书独立 Profile）」改为：
+当前「模型与连接 → 网络代理（仅飞书独立 Profile）」：
 
 - 开关「启用代理」；
 - 代理地址输入框（普通文本输入，直接显示，不做密码式遮挡），placeholder 示例 `http://127.0.0.1:7890`；
@@ -125,11 +125,11 @@
 - 旧管理端（rc.9）写入的 `{enabled,urlEnv,fallbackDirect}` 新 Gateway 继续接受；`urlEnv` 缺省为
   `FEISHU_CHANNEL_PROXY_URL`；
 - 新管理端未保存 URL 时行为与 rc.9 完全一致（环境变量文件仍可用）；
-- 回滚到 rc.9：删除 `network-proxy.json` 即可，环境变量路径不变。
+- **不要直接删除 `network-proxy.json` 作为回滚手段**：旧版迁移和当前配置的语义不同。先备份两个 Profile、管理配置和加密/受权限控制的代理文件；核对拟回滚版本能否读取现有字段，再在维护窗口通过 Web Admin 清除或按经过验证的版本迁移方案恢复。详见 [升级与回滚](OPERATIONS.md)。
 
 ## 8. 验收
 
-1. 在 UI 输入 `http://100.75.51.18:2080` → 测试连接成功 → 保存并重启 → 通道日志出现
+1. 在 UI 输入**测试环境真实可用**的代理地址（示例格式 `http://127.0.0.1:7890`，并不保证该端口存在）→ 测试连接成功 → 保存并重启 → 通道日志出现
    `proxy preflight passed`，飞书 WebSocket 连接成功；
 2. 输入错误地址（如 `http://127.0.0.1:9`）→ 测试连接返回 `ECONNREFUSED`，页面不出现 URL；
 3. 输入 `ftp://x`、带 path/query 的 URL → 保存被拒绝且提示明确；

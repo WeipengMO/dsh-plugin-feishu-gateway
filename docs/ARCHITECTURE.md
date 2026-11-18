@@ -1,6 +1,6 @@
-# 架构设计与官方 API 调研
+# 架构设计与官方 API 调研（含历史设计快照）
 
-> **技术背景 / 历史研究**：本文汇集 v0.1 初始架构与后续 DSH API 调研，包含阶段性方案。当前功能、安装及生命周期边界请以 [项目 README](../README.md)、[开发指南](DEVELOPMENT.md) 和真实源码为准；不要把本文旧版本的“未实现”描述当作最新结论。
+> **历史设计与 API 调研档案**：本文多处保留 v0.1–v0.2 设计时的“未实现 / 未验证”记录，不是当前 RC 功能清单。当前审批、受控群聊、定时任务和 Web Admin 都已有后续实现；参阅 [项目 README](../README.md)、[后台指南](WEB-ADMIN.md)、[审批](APPROVAL-STREAMING.md)、[群聊](GROUP-CHAT.md)、[定时任务](SCHEDULED-TASKS.md)。测试版发布状态以 [预发布检查](PRERELEASE.md) 与当前提交实机验收为准。
 
 > 本文是「先调研、再实现」交付物的设计部分。所有 DSH API 结论都来自本机已安装的
 > `@deepseek-ai/dsh@0.2.2-rc.1` 及其 `node_modules/@deepseek-ai/*` 的 `.d.ts` / `lib/*.js`，
@@ -69,12 +69,12 @@ Loader 的 `unwrapExports()` 取 `moduleNamespace.default ?? moduleNamespace`，
 
 `ctx.sessionController` 及其 `wait()` / `follow()` 保留为 v0.2.0 的可选增强（Web 管理面板 / 长任务状态）。
 
-### 1.4 其他官方接口的定位（v0.2.0 预留，v0.1.0 不引入）
+### 1.4 其他官方接口的定位（初始设计与后续实现混合快照）
 
 | 接口 | 官方入口 | 本版状态 |
 | --- | --- | --- |
 | Agent 模型/工作区绑定 | `AgentOptions { provider, model, reasoningEffort, maxTokens }` + `CreateAgentOptions.meta.cwd` | 已支持可选覆盖，默认继承 profile |
-| 审批 | `ctx.approval` / `ctx.on('approval/request', (req, next) => ...)`，四种 `ApprovalOutcome` | 未桥接；危险操作仍走 DSH 原生审批 |
+| 审批 | `ctx.approval` / `ctx.on('approval/request', (req, next) => ...)`，四种 `ApprovalOutcome` | **后续已桥接 DSH 原生审批请求**，飞书卡片仅为受限决策入口，不能绕过原生沙箱；见 [卡片与审批](APPROVAL-STREAMING.md) |
 | 定时主动通知 | `ctx.schedule`（原生 `ScheduleService`：`create` / `list` / `view` / `edit` / `run` / `history` / `deleteInactive` / `deliveryLimits`）；`target: { kind:'session', sessionId }` | 已桥接（Issue #19，开发分支）：`ctx.inject(['schedule'])` 取得原生服务，Web Admin → 跨 Profile `ops-control` 命令邮箱 → Gateway `ScheduleManager`；每个任务用 Gateway 自有 `session` 目标，经 `schedule/resolve-agent` waterfall 接回实时 Agent，`session/event` 结果走 DurableOutbox 发到飞书；`schedule-delivery.json` 仅为飞书投递旁路，**不另建 Cron 引擎**。详见 §2.5 |
 | Session 持久化 | `ctx.sessionPersistence` / `session/flush`，由 profile 的 `dsh-session-persistence-jsonl` 提供 | 由 DSH 自己负责；插件只持久化「聊天 → Session id」映射 |
 | 凭证 | `ctx.credentials.resolve(credentialRef(name))` / `modifyRecord` | 本版只用环境变量名（`apiKeyEnv` 同款模式），因为只需要固定变量 |
@@ -260,9 +260,9 @@ DurableOutbox（幂等键 schedule:<taskId>:<messageId>）→ 已授权飞书 ch
 | 服务声明 | `inject: ['agents','agentLoop','sessions','llm']` | 缺失时插件**不激活**而不是抛错 |
 | `SessionId` / `UserMessage` | 运行时字符串 + 动态 import 官方构造函数 | 避免编译期依赖 DSH 内部 branded 类型 |
 | 去重 vs 恢复 | 以 Inbox 为准；running/failed 不自动重放 | 避免重复执行不可逆 Agent 操作 |
-| 群聊 | 硬编码拒绝 | 需要 mention 解析、群隔离、审批策略，属于 v0.2.0 |
+| 群聊 | 已实现受控群聊 | v0.1 初期硬编码拒绝已被后续显式群策略、@ 规则和成员授权取代；见 [群聊说明](GROUP-CHAT.md) |
 | 存储 | 原子 JSON / JSONL | 零原生依赖、易审计；v0.2.0 可换 SQLite |
-| 真实凭据 | 完全不接触 | 用户明确要求；测试全 Mock |
+| 真实凭据 | 由受控环境变量或管理接口提供；密钥不进仓库 | **初期研发阶段仅 Mock** 的历史记录，不等于当前插件无法连接真实租户；见 [飞书应用配置](FEISHU-APP.md) |
 | `allow-version` | 绝不使用 | 兼容性靠如实声明 `engines.dsh` |
 
 ---
@@ -327,4 +327,4 @@ DurableOutbox（幂等键 schedule:<taskId>:<messageId>）→ 已授权飞书 ch
 - **本轮修复**：`turn/end` 的 `data.reason.kind === 'error'`（Agent 失败且无
   `assistant/message`）此前被当成成功 → 空回复 + `done` + 不隔离；现在仅该 kind
   抛出，复用既有 `markFailed` + `unbind` 路径，`aborted`/`interrupted` 不受影响。
-- 仍**未**在真实飞书租户 / 真实 Web profile 中验证；`dsh-web.service` 未受影响。
+- **该轮（2026-11-14）尚未在真实飞书租户 / Web Profile 中验证**；后续版本曾完成其他实机验收，但不能替代当前 RC 的全项 E2E。详见 [实机验收](E2E.md)。
