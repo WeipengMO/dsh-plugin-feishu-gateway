@@ -12,7 +12,7 @@ export const ALLOWED_PACKAGES = new Map([
 ])
 const PRIVATE_SEGMENT = /^(?:\.git|\.github|\.ssh|\.aws|\.feishu-gateway|node_modules|coverage|\.npmrc|\.netrc|\.env(?:\..*)?|admin-config\.json|feishu-channel\.env|credentials(?:\.json)?|secrets?(?:\.json)?|id_(?:rsa|ed25519)|known_hosts|authorized_keys)$/i
 const PRIVATE_EXTENSION = /\.(?:pem|p12|pfx|key|keystore|sqlite(?:3)?|db|db-wal|db-shm|jsonl(?:\.zstd)?|log|bak|old|swp)$/i
-const PRIVATE_WORD = /(?:^|[.-])(?:session-history|session-recording|private-key|access-token|secret-backup)(?:[.-]|$)/i
+const PRIVATE_WORD = /(?:^|[\/.-])(?:session-history|session-recording|private-key|access-token|secret-backup)(?:[.-]|$)/i
 
 export function validateEntries(packageName, entries) {
   const allowed = ALLOWED_PACKAGES.get(packageName)
