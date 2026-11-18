@@ -4,7 +4,9 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+const execFileAsync = promisify(execFile)
 
 const root=path.resolve(import.meta.dirname,'..')
 const output=path.join(root,'docs/screenshots')
@@ -94,10 +96,10 @@ try{
  ]){
   const file=path.join(output,name)
   const url='http://127.0.0.1:'+server.address().port+'/?view='+view
-  execFileSync(chrome,['--headless=new','--no-sandbox','--disable-gpu',
+  await execFileAsync(chrome,['--headless=new','--no-sandbox','--disable-gpu',
    '--disable-dev-shm-usage','--hide-scrollbars','--force-device-scale-factor=1',
    '--window-size='+width+','+height,'--virtual-time-budget=4000',
-   '--screenshot='+file,url],{timeout:45000,stdio:'pipe'})
+   '--screenshot='+file,url],{timeout:45000,maxBuffer:1024*1024})
   const size=fs.statSync(file).size
   if(size<15000)throw Error('Screenshot unexpectedly small: '+name)
   console.log('Google Chrome rendered '+name+' ('+size+' bytes)')
