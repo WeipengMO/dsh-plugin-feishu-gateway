@@ -59,10 +59,16 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
         sessionScope: x.sessionScope || 'group_sender',
       }))
       setPolicy(p); setSenders(s); setGroups(g)
+      setSenderDraft(''); setSenderHint(''); setExpanded({})
       setBaseline(signature(p, s, g))
     } catch (e) { setError(e.message || String(e)) }
   }, [])
   useEffect(() => { void fetchState() }, [fetchState])
+  const refreshWithGuard = () => {
+    if (busy || (dirty && !window.confirm('群聊设置还有未保存的修改，刷新会放弃这些内容。确定继续吗？'))) return
+    setNotice('')
+    void fetchState()
+  }
 
   const edit = (index, key, value) => setGroups(old =>
     old.map((g, i) => i === index ? { ...g, [key]: value } : g))
@@ -99,6 +105,10 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
   const save = async () => {
     if (!snapshot || busy) return
     setError(''); setNotice('')
+    if (senderDraft.trim()) {
+      setError('还有尚未加入白名单的成员 ID。请先点击「添加成员」，修正无效 ID，或清空输入框。')
+      return
+    }
     if (policy !== 'disabled' && senders.length === 0) {
       setError('启用群聊前，请先添加至少一位可信成员的 open_id 白名单。')
       return
@@ -285,7 +295,7 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
         notice && h('div', { role: 'status', className: 'fga-notice' }, notice)),
       h('div', { className: 'fgw-group-savebar-actions' },
         h('button', { className: 'fgw-refresh fgw-refresh-action', type: 'button', disabled: busy,
-          onClick: () => void fetchState() }, '刷新'),
+          onClick: refreshWithGuard }, '刷新'),
         h('button', { className: 'fgw-refresh fgw-ops-cta fgw-group-save', type: 'button',
           disabled: busy || !snapshot, onClick: save }, busy ? '保存中…' : '保存群聊策略'))))
 }

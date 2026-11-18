@@ -377,7 +377,6 @@ function Workbench() {
       sum + (Number.isSafeInteger(value) && value >= 0 ? value : 0), 0)
     : undefined
   const online = health?.status === 'ok'
-  const refresh = () => { void load() }
   const dirtyForCurrent = selected === 'automation' ? scheduleUnsaved
     : selected === 'agent-profile' ? profileUnsaved
     : selected === 'skills' ? skillsUnsaved
@@ -388,6 +387,14 @@ function Workbench() {
     : false
   const confirmLeave = () => !dirtyForCurrent ||
     window.confirm('此页面还有未保存的修改。离开会放弃这些修改，确定继续？')
+  const refresh = () => {
+    if (!confirmLeave()) return
+    void load()
+  }
+  // These pages have their own scoped refresh control; avoid a second,
+  // misleading full-Gateway refresh button in the global heading.
+  const hasLocalRefresh = (selected === 'channels' && sectionTab.channels === 'groups') ||
+    (selected === 'analytics' && ['usage', 'approvals'].includes(sectionTab.analytics))
   useEffect(() => {
     if (!dirtyForCurrent) return
     const guard = event => { event.preventDefault(); event.returnValue = '' }
@@ -554,7 +561,7 @@ function Workbench() {
           !tabs.length && h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected])),
         h('div', { className: 'fgw-top-actions' },
           selected !== 'agent-profile' && selected !== 'skills' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
-          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && selected !== 'sessions' &&
+          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && selected !== 'sessions' && !hasLocalRefresh &&
             h('button', { className: 'fgw-refresh fgw-refresh-action', type: 'button', disabled: updating,
               onClick: refresh }, updating ? '刷新中…' : '刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },

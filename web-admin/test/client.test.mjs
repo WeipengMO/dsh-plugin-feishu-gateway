@@ -909,3 +909,15 @@ test('security editor uses a consistent heading/field rhythm without duplicate h
   assert.match(css, /\.fga-savebar\{margin-top:24px/)
   assert.match(css, /@container \(max-width:760px\)/)
 })
+
+test('group refresh and global workbench refresh cannot silently discard unsaved changes', () => {
+  const group = readFileSync(path.join(root, 'src/group-panel.js'), 'utf8')
+  assert.match(group, /const refreshWithGuard = \(\) =>/)
+  assert.match(group, /dirty && !window.confirm\('群聊设置还有未保存/)
+  assert.match(group, /onClick: refreshWithGuard/)
+  assert.match(group, /if \(senderDraft.trim\(\)\)/)
+  assert.match(group, /setSenderDraft\(''\); setSenderHint\(''\); setExpanded\(\{\}\)/)
+  assert.match(workbench, /const refresh = \(\) => \{\s*if \(!confirmLeave\(\)\) return/)
+  assert.match(workbench, /const hasLocalRefresh =/)
+  assert.match(workbench, /!hasLocalRefresh &&/)
+})
