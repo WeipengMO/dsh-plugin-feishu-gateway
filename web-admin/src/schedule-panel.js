@@ -354,9 +354,8 @@ function SchedulePanel({ state, onChanged }) {
     if (form.kind === 'cron') return field('Cron 表达式（5 段）', textInput(form.expression,
       value => setF('expression', value), '0 9 * * 1-5', { maxLength: 200 }),
       '5 个数字段：分 时 日 月 周；仅数字，范围 0-59 / 0-23 / 1-31 / 1-12 / 0-7，支持 * , - / 与步长。')
-    const timeField = field('每天执行时间', h('input', { type: 'time', step: 1, className: 'fga-input',
-      value: form.time, onChange: event => setF('time', event.target.value) }),
-      '09:00:00', { maxLength: 12 }))
+    const timeField = field('执行时间', h('input', { type: 'time', step: 1, className: 'fga-input',
+      value: form.time, onChange: event => setF('time', event.target.value) }))
     if (form.kind === 'weekly') return h(React.Fragment, null, timeField,
       field('在星期几执行', h('div', { className: 'fgw-sched-weekdays' },
         SCHED_WEEK_LABELS.map((label, index) => {
