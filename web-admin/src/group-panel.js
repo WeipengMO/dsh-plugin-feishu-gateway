@@ -16,7 +16,7 @@ const GROUP_SCOPES = [
 const GROUP_OPEN_ID_RE = /^ou_[A-Za-z0-9_-]{2,128}$/
 const GROUP_CHAT_ID_RE = /^oc_[A-Za-z0-9_-]{2,128}$/
 
-function GroupManagementPanel({ onChanged }) {
+function GroupManagementPanel({ onChanged, onDirtyChange }) {
   const [snapshot, setSnapshot] = useState(null)
   const [policy, setPolicy] = useState('disabled')
   const [senders, setSenders] = useState([])
@@ -34,6 +34,10 @@ function GroupManagementPanel({ onChanged }) {
     .split(/[\s,，\n]+/).map(x => x.trim()).filter(Boolean))]
   const signature = (p, s, g) => JSON.stringify({ p, s, g })
   const dirty = !!snapshot && baseline !== signature(policy, senders, groups)
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
   const enabledCount = groups.filter(g => g.enabled).length
   const activePolicy = GROUP_POLICIES.find(p => p.value === policy) || GROUP_POLICIES[0]
 
@@ -172,11 +176,11 @@ function GroupManagementPanel({ onChanged }) {
           onClick: () => remove(i), 'aria-label': '移除该群组' }, '移除'))),
     expanded[i] && h('div', { className: 'fgw-group-detail' },
       h('div', { className: 'fgw-group-grid' },
-        field('群 chat_id', input(g.chatId, v => edit(i, 'chatId', v), 'oc_...'),
+        field('飞书群 ID（chat_id）', input(g.chatId, v => edit(i, 'chatId', v), 'oc_...'),
           '飞书群唯一标识，必填'),
         field('备注名称', input(g.name, v => edit(i, 'name', v), '例如：项目协作群'),
           '仅本地显示标签，不会向飞书查询'),
-        field('Session 隔离范围', h('select', { className: 'fga-input',
+        field('聊天上下文共享方式', h('select', { className: 'fga-input',
           value: g.sessionScope, onChange: e => edit(i, 'sessionScope', e.target.value) },
           GROUP_SCOPES.map(s => h('option', { key: s.value, value: s.value }, s.label))),
           '决定群成员之间是否共享对话上下文'),
@@ -191,7 +195,7 @@ function GroupManagementPanel({ onChanged }) {
       h('div', { className: 'fgw-group-summary-text' },
         h('h2', null, '群聊管理'),
         h('p', { className: 'fgw-muted' },
-          '先定全局策略与可信成员，再按需展开单个群的高级设置。配置仅在重启独立 Gateway 后生效。')),
+          '依次设置哪些群可以使用机器人、哪些成员允许触发，以及群内回复方式。保存后需重启飞书通道。')),
       h('div', { className: 'fgw-group-metrics' },
         h('div', { className: 'fgw-group-metric' },
           h('span', null, '当前策略'), h('strong', null, activePolicy.title)),

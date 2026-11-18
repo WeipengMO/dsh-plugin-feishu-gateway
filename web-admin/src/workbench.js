@@ -14,6 +14,11 @@ const WORKBENCH_NAV = [
   ['operations', '运维与诊断', '⌁'],
   ['advanced', '模型与连接', '⚙'],
 ]
+const WORKBENCH_GROUPS = [
+  { label: '日常管理', ids: ['overview', 'conversations', 'automation'] },
+  { label: '机器人与 Agent', ids: ['channels', 'agent-profile', 'skills', 'advanced'] },
+  { label: '统计与诊断', ids: ['analytics', 'operations'] },
+]
 const WORKBENCH_TABS = {
   conversations: [['sessions', '会话管理'], ['tasks', '实时任务'], ['messages', '消息投递']],
   channels: [['bots', '机器人'], ['groups', '群聊管理'], ['security', '安全与权限']],
@@ -41,8 +46,21 @@ function FeishuSidebarIcon({ size = 18 }) {
 
 function wbStatus(value) {
   if (value === 'connected' || value === 'active' || value === 'ok') return 'ok'
-  if (value === 'failed' || value === 'degraded' || value === 'stopped') return 'bad'
+  if (value === 'failed' || value === 'degraded' || value === 'stopped' || value === 'error') return 'bad'
   return 'neutral'
+}
+const WORKBENCH_STATE_LABELS = {
+  ok: '正常', connected: '已连接', active: '运行中', running: '执行中',
+  done: '已完成', completed: '已完成', queued: '等待执行',
+  pending: '等待中', idle: '空闲', paused: '已暂停',
+  failed: '失败', degraded: '异常', stopped: '已停止',
+  error: '错误', disabled: '已停用', unavailable: '不可用',
+  unknown: '未知', rejected: '已拒绝', retrying: '正在重试',
+  delivered: '已送达', sent: '已发送', uncertain: '结果待确认',
+  skipped: '已跳过', cancelled: '已取消', canceled: '已取消',
+}
+function wbStateLabel(value) {
+  return WORKBENCH_STATE_LABELS[value] || wbValue(value)
 }
 function wbValue(value) {
   return value === undefined || value === null ? '—' : String(value)
@@ -73,7 +91,7 @@ function WbBlock({ title, aside, children }) {
 function WbState({ value }) {
   const tone = wbStatus(value)
   return h('span', { className: 'fgw-pill fgw-pill-' + tone },
-    h('span', { className: 'fgw-dot' }), wbValue(value))
+    h('span', { className: 'fgw-dot' }), wbStateLabel(value))
 }
 function WbRow({ label, value, trailing }) {
   return h('div', { className: 'fgw-data-row' },
@@ -105,7 +123,7 @@ function botListIssue(list) {
   return ''
 }
 
-function BotManagementPanel({ state, health, onChanged }) {
+function BotManagementPanel({ state, health, onChanged, onDirtyChange }) {
   const bots = Array.isArray(state?.bots) ? state.bots : []
   const managed = Array.isArray(state?.config?.bots)
   const [draft, setDraft] = useState(() => bots.map(bot => ({ ...bot })))
@@ -121,6 +139,14 @@ function BotManagementPanel({ state, health, onChanged }) {
     setConfirmSource(null)
   }, [state?.revision])
   const issue = botListIssue(draft)
+  const effectiveBots = Array.isArray(state?.config?.bots) ? state.config.bots : bots
+  const botSignature = rows => JSON.stringify(rows.map(bot =>
+    ({ id: bot.id, domain: bot.domain, enabled: bot.enabled !== false })))
+  const dirty = managed && botSignature(draft) !== botSignature(effectiveBots)
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
   const changeBot = (index, key, value) => setDraft(current =>
     current.map((bot, i) => i === index ? { ...bot, [key]: value } : bot))
 
@@ -198,7 +224,7 @@ function BotManagementPanel({ state, health, onChanged }) {
             h('button', { className: 'fga-button fga-secondary', type: 'button',
               disabled: Boolean(testing) || saving || bot.enabled === false,
               onClick: () => testConnection(bot) },
-              testing === bot.id ? '检测中…' : '测试连接')),
+              testing === bot.id ? '检测中…' : '检查连接状态')),
           check && h('p', { className: 'fgw-bot-check' + (check.ok ? ' is-ok' : ''),
             role: 'status' }, check.message))
       }),
@@ -227,7 +253,7 @@ function BotManagementPanel({ state, health, onChanged }) {
       !managed && issue && h('p', { className: 'fgw-bot-help', role: 'status' },
         '暂不能切换：' + issue),
       h('p', { className: 'fgw-bot-help' },
-        'App ID / App Secret 仍在 DSH 设置 → 飞书 Gateway 中管理；不会在此显示完整凭据。')),
+        'App ID / App Secret 请到 DSH 设置 → 飞书 Gateway 修改。这里的「检查连接状态」只读取现有连接，不会发送测试消息。')),
     managed && h(WbBlock, { title: '编辑机器人', aside: '保存后需要重启飞书通道' },
       h('div', { className: 'fgw-bot-edit-list' },
         draft.map((bot, index) =>
@@ -296,6 +322,10 @@ function Workbench() {
   const [selected, setSelected] = useState('overview')
   const [profileUnsaved, setProfileUnsaved] = useState(false)
   const [skillsUnsaved, setSkillsUnsaved] = useState(false)
+  const [groupUnsaved, setGroupUnsaved] = useState(false)
+  const [botUnsaved, setBotUnsaved] = useState(false)
+  const [execUnsaved, setExecUnsaved] = useState(false)
+  const [settingsUnsaved, setSettingsUnsaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState('')
@@ -345,14 +375,37 @@ function Workbench() {
     : undefined
   const online = health?.status === 'ok'
   const refresh = () => { void load() }
+  const dirtyForCurrent = selected === 'agent-profile' ? profileUnsaved
+    : selected === 'skills' ? skillsUnsaved
+    : selected === 'advanced' ? settingsUnsaved
+    : selected === 'channels' ? sectionTab.channels === 'bots' ? botUnsaved
+      : sectionTab.channels === 'groups' ? groupUnsaved
+      : execUnsaved || settingsUnsaved
+    : false
+  const confirmLeave = () => !dirtyForCurrent ||
+    window.confirm('此页面还有未保存的修改。离开会放弃这些修改，确定继续？')
+  useEffect(() => {
+    if (!dirtyForCurrent) return
+    const guard = event => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [dirtyForCurrent])
+  const selectSection = id => {
+    if (id === selected || !confirmLeave()) return
+    setSelected(id)
+  }
   const onConfig = tab => {
+    if (!confirmLeave()) return
     if (tab === 'bots' || tab === 'permissions') {
       setSectionTab(current => ({ ...current, channels: tab === 'bots' ? 'bots' : 'security' }))
       setSelected('channels')
     } else setSelected('advanced')
   }
   const tabs = WORKBENCH_TABS[selected] || []
-  const changeTab = id => setSectionTab(current => ({ ...current, [selected]: id }))
+  const changeTab = id => {
+    if (sectionTab[selected] === id || !confirmLeave()) return
+    setSectionTab(current => ({ ...current, [selected]: id }))
+  }
   const onCommand = async (type, ref) => {
     const warning = type === 'cancel-task'
       ? '确认取消这个正在运行的任务？已经执行的外部操作不会自动回滚。'
@@ -371,12 +424,12 @@ function Workbench() {
   if (selected === 'overview') {
     body = h(React.Fragment, null,
       h('div', { className: 'fgw-metrics' },
-        h(WbMetric, { title: '网关健康', value: health?.status || '未知', caption: '实时 Gateway 诊断', tone: online ? 'good' : '' }),
+        h(WbMetric, { title: '服务状态', value: wbStateLabel(health?.status || 'unknown'), caption: '飞书消息接入状态', tone: online ? 'good' : 'warn' }),
         h(WbMetric, { title: '已处理消息', value: wbCount(health?.processed), caption: '进程内累计' }),
-        h(WbMetric, { title: '活跃任务', value: wbCount(health?.activeTurns), caption: '正在处理的 Agent turn' }),
-        h(WbMetric, { title: '待发消息', value: wbCount(health?.outbox?.pending), caption: '持久化 Outbox 队列' }),
-        h(WbMetric, { title: '已绑定会话', value: wbCount(health?.boundSessions), caption: 'DSH 原生 Session 绑定' }),
-        h(WbMetric, { title: '错误数', value: wbCount(health?.errors), caption: '进程内累计', tone: health?.errors ? 'warn' : '' })),
+        h(WbMetric, { title: '正在处理', value: wbCount(health?.activeTurns), caption: '执行中的任务' }),
+        h(WbMetric, { title: '待发消息', value: wbCount(health?.outbox?.pending), caption: '等待发送到飞书' }),
+        h(WbMetric, { title: '已绑定会话', value: wbCount(health?.boundSessions), caption: '正在使用的飞书对话' }),
+        h(WbMetric, { title: '运行错误', value: wbCount(health?.errors), caption: '本次服务运行期间', tone: health?.errors ? 'warn' : '' })),
       ops?.telemetryAvailable && h(WbBlock, { title: '需要关注', aside: '当前规则告警' },
         (ops.summary?.alerts ?? []).length ?
           h('div', { className: 'fgw-ops-alerts' },
@@ -417,16 +470,16 @@ function Workbench() {
           h('span', { className: 'fgw-muted' }, '投递等待：', wbCount(health?.outbox?.pending)),
           h('span', { className: 'fgw-muted' }, '去重记录：', wbCount(health?.dedupEntries)))))
   } else if (selected === 'channels' && sectionTab.channels === 'bots') {
-    body = h(BotManagementPanel, { state, health, onChanged: load })
+    body = h(BotManagementPanel, { state, health, onChanged: load, onDirtyChange: setBotUnsaved })
   } else if (selected === 'channels' && sectionTab.channels === 'groups') {
-    body = h(GroupManagementPanel, { onChanged: load })
+    body = h(GroupManagementPanel, { onChanged: load, onDirtyChange: setGroupUnsaved })
   } else if (selected === 'agent-profile') {
     body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
   } else if (selected === 'skills') {
     body = h(SkillsPanel, { onDirtyChange: setSkillsUnsaved })
   } else if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null,
-      h(ExecPolicyPanel, {}),
+      h(ExecPolicyPanel, { onDirtyChange: setExecUnsaved }),
       h('div', { className: 'fgw-two-column' },
         h(WbBlock, { title: '访问权限' },
           h(WbRow, { label: '群聊策略', value: flags.groupPolicy || 'disabled（默认关闭）' }),
@@ -446,7 +499,8 @@ function Workbench() {
     body = h('div', { className: 'fgw-advanced' },
       h('p', { className: 'fgw-muted' },
         '配置仅用于飞书通道。保存后重启生效；重启会中断正在执行的任务。'),
-      h(Panel, { key: 'settings', initialTab: 'settings', hideTabs: true, onChanged: load }))
+      h(Panel, { key: 'settings', initialTab: 'settings', hideTabs: true,
+        onChanged: load, onDirtyChange: setSettingsUnsaved }))
   } else if (selected === 'automation') {
     // SchedulePanel fetches /schedule, /schedule/preview, /schedule/commands and
     // /schedule/results itself via the shared authenticated `request` helper.
@@ -465,7 +519,8 @@ function Workbench() {
     body = h(React.Fragment, null, body,
       h(WbBlock, { title: '私聊白名单', aside: '仅允许可信用户访问 Agent 工具' },
         h('div', { className: 'fgw-advanced' },
-          h(Panel, { key: 'permissions', initialTab: 'permissions', hideTabs: true, onChanged: load }))))
+          h(Panel, { key: 'permissions', initialTab: 'permissions', hideTabs: true,
+            onChanged: load, onDirtyChange: setSettingsUnsaved }))))
   }
 
   return h('div', { className: 'fgw-root' },
@@ -474,15 +529,17 @@ function Workbench() {
         h('span', { className: 'fgw-brandmark', 'aria-hidden': true }, h(FeishuSidebarIcon, { size: 20 })),
         h('div', null, h('strong', null, '飞书管理'), h('small', null, 'CONTROL CENTER'))),
       h('nav', { className: 'fgw-subnav-list', 'aria-label': '管理功能' },
-        WORKBENCH_NAV.map(([id, title, symbol]) =>
-          h('button', { key: id, type: 'button', className: 'fgw-nav-item' + (selected === id ? ' is-active' : ''),
-            'aria-current': selected === id ? 'page' : undefined, onClick: () => {
-              if (id !== selected && ((profileUnsaved && selected === 'agent-profile') ||
-                (skillsUnsaved && selected === 'skills')) &&
-                !window.confirm('当前内容尚未保存。确认离开并放弃修改？')) return
-              setSelected(id)
-            } },
-            h('span', { className: 'fgw-nav-symbol', 'aria-hidden': true }, symbol), title))),
+        WORKBENCH_GROUPS.map(group => h('div', { key: group.label, className: 'fgw-nav-group' },
+          h('div', { className: 'fgw-nav-group-title' }, group.label),
+          group.ids.map(id => {
+            const item = WORKBENCH_NAV.find(value => value[0] === id)
+            const [key, title, symbol] = item
+            return h('button', { key, type: 'button',
+              className: 'fgw-nav-item' + (selected === id ? ' is-active' : ''),
+              'aria-current': selected === id ? 'page' : undefined,
+              onClick: () => selectSection(id) },
+              h('span', { className: 'fgw-nav-symbol', 'aria-hidden': true }, symbol), title)
+          })))),
       h('div', { className: 'fgw-subnav-foot' },
         h(WbState, { value: health?.status ?? 'unknown' }),
         h('p', null, '只读监控不产生额外模型调用'))),
@@ -496,9 +553,9 @@ function Workbench() {
           selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && h('button', { className: 'fgw-refresh', type: 'button', disabled: updating,
             onClick: refresh }, updating ? '刷新中…' : '↻ 刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
-        h('div', null, h('div', { className: 'fgw-hero-kicker' }, 'GATEWAY OPERATIONS'),
-          h('h2', null, '你的飞书 Agent，运行状态一目了然。'),
-          h('p', null, '与 DSH 原生 Session 同步，集中监控机器人、投递、审批和服务健康。')),
+        h('div', null, h('div', { className: 'fgw-hero-kicker' }, '服务运行概览'),
+          h('h2', null, online ? '飞书机器人运行正常' : '请检查飞书通道状态'),
+          h('p', null, online ? '消息收发服务正常。下方可查看待发消息和最近告警。' : '若机器人无法回复，请先查看告警中心和连接诊断。')),
         h('div', { className: 'fgw-hero-status' }, h(WbState, { value: health?.status || 'unknown' }),
           h('span', null, state?.service ?? '服务状态未知'))),
       tabs.length > 0 && h('div', { className: 'fgw-section-switcher' },
@@ -513,7 +570,7 @@ function Workbench() {
          ['channels', '机器人与权限', '管理群聊和安全策略'],
          ['analytics', '用量与审计', 'Token 消耗和审批记录']]
           .map(([id, title, description]) =>
-            h('button', { key: id, type: 'button', className: 'fgw-shortcut', onClick: () => setSelected(id) },
+            h('button', { key: id, type: 'button', className: 'fgw-shortcut', onClick: () => selectSection(id) },
               h('strong', null, title), h('span', null, description), h('span', { 'aria-hidden': true }, '›')))),
       loading && !state && h('div', { className: 'fgw-caution' }, '正在读取管理服务…'),
       error && h('div', { className: 'fgw-alert', role: 'alert' }, '管理服务暂不可用：', error),

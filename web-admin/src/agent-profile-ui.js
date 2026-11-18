@@ -111,15 +111,15 @@ function AgentProfilePanel({ onDirtyChange }) {
     return () => { requestId.current++ }
   }, [selected, loadFile])
   useEffect(() => {
-    if (!dirty) return
+    if (!dirty && !settingsChanged) return
     const guard = event => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', guard)
     return () => window.removeEventListener('beforeunload', guard)
-  }, [dirty])
+  }, [dirty, settingsChanged])
 
   const pick = name => {
     if (name === selected || busy) return
-    if (dirty && !window.confirm('当前文件有未保存的修改，确定放弃并切换文件？')) return
+    if ((dirty || settingsChanged) && !window.confirm('文件或上下文加载设置有未保存的修改。确定切换文件？')) return
     setFile(null); setDraft(''); setHistory([])
     setSelected(name); setTab('edit'); setNotice(''); setError(''); setMobileFiles(false)
   }

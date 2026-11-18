@@ -12,8 +12,9 @@ const EXEC_APPROVALS_UI = [
 const execModeTitle = v => (EXEC_MODES_UI.find(x => x.value === v) || {}).title || v
 const execApprovalTitle = v => (EXEC_APPROVALS_UI.find(x => x.value === v) || {}).label || v
 
-function ExecPolicyPanel() {
+function ExecPolicyPanel({ onDirtyChange }) {
   const [policy, setPolicy] = useState(null)
+  const [baseline, setBaseline] = useState(null)
   const [meta, setMeta] = useState(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -23,16 +24,23 @@ function ExecPolicyPanel() {
     try {
       const data = await request('/exec-policy')
       const p = data.policy || {}
-      setPolicy({
+      const normalized = {
         mode: EXEC_MODES_UI.some(x => x.value === p.mode) ? p.mode : 'workspace-write',
         approvalPolicy: p.approvalPolicy === 'never' ? 'never' : 'ask',
         additionalWritableRoots: Array.isArray(p.additionalWritableRoots) ? p.additionalWritableRoots.slice() : [],
-      })
+      }
+      setPolicy(normalized)
+      setBaseline(JSON.stringify(normalized))
       setMeta(data)
       setError('')
     } catch (e) { setError(e.message || String(e)) }
   }, [])
   useEffect(() => { void load() }, [load])
+  const dirty = policy !== null && baseline !== null && JSON.stringify(policy) !== baseline
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   if (error && !policy) return h('div', { className: 'fgw-alert', role: 'alert' }, '读取执行权限失败：', error)
   if (!policy) return h('div', { className: 'fgw-caution' }, '正在读取执行权限…')
@@ -76,6 +84,7 @@ function ExecPolicyPanel() {
         h('span', { className: 'fga-chip' }, '模式 ', h('strong', null, execModeTitle(policy.mode))),
         h('span', { className: 'fga-chip' }, '审批 ', h('strong', null, execApprovalTitle(policy.approvalPolicy))),
         h('span', { className: 'fga-chip' }, '额外可写目录 ', h('strong', null, String(roots.length)))),
+      dirty && h('p', { className: 'fgw-dirty-hint', role: 'status' }, '执行权限有未保存的修改。'),
       meta?.restartRequired && h('div', { className: 'fgw-caution' }, '有尚未生效的修改，请重启飞书通道。'),
       message && h('div', { className: 'fga-notice', role: 'status' }, message),
       error && h('div', { className: 'fga-error', role: 'alert' }, error),
@@ -116,6 +125,6 @@ function ExecPolicyPanel() {
       h('div', { className: 'fga-savebar' },
         h('span', { className: 'fga-savebar-status' }, '修改对新建会话生效；已在运行的会话保持原权限。'),
         h('div', { className: 'fga-inline-actions' },
-          action('保存并重启飞书通道', () => persist(true), busy, true),
-          action('仅保存', () => persist(false), busy)))))
+          action('保存并重启飞书通道', () => persist(true), busy || !dirty, true),
+          action('仅保存', () => persist(false), busy || !dirty)))))
 }

@@ -271,7 +271,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'fga-status ' + (online ? 'fga-online' : '') },
           online ? '网关正常' : '未确认在线', ' · systemd: ', service || '未知'))
     }
-    function Panel({ initialTab = 'settings', onChanged, hideTabs = false } = {}) {
+    function Panel({ initialTab = 'settings', onChanged, onDirtyChange, hideTabs = false } = {}) {
       const [state, setState] = useState(null)
       const [health, setHealth] = useState(null)
       const [tab, setTab] = useState(initialTab)
@@ -305,6 +305,22 @@ window.__ModuleLoader__.load({
       const [streamCards, setStreamCards] = useState(false)
       const [approvalTimeout, setApprovalTimeout] = useState('600')
       const [streamInterval, setStreamIntervalValue] = useState('800')
+      // Only field changes count: polling and search input edits do not.
+      const [savedSignature, setSavedSignature] = useState(null)
+      const draftSignature = JSON.stringify([
+        allowOverride, allowText, workspace, agentWorkspace, primaryProvider,
+        primaryModel, fallbacks, agentPreset, timeout, proxyEnabled, proxyFallback,
+        proxyUrl, proxyCleared, retry, interval, autoConnect, replyFormat,
+        approvalCards, streamCards, approvalTimeout, streamInterval,
+      ])
+      const dirty = !!state && savedSignature !== null && draftSignature !== savedSignature
+      useEffect(() => {
+        if (state) setSavedSignature(draftSignature)
+      }, [state?.revision])
+      useEffect(() => {
+        onDirtyChange?.(dirty)
+        return () => onDirtyChange?.(false)
+      }, [dirty, onDirtyChange])
       const populate = useCallback(data => {
         setState(data); setHealth(data.health)
         const c = data.config || {}
@@ -603,7 +619,7 @@ window.__ModuleLoader__.load({
                   (preset.broken ? ' ⚠ ' + preset.broken : '')))),
             agentPreset !== presetDirectory.selected && h('p', {
               className: 'fga-model-unsaved', role: 'status' },
-              '预设已修改，请点击页面底部「保存配置」；重启通道后对新会话生效。'),
+              '预设有未保存的修改；点击下方「仅保存」或「保存并重启」。'),
             h('p', { className: 'fga-hint' },
               '新会话按所选预设工作；已存在会话保持原模式；保存后需重启飞书通道并对新会话生效（旧会话可 /new 切换）。')),
           h('div', { className: 'fga-divider' }),
@@ -635,7 +651,7 @@ window.__ModuleLoader__.load({
             textInput(streamInterval, setStreamIntervalValue, '800', { type: 'number', min: 500, max: 5000 }),
             '增量文本用于预览；终态卡片成功时原卡片显示完整回复，仅卡片失败时 Outbox 兜底。'),
           h('div', { className: 'fga-divider' }),
-          h('h3', { className: 'fga-settings-group' }, '网络代理'),
+          h('h3', { className: 'fga-settings-group' }, '网络与重试'),
           h('div', { className: 'fga-proxy-status' },
             h('span', { className: 'fga-proxy-source' }, '当前来源：' + proxySourceLabel(proxy.source)),
             h('span', { className: 'fga-hint' },
@@ -677,9 +693,14 @@ window.__ModuleLoader__.load({
               h('option', { value: 'inherit' }, '继承 Profile 配置'),
               h('option', { value: 'enabled' }, '启用'),
               h('option', { value: 'disabled' }, '停用'))),
-          h('div', { className: 'fga-inline-actions' },
-            action('保存配置', save, busy || !state || !primaryKey || fallbackSelectionInvalid),
-            action('保存并重启飞书通道', saveAndRestart, busy || !state || !primaryKey || fallbackSelectionInvalid, true))),
+          h('div', { className: 'fga-model-savebar' },
+            h('span', { className: dirty ? 'fgw-dirty-hint' : 'fga-hint', role: 'status' },
+              dirty ? '有尚未保存的修改' :
+                state?.pendingRestart ? '已保存，重启通道后生效' : '当前没有未保存的修改'),
+            h('div', { className: 'fga-inline-actions' },
+              action('仅保存', save, busy || !state || !primaryKey || fallbackSelectionInvalid || !dirty),
+              action('保存并重启', saveAndRestart,
+                busy || !state || !primaryKey || fallbackSelectionInvalid || !dirty, true)))),
         tab === 'permissions' && h('div', { className: 'fga-section' },
           h('label', { className: 'fga-check' },
             h('input', { type: 'checkbox', checked: allowOverride, onChange: e => setAllowOverride(e.target.checked) }),

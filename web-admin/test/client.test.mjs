@@ -752,3 +752,20 @@ test('UX regression: analytics responds to workbench width and supports touch se
   assert.match(css, /\.fga-model-preset\{grid-column:1\/-1/)
   assert.match(css, /\.fgw-usage-date-range/)
 })
+
+test('UX regression: every editable admin view uses a shared leave guard', () => {
+  const group = readFileSync(path.join(root, 'src/group-panel.js'), 'utf8')
+  const exec = readFileSync(path.join(root, 'src/exec-policy-panel.js'), 'utf8')
+  const profile = readFileSync(path.join(root, 'src/agent-profile-ui.js'), 'utf8')
+  assert.match(workbench, /const WORKBENCH_GROUPS =/)
+  assert.match(workbench, /const dirtyForCurrent =/)
+  assert.match(workbench, /const confirmLeave =/)
+  assert.match(workbench, /onClick: \(\) => selectSection\(id\)/)
+  for (const key of ['BotUnsaved', 'GroupUnsaved', 'ExecUnsaved', 'SettingsUnsaved']) {
+    assert.ok(workbench.includes('onDirtyChange: set' + key), key)
+  }
+  assert.match(group, /onDirtyChange\?\.\(dirty\)/)
+  assert.match(exec, /onDirtyChange\?\.\(dirty\)/)
+  assert.match(source, /savedSignature/)
+  assert.match(profile, /if \(!dirty && !settingsChanged\) return/)
+})
