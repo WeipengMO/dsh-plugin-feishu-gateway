@@ -439,16 +439,6 @@ function Workbench() {
               h('div', { className: 'fgw-caution', key: alert.code + i }, alert.message,
                 alert.botId ? ' · ' + alert.botId : ''))) :
           h('p', { className: 'fgw-muted' }, '暂无当前规则告警。')),
-      h('div', { className: 'fgw-shortcuts' },
-        [['conversations', '消息与会话', '查看任务、投递和历史会话'],
-         ['automation', '定时任务', '管理定时执行和通知'],
-         ['channels', '机器人与权限', '管理机器人和群聊'],
-         ['analytics', '用量与审计', '查看用量和工具授权']]
-          .map(([id, title, description]) =>
-            h('button', { key: id, type: 'button', className: 'fgw-shortcut',
-              onClick: () => selectSection(id) },
-              h('strong', null, title), h('span', null, description),
-              h('span', { 'aria-hidden': true }, '›')))),
       ops?.telemetryAvailable && h(WbBlock, { title: '实时任务', aside: '来自 Gateway 快照' },
         h(OpsTable, { rows: ops.snapshot?.stale ? [] : ops.snapshot?.tasks,
           empty: '当前没有活跃任务',
@@ -472,15 +462,8 @@ function Workbench() {
           h(WbRow, { label: '运行时长', value: wbAge(health?.uptimeMs) }),
           h(WbRow, { label: '待审批', value: wbCount(health?.pendingApprovals) }),
           state?.pendingRestart && h('div', { className: 'fgw-caution' }, '配置已更新，尚待重启 Gateway 生效。'))),
-      h(WbBlock, { title: '消息处理链路', aside: '从已有网关诊断读取；不分析聊天内容' },
-        h('div', { className: 'fgw-flow' },
-          h('div', null, h('span', null, '01'), h('strong', null, '飞书入站'), h('small', null, 'Inbox')),
-          h('div', null, h('span', null, '02'), h('strong', null, '原生会话'), h('small', null, 'DSH Session')),
-          h('div', null, h('span', null, '03'), h('strong', null, '回复投递'), h('small', null, 'CardKit / Outbox'))),
-        h('div', { className: 'fgw-row-inline' },
-          h('span', { className: 'fgw-muted' }, '入站等待：', wbCount(health?.inbox?.pending)),
-          h('span', { className: 'fgw-muted' }, '投递等待：', wbCount(health?.outbox?.pending)),
-          h('span', { className: 'fgw-muted' }, '去重记录：', wbCount(health?.dedupEntries)))))
+      h('p', { className: 'fgw-overview-footnote' },
+        '投递明细和去重记录请在「会话与消息 → 消息投递」中查看。'))
   } else if (selected === 'channels' && sectionTab.channels === 'bots') {
     body = h(BotManagementPanel, { state, health, onChanged: load, onDirtyChange: setBotUnsaved })
   } else if (selected === 'channels' && sectionTab.channels === 'groups') {

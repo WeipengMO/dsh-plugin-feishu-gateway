@@ -788,13 +788,25 @@ test('UX regression: schedule draft is guarded across workbench navigation', () 
   assert.match(schedule, /onDirtyChange\?\.\(formDirty\)/)
 })
 
-test('UX regression: overview prioritizes health, metrics and alerts over quick links', () => {
+test('UX regression: overview is actionable without redundant navigation or process diagrams', () => {
   const area = workbench.slice(workbench.indexOf("if (selected === 'overview')"),
     workbench.indexOf("} else if (selected === 'channels'"))
   assert.match(area, /fgw-overview-metrics/)
-  assert.ok(area.indexOf('fgw-overview-metrics') < area.indexOf('fgw-shortcuts'))
-  assert.ok(area.indexOf('需要关注') < area.indexOf('fgw-shortcuts'))
+  assert.match(area, /需要关注/)
+  assert.doesNotMatch(area, /fgw-shortcuts|fgw-flow|消息处理链路/)
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
   assert.match(css, /\.fgw-usage-date-range\{[\s\S]*?border:1px/)
   assert.match(css, /\.fgw-hero\{[\s\S]*?padding:19px/)
+})
+
+test('model inputs are searchable comboboxes without duplicate native selectors', () => {
+  const settings = source.slice(source.indexOf("tab === 'settings' &&"),
+    source.indexOf("tab === 'permissions' &&"))
+  assert.match(source, /function ModelPicker\(/)
+  assert.match(settings, /h\(ModelPicker, \{ id: 'fga-primary-model'/)
+  assert.match(settings, /h\(ModelPicker, \{ id: 'fga-fallback-model'/)
+  assert.doesNotMatch(settings, /primarySearch|fallbackSearch|fga-model-add/)
+  assert.match(source, /'aria-autocomplete': 'list'/)
+  assert.match(source, /event.key === 'ArrowDown'/)
+  assert.match(source, /event.key === 'Escape'/)
 })

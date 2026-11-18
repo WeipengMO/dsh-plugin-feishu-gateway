@@ -28,6 +28,69 @@ window.__ModuleLoader__.load({
       return h('label', { className: 'fga-field' }, h('span', { className: 'fga-label' }, label), child,
         desc && h('span', { className: 'fga-hint' }, desc))
     }
+    // One accessible, searchable combobox for both primary and fallback models.
+    function ModelPicker({ options, selectedKey = '', onChoose, placeholder, ariaLabel,
+      disabled = false, inline = false, id }) {
+      const [open, setOpen] = useState(false)
+      const [query, setQuery] = useState('')
+      const [active, setActive] = useState(0)
+      const selected = options.find(item => item.key === selectedKey)
+      const term = query.trim().toLowerCase()
+      const matches = options.filter(item => !term ||
+        [item.name, item.model, item.providerName, item.provider, item.key]
+          .some(value => String(value || '').toLowerCase().includes(term))).slice(0, 150)
+      const choose = item => {
+        onChoose(item.key)
+        setQuery('')
+        setActive(0)
+        setOpen(false)
+      }
+      const keydown = event => {
+        if (event.key === 'Escape') { setOpen(false); setQuery(''); return }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault()
+          if (!open) { setOpen(true); setActive(0) }
+          else setActive(value => Math.max(0, Math.min(matches.length - 1,
+            value + (event.key === 'ArrowDown' ? 1 : -1))))
+        }
+        if (event.key === 'Enter' && open && matches.length) {
+          event.preventDefault()
+          choose(matches[Math.min(active, matches.length - 1)])
+        }
+      }
+      return h('div', { className: 'fga-search-picker' + (inline ? ' is-inline' : ''),
+        onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false); setQuery('')
+        } } },
+        h('div', { className: 'fga-search-picker-field' },
+          h('input', { className: 'fga-search-picker-input', role: 'combobox',
+            'aria-label': ariaLabel, 'aria-autocomplete': 'list',
+            'aria-expanded': open, 'aria-controls': id + '-options',
+            'aria-activedescendant': open && matches.length ? id + '-option-' + active : undefined,
+            autoComplete: 'off', spellCheck: false, disabled,
+            placeholder: placeholder || '搜索模型名称或提供方',
+            value: open ? query : (selected ? selected.name + ' · ' + selected.providerName : ''),
+            onFocus: () => { setOpen(true); setQuery(''); setActive(0) },
+            onChange: event => { setOpen(true); setQuery(event.target.value); setActive(0) },
+            onKeyDown: keydown }),
+          h('span', { className: 'fga-search-picker-chevron', 'aria-hidden': true }, '⌄')),
+        open && !disabled && h('div', { className: 'fga-search-picker-dropdown',
+          id: id + '-options', role: 'listbox', 'aria-label': ariaLabel + '候选项' },
+          matches.length ? matches.map((item, index) =>
+            h('button', { type: 'button', role: 'option',
+              id: id + '-option-' + index, key: item.key,
+              className: 'fga-search-picker-option' + (active === index ? ' is-active' : '') +
+                (selectedKey === item.key ? ' is-selected' : ''),
+              'aria-selected': selectedKey === item.key,
+              onMouseEnter: () => setActive(index),
+              onMouseDown: event => event.preventDefault(),
+              onClick: () => choose(item) },
+              h('span', { className: 'fga-search-picker-option-name' }, item.name),
+              h('small', null, item.providerName + ' · ' + item.key),
+              selectedKey === item.key && h('span', { className: 'fga-search-picker-check',
+                'aria-hidden': true }, '✓')))
+          : h('div', { className: 'fga-search-picker-empty' }, '没有匹配的模型')))
+    }
     /*__PROXY_HELPERS_START__*/
     // Pure helpers for the network-proxy block. No closure state: the built
     // client and the offline tests evaluate this block directly.
@@ -287,8 +350,6 @@ window.__ModuleLoader__.load({
       const [primaryModel, setPrimaryModel] = useState('')
       const [fallbacks, setFallbacks] = useState([])
       const [agentPreset, setAgentPreset] = useState('__inherit__')
-      const [primarySearch, setPrimarySearch] = useState('')
-      const [fallbackSearch, setFallbackSearch] = useState('')
       const [timeout, setTimeout] = useState('')
       const [proxyEnabled, setProxyEnabled] = useState(false)
       const [proxyFallback, setProxyFallback] = useState(true)
@@ -336,8 +397,6 @@ window.__ModuleLoader__.load({
         setPrimaryModel(directory.primary?.model || '')
         setFallbacks(directory.fallbacks)
         setAgentPreset(agentPresetView(data).selected)
-        setPrimarySearch('')
-        setFallbackSearch('')
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
         setProxyEnabled(c.networkProxy?.enabled === true)
         setProxyFallback(c.networkProxy?.fallbackDirect !== false)
@@ -477,14 +536,10 @@ window.__ModuleLoader__.load({
         presetDirectory.presets.some(preset => preset.id === agentPreset)
       const allModels = flatModelOptions(directory.providers)
       const primaryKey = primaryProvider && primaryModel ? primaryProvider + '/' + primaryModel : ''
-      const routeMatches = (entry, query) => !query ||
-        [entry.name, entry.model, entry.provider, entry.providerName, entry.key]
-          .some(text => text.toLowerCase().includes(query.toLowerCase().trim()))
-      const primaryChoices = allModels.filter(item => item.key === primaryKey || routeMatches(item, primarySearch))
+      const primaryChoices = allModels
       const fallbackChoices = allModels.filter(item =>
         item.key !== primaryKey &&
-        !fallbacks.some(route => route.provider === item.provider && route.model === item.model) &&
-        routeMatches(item, fallbackSearch))
+        !fallbacks.some(route => route.provider === item.provider && route.model === item.model))
       const fallbackSelectionInvalid = fallbacks.length > 8 || fallbacks.some(route =>
         (route.provider === primaryProvider && route.model === primaryModel) ||
         fallbacks.filter(other => other.provider === route.provider && other.model === route.model).length > 1)
@@ -502,7 +557,6 @@ window.__ModuleLoader__.load({
         setFallbacks(current => current.length >= 8 ||
           current.some(route => route.provider === choice.provider && route.model === choice.model)
           ? current : [...current, { provider: choice.provider, model: choice.model }])
-        setFallbackSearch('')
       }
       const proxyHint = proxyCleared
         ? '已标记清除已保存地址：点击「保存配置」后删除，重启通道后回退到服务器环境变量或直连。'
@@ -552,15 +606,10 @@ window.__ModuleLoader__.load({
             h('div', { className: 'fga-model-card-head' },
               h('strong', null, '主模型'),
               h('span', { className: 'fga-hint' }, '正常情况下优先使用')),
-            h('input', { className: 'fga-input fga-model-search', value: primarySearch,
-              'aria-label': '搜索主模型', placeholder: '搜索模型或提供方…',
-              disabled: busy || !state, onChange: e => setPrimarySearch(e.target.value) }),
-            h('select', { className: 'fga-input fga-model-select', value: primaryKey,
-              'aria-label': '主模型', disabled: busy || !state || !allModels.length,
-              onChange: e => selectPrimary(e.target.value) },
-              !primaryKey && h('option', { value: '' }, '选择主模型'),
-              ...primaryChoices.map(item => h('option', { key: item.key, value: item.key },
-                item.name + '  ·  ' + item.key + (item.unlisted ? '（未在当前目录找到）' : '')))),
+            h(ModelPicker, { id: 'fga-primary-model', options: primaryChoices,
+              selectedKey: primaryKey, onChoose: selectPrimary,
+              ariaLabel: '搜索主模型', placeholder: '选择或搜索主模型',
+              disabled: busy || !state || !allModels.length }),
             h('p', { className: 'fga-hint' },
               directory.primary?.source === 'profile' ? '当前继承 DSH Profile 的默认模型。'
               : directory.primary?.source === 'saved' ? '已保存的模型配置。'
@@ -584,16 +633,11 @@ window.__ModuleLoader__.load({
                     onClick: () => setFallbacks(current => current.filter(other =>
                       !(other.provider === route.provider && other.model === route.model))) }, '×'))
               }),
-              h('input', { className: 'fga-model-inline-search', value: fallbackSearch,
-                placeholder: fallbacks.length ? '继续搜索并添加…' : '搜索备用模型…',
-                'aria-label': '搜索备用模型', disabled: busy || !state || fallbacks.length >= 8,
-                onChange: e => setFallbackSearch(e.target.value) }),
-              h('select', { className: 'fga-model-add', value: '',
-                'aria-label': '添加备用模型', disabled: busy || !state || !fallbackChoices.length || fallbacks.length >= 8,
-                onChange: e => addFallback(e.target.value) },
-                h('option', { value: '' }, fallbackChoices.length ? '＋ 添加模型' : '没有更多可选模型'),
-                ...fallbackChoices.map(item => h('option', { key: item.key, value: item.key },
-                  item.name + '  ·  ' + item.key + (item.unlisted ? '（未在当前目录找到）' : ''))))),
+              h(ModelPicker, { id: 'fga-fallback-model', options: fallbackChoices,
+                onChoose: addFallback, ariaLabel: '搜索备用模型',
+                placeholder: fallbacks.length ? '继续搜索并添加备用模型…' : '搜索并添加备用模型',
+                disabled: busy || !state || !fallbackChoices.length || fallbacks.length >= 8,
+                inline: true })),
             fallbackSelectionInvalid && h('p', { className: 'fga-error', role: 'alert' },
               '备用模型不能重复或与主模型相同，最多添加 8 个。'))),
           h('div', { className: 'fga-model-card fga-model-preset' },
