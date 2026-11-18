@@ -43,16 +43,22 @@ export function buildScheduleCard(
   const source = sanitize(text).slice(0, CARD_TEXT_MAX)
   const rawBlocks = source.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
   const first = rawBlocks.shift() ?? '定时任务结果'
-  // A digest may separate individual items with blank lines inside one topic
-  // (e.g. research papers). Fold item-only blocks back into the previous block
-  // so the topic stays ONE section and produces only ONE divider. An item block
-  // starts with bold text (the paper title); topic labels and status lines do not.
-  const blocks: string[] = []
+  // Only fold bold article-like items into a preceding, identifiable topic.
+  // Two independent bold sections must not collapse into a single topic.
+  // No headings or article text are discarded here; long topics are split into
+  // multiple card divs below WITHOUT adding an extra divider inside the topic.
+  const groups: Array<{ text: string; topic: boolean }> = []
   for (const block of rawBlocks) {
-    if (/^\*\*/.test(block) && blocks.length > 0) {
-      blocks[blocks.length - 1] += '\n\n' + block
+    const firstLine = block.split('\n', 1)[0] ?? ''
+    const boldItem = /^\*\*[^\n]+\*\*(?:\n|$)/.test(firstLine)
+    const hasDetails = block.includes('\n')
+    const previous = groups.at(-1)
+    if (boldItem && hasDetails && previous?.topic) {
+      previous.text += '\n\n' + block
     } else {
-      blocks.push(block)
+      const looksLikeHeading = !boldItem && !/^[-*]\s/.test(firstLine) &&
+        !/^[^\n]+[：:]\s*\S/.test(firstLine)
+      groups.push({ text: block, topic: looksLikeHeading })
     }
   }
   const firstLines = first.split('\n').map((line) => line.trim()).filter(Boolean)
@@ -60,29 +66,41 @@ export function buildScheduleCard(
   const title = rawTitle.replace(/^#{1,6}\s*/, '').replace(/\*\*/g, '').slice(0, CARD_TITLE_MAX) ||
     '定时任务结果'
   const sections = [
-    ...(firstLines.length ? [firstLines.join('\n')] : []),
-    ...blocks,
-  ].slice(0, CARD_SECTION_MAX)
-
+    ...(firstLines.length ? [{ text: firstLines.join('\n'), topic: false }] : []),
+    ...groups,
+  ]
+  const visibleSections = sections.slice(0, CARD_SECTION_MAX)
   const elements: Record<string, unknown>[] = []
-  for (const section of sections) {
-    // Keep blank lines INSIDE a section: they give visual spacing between items
-    // without becoming new sections/dividers.
-    const rawLines = section.split('\n').map((line) => line.trim())
+  for (const [sectionIndex, section] of visibleSections.entries()) {
+    // Keep blank lines within a topic. Add emphasis to a plain-text heading,
+    // but never double-wrap an already-bold heading.
+    const rawLines = section.text.split('\n').map(line => line.trim())
     const nonEmpty = rawLines.filter(Boolean)
     if (!nonEmpty.length) continue
-    const firstIndex = rawLines.findIndex((line) => line.length > 0)
-    const heading = nonEmpty.length > 1 && !nonEmpty[0]!.startsWith('- ')
-      ? `**${nonEmpty[0]}**` : undefined
-    // With a heading, skip it; without one (single-line status, or a list-only
-    // section) keep the first non-empty line in the body.
+    const firstIndex = rawLines.findIndex(line => line.length > 0)
+    const firstLine = nonEmpty[0]!
+    const heading = nonEmpty.length > 1 && !firstLine.startsWith('- ') &&
+      !/^\*\*/.test(firstLine)
+      ? `**${firstLine.replace(/^#{1,6}\s+/, '')}**` : undefined
     const body = rawLines.slice(heading ? firstIndex + 1 : firstIndex)
-    const content = [heading, ...body].filter((part) => part !== undefined)
-      .join('\n').slice(0, CARD_DIV_MAX)
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content } })
-    elements.push({ tag: 'hr' })
+    let remaining = [heading, ...body].filter(part => part !== undefined).join('\n')
+    // Feishu's per-div bound must not silently truncate a whole topic. Prefer
+    // splitting at a newline; extremely long unbroken lines use a hard bound.
+    while (remaining.length > CARD_DIV_MAX) {
+      const lineEnd = remaining.lastIndexOf('\n', CARD_DIV_MAX)
+      const cut = lineEnd >= CARD_DIV_MAX / 2 ? lineEnd + 1 : CARD_DIV_MAX
+      const chunk = remaining.slice(0, cut).trimEnd()
+      if (chunk) elements.push({ tag: 'div', text: { tag: 'lark_md', content: chunk } })
+      remaining = remaining.slice(cut).replace(/^\n+/, '')
+    }
+    if (remaining) elements.push({ tag: 'div', text: { tag: 'lark_md', content: remaining } })
+    // Dividers separate TOPICS, never articles (or continued chunks of one topic).
+    if (sectionIndex < visibleSections.length - 1) elements.push({ tag: 'hr' })
   }
-  if (elements.length > 0) elements.pop() // no trailing divider before the note
+  if (sections.length > CARD_SECTION_MAX) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md',
+      content: '部分章节超过卡片显示数量上限，已省略。' } })
+  }
   if (elements.length === 0) {
     elements.push({ tag: 'div', text: { tag: 'lark_md',
       content: source.slice(0, CARD_DIV_MAX) || '定时任务已完成' } })

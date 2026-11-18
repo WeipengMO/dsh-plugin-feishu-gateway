@@ -94,6 +94,38 @@ describe('buildScheduleCard', () => {
     expect(last).toContain('数据状态：正常')
   })
 
+
+  it('keeps every article in a long topic even when one card div reaches its size limit', () => {
+    const titles = ['Paper A', 'Paper B', 'Paper C', 'Paper D']
+    const research = ['## 科研摘要', '', '📊 单细胞组学', ...titles.map((title, index) =>
+      `**${title}**\nNature · 2026-11-18\n研究亮点：${'A'.repeat(600)} 文章终止标记${index}`)]
+      .join('\n\n')
+    const card = buildScheduleCard(research) as {
+      elements: Array<{ tag: string; text?: { content: string } }>
+    }
+    const divs = card.elements.filter(item => item.tag === 'div')
+    expect(divs.length).toBeGreaterThan(1)
+    expect(card.elements.filter(item => item.tag === 'hr')).toHaveLength(0)
+    expect(divs.every(item => (item.text?.content?.length ?? 0) <= 2000)).toBe(true)
+    const combined = divs.map(item => item.text?.content).join('\n')
+    for (const [index, title] of titles.entries()) {
+      expect(combined).toContain(title)
+      expect(combined).toContain('文章终止标记' + index)
+    }
+  })
+
+  it('does not merge independent bold section headings or wrap their emphasis twice', () => {
+    const card = buildScheduleCard('任务结果\n\n**任务状态**\n正常\n\n**关键结果**\n执行成功') as {
+      elements: Array<{ tag: string; text?: { content: string } }>
+    }
+    const divs = card.elements.filter(item => item.tag === 'div')
+    expect(divs).toHaveLength(2)
+    expect(card.elements.filter(item => item.tag === 'hr')).toHaveLength(1)
+    expect(divs[0]?.text?.content).toContain('**任务状态**')
+    expect(divs[1]?.text?.content).toContain('**关键结果**')
+    expect(JSON.stringify(divs)).not.toContain('****')
+  })
+
   it('is safe for empty text, unknown templates and oversized/control input', () => {
     const empty = buildScheduleCard('') as { elements: Array<Record<string, unknown>> }
     expect((empty.elements[0]!.text as { content: string }).content).toBe('定时任务已完成')
