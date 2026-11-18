@@ -1,6 +1,6 @@
 import { appIdLooksValid } from '../config.js'
-// https-proxy-agent@5 exports a CommonJS constructor, not a named ESM export.
-import HttpsProxyAgent from 'https-proxy-agent'
+// https-proxy-agent >= 9 exposes a named ESM constructor.
+import { HttpsProxyAgent } from 'https-proxy-agent'
 import { DEFAULT_PROXY_URL_ENV, validateProxyUrl } from '../util/proxy-url.js'
 import type {
   BotCredentials,
@@ -269,8 +269,8 @@ export class LarkTransport implements FeishuTransport {
     let wsAgent: ReturnType<typeof HttpsProxyAgent> | undefined
     if (candidate) {
       try {
-        // https-proxy-agent@5 is a CommonJS factory: call it, never `new`.
-        wsAgent = HttpsProxyAgent(validateProxyUrl(candidate))
+        // Modern versions expose a constructor, not the v5 callable factory.
+        wsAgent = new HttpsProxyAgent(validateProxyUrl(candidate))
       } catch {
         // Neither the URL nor the parser message may be logged (userinfo!).
         this.logger.warn('bot %s proxy is unusable; continuing with a direct connection', this.botId)
