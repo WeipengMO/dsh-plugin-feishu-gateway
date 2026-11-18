@@ -41,8 +41,20 @@ export function buildScheduleCard(
   options: ScheduleCardOptions = {},
 ): Record<string, unknown> {
   const source = sanitize(text).slice(0, CARD_TEXT_MAX)
-  const blocks = source.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
-  const first = blocks.shift() ?? '定时任务结果'
+  const rawBlocks = source.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
+  const first = rawBlocks.shift() ?? '定时任务结果'
+  // A digest may separate individual items with blank lines inside one topic
+  // (e.g. research papers). Fold item-only blocks back into the previous block
+  // so the topic stays ONE section and produces only ONE divider. An item block
+  // starts with bold text (the paper title); topic labels and status lines do not.
+  const blocks: string[] = []
+  for (const block of rawBlocks) {
+    if (/^\*\*/.test(block) && blocks.length > 0) {
+      blocks[blocks.length - 1] += '\n\n' + block
+    } else {
+      blocks.push(block)
+    }
+  }
   const firstLines = first.split('\n').map((line) => line.trim()).filter(Boolean)
   const rawTitle = firstLines.shift() ?? '定时任务结果'
   const title = rawTitle.replace(/^#{1,6}\s*/, '').replace(/\*\*/g, '').slice(0, CARD_TITLE_MAX) ||
@@ -54,12 +66,19 @@ export function buildScheduleCard(
 
   const elements: Record<string, unknown>[] = []
   for (const section of sections) {
-    const lines = section.split('\n').map((line) => line.trim()).filter(Boolean)
-    if (!lines.length) continue
-    const heading = lines.length > 1 && !lines[0]!.startsWith('- ')
-      ? `**${lines[0]}**` : undefined
-    const body = heading ? lines.slice(1) : lines
-    const content = [heading, ...body].filter(Boolean).join('\n').slice(0, CARD_DIV_MAX)
+    // Keep blank lines INSIDE a section: they give visual spacing between items
+    // without becoming new sections/dividers.
+    const rawLines = section.split('\n').map((line) => line.trim())
+    const nonEmpty = rawLines.filter(Boolean)
+    if (!nonEmpty.length) continue
+    const firstIndex = rawLines.findIndex((line) => line.length > 0)
+    const heading = nonEmpty.length > 1 && !nonEmpty[0]!.startsWith('- ')
+      ? `**${nonEmpty[0]}**` : undefined
+    // With a heading, skip it; without one (single-line status, or a list-only
+    // section) keep the first non-empty line in the body.
+    const body = rawLines.slice(heading ? firstIndex + 1 : firstIndex)
+    const content = [heading, ...body].filter((part) => part !== undefined)
+      .join('\n').slice(0, CARD_DIV_MAX)
     elements.push({ tag: 'div', text: { tag: 'lark_md', content } })
     elements.push({ tag: 'hr' })
   }

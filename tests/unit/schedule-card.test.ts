@@ -38,6 +38,7 @@ describe('buildScheduleCard', () => {
     expect((divs[0]!.text as { content: string }).content).toContain('**💰 财经要闻**')
     expect((divs[0]!.text as { content: string }).content).toContain('https://36kr.com/x')
     expect((divs[1]!.text as { content: string }).content).toContain('**🚀 科技前沿**')
+    expect((divs[2]!.text as { content: string }).content).toContain('共 3 条 · RSS 聚合去重')
     // Dividers between sections, but never a trailing one before the note.
     expect(card.elements.filter((element) => element.tag === 'hr')).toHaveLength(2)
     expect(card.elements.at(-1)).toMatchObject({ tag: 'note' })
@@ -54,6 +55,43 @@ describe('buildScheduleCard', () => {
     expect((divs[0]!.text as { content: string }).content).toContain('概况：')
     expect((divs[0]!.text as { content: string }).content).toContain('数据状态：正常')
     expect(card.elements.some((element) => element.tag === 'hr')).toBe(false)
+  })
+
+  it('keeps blank lines between papers inside one topic section', () => {
+    const RESEARCH = [
+      '## 🔬 每日科研进展 2026-11-18',
+      '',
+      '📊 单细胞/空间转录组',
+      '**Paper A**',
+      'Nature · A · 2026-11-16',
+      '研究亮点：A 🔗 [DOI](https://doi.org/10.1/a)',
+      '',
+      '**Paper B**',
+      'Cell · B · 2026-11-15',
+      '研究亮点：B 🔗 [DOI](https://doi.org/10.1/b)',
+      '',
+      '🧬 肿瘤生物学',
+      '**Paper C**',
+      'Science · C · 2026-11-14',
+      '研究亮点：C 🔗 [DOI](https://doi.org/10.1/c)',
+      '',
+      '数据状态：正常',
+    ].join('\n')
+    const card = buildScheduleCard(RESEARCH) as {
+      elements: Array<Record<string, unknown>>
+    }
+    const divs = card.elements.filter((element) => element.tag === 'div')
+    expect(divs).toHaveLength(3)
+    const first = (divs[0]!.text as { content: string }).content
+    expect(first).toContain('**📊 单细胞/空间转录组**')
+    expect(first).toContain('**Paper A**')
+    expect(first).toContain('**Paper B**')
+    expect(first).toContain('研究亮点：A 🔗 [DOI](https://doi.org/10.1/a)\n\n**Paper B**')
+    // one divider per topic, never one per paper
+    expect(card.elements.filter((element) => element.tag === 'hr')).toHaveLength(2)
+    // the single-line status block must not be lost
+    const last = (divs.at(-1)!.text as { content: string }).content
+    expect(last).toContain('数据状态：正常')
   })
 
   it('is safe for empty text, unknown templates and oversized/control input', () => {
