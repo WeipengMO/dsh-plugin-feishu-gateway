@@ -137,7 +137,7 @@ test('approvals tab renders pending, permanent rules and recent decisions', () =
   assert.match(text, /永久授权数量 1 /)
   assert.match(text, /最近审批条数\s+4/)
   assert.match(text, /10 分钟/)
-  assert.match(text, /最多保留 200 条/)
+  assert.match(text, /最多保留\s+200\s+条/)
   // Pending row: tool + command summary + live countdown.
   assert.match(text, /lark-cli calendar \+agenda/)
   assert.match(text, /\b\d+:\d{2}\b/)
@@ -187,7 +187,7 @@ test('approvals tab tolerates malformed arrays, hostile fields and expired pendi
   assert.match(text, /已过期/) // countdown clamps at 0
   assert.match(text, /当前没有等待中的审批请求|暂无永久授权规则|暂无审批记录/)
   assert.match(text, /审批等待时长（分钟）\s+—/) // non-numeric timeout is unknown
-  assert.match(text, /最多保留 200 条/) // bounded fallback
+  assert.match(text, /最多保留\s+200\s+条/) // bounded fallback
 })
 
 test('ApprovalCountdown ticks once per second and clears its interval on unmount', () => {
