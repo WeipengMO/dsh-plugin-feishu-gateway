@@ -79,17 +79,14 @@ function ExecPolicyPanel({ onDirtyChange }) {
       h('span', { className: 'fgw-muted' },
         meta && meta.source === 'managed' ? '来源：管理后台' : '来源：Profile 配置')),
     h('div', { className: 'fgw-block-body' },
-      // Current-state summary chips
-      h('div', { className: 'fga-chips' },
-        h('span', { className: 'fga-chip' }, '模式 ', h('strong', null, execModeTitle(policy.mode))),
-        h('span', { className: 'fga-chip' }, '审批 ', h('strong', null, execApprovalTitle(policy.approvalPolicy))),
-        h('span', { className: 'fga-chip' }, '额外可写目录 ', h('strong', null, String(roots.length)))),
       dirty && h('p', { className: 'fgw-dirty-hint', role: 'status' }, '执行权限有未保存的修改。'),
       meta?.restartRequired && h('div', { className: 'fgw-caution' }, '有尚未生效的修改，请重启飞书通道。'),
       message && h('div', { className: 'fga-notice', role: 'status' }, message),
       error && h('div', { className: 'fga-error', role: 'alert' }, error),
 
-      h('p', { className: 'fga-subhead' }, '沙箱模式（命令能写哪些文件）'),
+      h('div', { className: 'fgw-security-field-head' },
+        h('strong', null, '文件访问范围'),
+        h('p', null, '选择机器人执行命令时可以读取和修改哪些文件。')),
       h('div', { className: 'fga-exec-grid' },
         ...EXEC_MODES_UI.map(opt => h('button', {
           key: opt.value, type: 'button', disabled: busy,
@@ -102,7 +99,9 @@ function ExecPolicyPanel({ onDirtyChange }) {
       policy.mode === 'danger-full-access' && h('div', { className: 'fga-warning fga-danger-card' },
         '⚠ 完全访问会关闭文件沙箱：Agent 命令可读写任意路径，仅在你完全信任该会话时使用。'),
 
-      h('p', { className: 'fga-subhead' }, '审批策略（超出沙箱范围时）'),
+      h('div', { className: 'fgw-security-field-head' },
+        h('strong', null, '需要额外权限时'),
+        h('p', null, '当操作超出当前允许范围时，决定是否允许向你请求授权。')),
       h('div', { className: 'fga-seg', role: 'group', 'aria-label': '审批策略' },
         ...EXEC_APPROVALS_UI.map(opt => h('button', {
           key: opt.value, type: 'button', disabled: busy,
@@ -111,10 +110,12 @@ function ExecPolicyPanel({ onDirtyChange }) {
           onClick: () => setApproval(opt.value),
         }, opt.label))),
 
-      h('p', { className: 'fga-subhead' }, '额外可写目录'),
+      h('div', { className: 'fgw-security-field-head' },
+        h('strong', null, '额外允许写入的目录'),
+        h('p', null, '仅在「工作区可写」模式下生效，留空即不额外开放目录。')),
       h('p', { className: 'fga-hint' }, writable
-        ? '仅“工作区可写”模式生效；必须是服务器上真实存在的目录，不能是软链接。'
-        : '当前模式不使用额外可写目录；切换到“工作区可写”后这些目录才会生效。'),
+        ? '请输入服务器上真实存在的绝对路径，不能是软链接。'
+        : '当前模式不会使用下方目录。切换到「工作区可写」后才会生效。'),
       h('div', { className: 'fga-roots' },
         roots.length === 0 && h('p', { className: 'fga-hint' }, '暂无额外可写目录。'),
         ...roots.map((r, i) => h('div', { className: 'fga-root-row', key: i },

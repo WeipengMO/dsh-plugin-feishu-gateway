@@ -48,9 +48,6 @@ function FeishuSessionCenter({ compaction, compactionStale = false }) {
   const [view,setView]=useState('history')
   const tabs=[['history','对话历史'],['archive','已归档'],['bindings','飞书聊天关联']]
   return h('section',{className:'fgw-session-center'},
-    h('div',{className:'fgw-session-intro'},
-      h('h2',null,'会话管理'),
-      h('p',null,'查看 DSH 保存的飞书对话、整理旧历史和管理飞书聊天关联。')),
     h('nav',{role:'tablist','aria-label':'会话管理分类',className:'fgw-session-tabs'},
       tabs.map(([id,label])=>h('button',{type:'button',key:id,role:'tab',
         'aria-selected':view===id,className:'fgw-session-tab'+(view===id?' is-active':''),
@@ -59,10 +56,10 @@ function FeishuSessionCenter({ compaction, compactionStale = false }) {
     view==='archive'&&h(FeishuArchiveHub,{}),
     view==='bindings'&&h('div',{className:'fgw-session-advanced-area'},
       h('p',{className:'fgw-session-lead'},
-        '飞书聊天关联决定下一条消息沿用哪段 DSH 对话。解除关联只创建新上下文，不会删除旧聊天记录。'),
+        '解除关联后，下一条消息会开始新对话；之前的聊天记录不会删除。'),
       h(FeishuSessionsInventory,{})),
     h('details',{className:'fgw-session-details fgw-context-compaction'},
-      h('summary',null,'上下文自动压缩 · '+(compactionStale?'运行状态待更新':
+      h('summary',null,'上下文管理 · '+(compactionStale?'运行状态待更新':
         compaction?.available===true && compaction?.automaticCompletedInProcess>0?'已观察到自动压缩':
         compaction?.available===true?'原生引擎可用 · 自动状态待验证':
         compaction?.available===false?'未检测到原生压缩引擎':'运行状态未同步')),

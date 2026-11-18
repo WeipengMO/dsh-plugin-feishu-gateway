@@ -211,18 +211,19 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
   const recordLimit = Number.isFinite(model.recordLimit) ? model.recordLimit : 200
   const reason = typeof model.reason === 'string' ? model.reason.slice(0, 200) : ''
   const counted = list => available ? wbCount(list.length) : '—'
-  return h(React.Fragment, null,
+  return h('div', { className: 'fgw-approval-view' },
+    h('p', { className: 'fgw-approval-intro' },
+      '请在对应的飞书审批卡片中处理待审批请求。这里可查看历史并撤销永久授权。'),
     h('div', { className: 'fgw-metrics fgw-approval-metrics' },
-      h(WbMetric, { title: '待审批数量', value: counted(pending), caption: '来自 Gateway 审批读模型' }),
-      h(WbMetric, { title: '永久授权数量', value: counted(rules), caption: '可由下方操作撤销' }),
-      h(WbMetric, { title: '审批等待时长（分钟）',
-        value: waitMinutes === null ? '—' : waitMinutes + ' 分钟',
-        caption: '由 Gateway 配置，本页只读展示' }),
-      h(WbMetric, { title: '最近审批条数', value: counted(records),
-        caption: '最多保留 ' + wbValue(recordLimit) + ' 条' })),
+      h(WbMetric, { title: '待审批数量', value: counted(pending), caption: '需要到飞书卡片中处理' }),
+      h(WbMetric, { title: '永久授权数量', value: counted(rules), caption: '已保存的长期授权，可手动撤销' })),
+    h('div', { className: 'fgw-approval-meta' },
+      h('span', null, '审批等待时长（分钟） ', waitMinutes === null ? '—' : waitMinutes + ' 分钟'),
+      h('span', null, '最近审批条数 ', counted(records),
+        ' · 最多保留 ', wbValue(recordLimit), ' 条')),
     !available && h('div', { className: 'fgw-caution', role: 'status' },
       '审批读模型当前不可用：', reason || 'Gateway 未提供原因', '。页面不会显示或推断任何审批状态。'),
-    h(WbBlock, { title: '待审批', aside: '剩余时间每秒刷新；超时由 Gateway 判定，Web 端不做决策' },
+    h(WbBlock, { title: '待审批', aside: '在飞书中处理，超时会自动结束' },
       h(OpsTable, { rows: pending, empty: '当前没有等待中的审批请求',
         columns: [
           { key: 'tool', title: '工具', render: x => h('code', null, x.tool) },
@@ -230,7 +231,7 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
           { key: 'expiresAt', title: '剩余时间',
             render: x => h(ApprovalCountdown, { expiresAt: x.expiresAt }) },
         ] })),
-    h(WbBlock, { title: '永久授权', aside: '按工具 / 命令可执行根授权；撤销仅为向 Gateway 入队的请求' },
+    h(WbBlock, { title: '永久授权', aside: '长期允许使用的工具与命令' },
       h(OpsTable, { rows: rules, empty: '暂无永久授权规则',
         columns: [
           { key: 'label', title: '范围', render: x => approvalRuleLabel(x) },
@@ -246,7 +247,7 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
       busyRef && h('div', { className: 'fgw-caution', role: 'status' }, '正在提交撤销请求…'),
       notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
       revokeError && h('div', { className: 'fgw-alert', role: 'alert' }, revokeError)),
-    h(WbBlock, { title: '最近审批', aside: 'Gateway 记录的最新决策，最多展示 100 条' },
+    h(WbBlock, { title: '最近审批', aside: '近期操作记录（最多 100 条）' },
       h(OpsTable, { rows: records.slice(0, 100), empty: '暂无审批记录',
         columns: [
           { key: 'ts', title: '时间', render: x => opsDate(x.ts) },
@@ -258,10 +259,9 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
             render: x => Number.isFinite(x.elapsedMs) ? wbAge(x.elapsedMs) : '—' },
         ] })),
     h(OpsNote, null, '撤销申请需要由飞书通道处理，提交后请刷新确认；在状态更新之前，原授权仍可能有效。'),
-    h(OpsNote, null, '请在对应的飞书审批卡片中处理待审批操作。本页面只展示审批记录和管理已保存的授权。'),
-    h('div', { className: 'fga-inline-actions' },
-      h(OpsAction, { label: '刷新审批数据', onClick: refresh, secondary: true }),
-      h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') })))
+    h('div', { className: 'fgw-approval-actions' },
+      h(OpsAction, { label: '刷新记录', onClick: refresh, secondary: true }),
+      h(OpsAction, { label: '配置审批卡片', onClick: () => onConfig('settings') })))
 }
 function OpsTimeline({ events }) {
   if (!events?.length) return h(WbEmpty, { headline: '暂无事件', description: '当前没有已记录的操作事件。' })

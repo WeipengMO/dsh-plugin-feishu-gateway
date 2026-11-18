@@ -475,21 +475,21 @@ function Workbench() {
   } else if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null,
       h(ExecPolicyPanel, { onDirtyChange: setExecUnsaved }),
-      h('div', { className: 'fgw-two-column' },
-        h(WbBlock, { title: '访问权限' },
-          h(WbRow, { label: '群聊策略', value: flags.groupPolicy || 'disabled（默认关闭）' }),
-           h(WbRow, { label: '已登记群', value: wbCount(flags.groups?.length || 0) }),
-           h(WbRow, { label: '白名单', value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 位允许用户' : '继承原 Profile' }),
-          h(WbRow, { label: 'DSH Web 授权', value: '原生浏览器会话' }),
-          h(WbRow, { label: '消息正文', value: '运维接口不返回' }),
-          h(WbRow, { label: '凭据回显', value: '禁止' })),
-        h(WbBlock, { title: '审批与安全边界' },
-          h(WbRow, { label: '审批卡片', value: flags.approvalCards ? '已开启' : '继承 / 关闭' }),
-          h(WbRow, { label: '当前等待审批', value: wbCount(health?.pendingApprovals) }),
-          h(WbRow, { label: '配置生效', value: state?.pendingRestart ? '待重启' : '无待生效修改' }),
-          h(OpsNote, null, '执行权限由上方设置控制；审批卡片开启时，超出沙箱的操作会转为飞书审批。'))),
-      ops?.telemetryAvailable && h(WbBlock, { title: '最近审批安全事件' },
-        h(OpsTimeline, { events: ops.summary?.approvals?.slice(0, 20) })))
+      h('details', { className: 'fgw-security-details' },
+        h('summary', null, '查看当前访问与审批状态'),
+        h('div', { className: 'fgw-security-detail-grid' },
+          h(WbRow, { label: '群聊访问', value:
+            ({ disabled: '未开放', allowlist: '仅允许名单内群聊', open: '允许群聊' })[flags.groupPolicy] || '继承配置' }),
+          h(WbRow, { label: '已配置群聊', value: wbCount(flags.groups?.length || 0) }),
+          h(WbRow, { label: '私聊访问',
+            value: Array.isArray(flags.allowlist) ? flags.allowlist.length + ' 位允许用户' : '继承原有配置' }),
+          h(WbRow, { label: '审批卡片', value: flags.approvalCards ? '已启用' : '未启用' }),
+          h(WbRow, { label: '等待审批', value: wbCount(health?.pendingApprovals) }),
+          h(WbRow, { label: '配置状态', value: state?.pendingRestart ? '重启后生效' : '已同步' }))),
+      ops?.telemetryAvailable && (ops.summary?.approvals?.length > 0) &&
+        h('details', { className: 'fgw-security-details' },
+          h('summary', null, '最近审批安全事件（' + ops.summary.approvals.length + '）'),
+          h(OpsTimeline, { events: ops.summary.approvals.slice(0, 20) })))
   } else if (selected === 'advanced') {
     body = h('div', { className: 'fgw-advanced' },
       h('p', { className: 'fgw-muted' },
@@ -512,7 +512,7 @@ function Workbench() {
   // Settings share the section with their Gateway capability.
   if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null, body,
-      h(WbBlock, { title: '私聊白名单', aside: '仅允许可信用户访问 Agent 工具' },
+      h(WbBlock, { title: '私聊访问控制', aside: '设置谁可以通过私聊使用机器人' },
         h('div', { className: 'fgw-advanced' },
           h(Panel, { key: 'permissions', initialTab: 'permissions', hideTabs: true,
             onChanged: load, onDirtyChange: setSettingsUnsaved }))))
