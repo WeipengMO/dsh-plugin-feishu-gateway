@@ -176,8 +176,26 @@ jobs:
           }
           publish_one dsh-plugin-feishu-gateway
           publish_one dsh-plugin-feishu-admin
-          npm view "dsh-plugin-feishu-gateway@$RELEASE_VERSION" version
-          npm view "dsh-plugin-feishu-admin@$RELEASE_VERSION" version
+          # npm may accept a publish before new metadata propagates to read replicas.
+          # Give the registry time to index the version instead of marking a
+          # successful upload as failed due to an immediate 404.
+          for name in dsh-plugin-feishu-gateway dsh-plugin-feishu-admin; do
+            indexed=0
+            for attempt in $(seq 1 30); do
+              result="$(npm view "${name}@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)"
+              if [ "$result" = "$RELEASE_VERSION" ]; then
+                echo "Registry confirmed: ${name}@${RELEASE_VERSION}"
+                indexed=1
+                break
+              fi
+              echo "Waiting for npm index: ${name}@${RELEASE_VERSION} (attempt $attempt/30)"
+              sleep 10
+            done
+            if [ "$indexed" != 1 ]; then
+              echo "::error::npm accepted publishing but the version has not yet become queryable: ${name}@${RELEASE_VERSION}"
+              exit 1
+            fi
+          done
         # No NPM_TOKEN / NODE_AUTH_TOKEN: npm 11+ exchanges GitHub's OIDC identity.
 
   attach:
