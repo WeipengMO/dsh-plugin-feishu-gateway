@@ -356,7 +356,7 @@ function SchedulePanel({ state, onChanged, onDirtyChange }) {
   }
   const specFields = () => {
     if (form.kind === 'once') return field('执行时间', textInput(form.at, value => setF('at', value),
-      '本地 2026-11-16T09:00:00 或绝对 2026-11-16T01:00:00Z', { maxLength: 40 }),
+      'YYYY-MM-DDTHH:mm:ss（本地）或 YYYY-MM-DDTHH:mm:ssZ（UTC）', { maxLength: 40 }),
       '本地时间按上面的时区解释；必须为未来时刻。')
     if (form.kind === 'every') return field('间隔秒数（≥ 60）', textInput(form.everySeconds,
       value => setF('everySeconds', value), '3600', { type: 'number', min: 60 }))

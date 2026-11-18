@@ -33,7 +33,10 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
   const parseList = value => [...new Set(String(value || '')
     .split(/[\s,，\n]+/).map(x => x.trim()).filter(Boolean))]
   const signature = (p, s, g) => JSON.stringify({ p, s, g })
-  const dirty = !!snapshot && baseline !== signature(policy, senders, groups)
+  // A pasted open_id that has not yet been committed to the chip list is
+  // still user input; do not silently drop it on navigation.
+  const dirty = !!snapshot && (baseline !== signature(policy, senders, groups) ||
+    Boolean(senderDraft.trim()))
   useEffect(() => {
     onDirtyChange?.(dirty)
     return () => onDirtyChange?.(false)
@@ -72,7 +75,14 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
     }])
     setExpanded(old => ({ ...old, [index]: true }))
   }
-  const remove = index => setGroups(old => old.filter((_, i) => i !== index))
+  const remove = index => {
+    setGroups(old => old.filter((_, i) => i !== index))
+    // Expansion uses list positions; rebase after removing a row so a
+    // different group never inherits the deleted row's expanded fields.
+    setExpanded(old => Object.fromEntries(Object.entries(old)
+      .filter(([i]) => Number(i) !== index)
+      .map(([i, value]) => [Number(i) > index ? Number(i) - 1 : Number(i), value])))
+  }
 
   const commitSenders = () => {
     const items = parseList(senderDraft)
@@ -161,7 +171,6 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
           h('span', { className: 'fgw-group-row-tags' },
             h('span', { className: 'fgw-group-tag' + (g.enabled ? ' is-on' : '') },
               g.enabled ? '已启用' : '已停用'),
-            h('span', { className: 'fgw-group-tag' }, g.requireMention ? '@才回复' : '自动回复'),
             h('span', { className: 'fgw-group-tag' },
               scopeLabel(g.sessionScope).replace('（推荐）', '')),
             parseList(g.senderAllowlist).length

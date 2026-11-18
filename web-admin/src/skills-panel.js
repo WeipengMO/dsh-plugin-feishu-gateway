@@ -31,7 +31,11 @@ function SkillsPanel({ onDirtyChange }) {
   const [notice, setNotice] = useState('')
   const [mobileList, setMobileList] = useState(false)
   const [newMode, setNewMode] = useState('create')
-  const dirty = selected === '__new__' ? !!draft.trim() : !!loaded && draft !== loaded.content
+  // Opening the blank/new template is not itself an unsaved edit. Only
+  // protect genuinely typed or pasted content when switching skills.
+  const dirty = selected === '__new__'
+    ? draft !== (newMode === 'import' ? '' : SKILL_TEMPLATE)
+    : !!loaded && draft !== loaded.content
   const bytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(draft).length : draft.length
   const maxFile = catalog?.maxFileBytes || 12288
   const nameInDraft = /^name:\s*([a-z][a-z0-9-]*)\s*$/m.exec(draft)?.[1] || ''

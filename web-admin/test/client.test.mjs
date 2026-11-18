@@ -839,3 +839,17 @@ test('visual system: session, approvals and security avoid redundant nested outl
   assert.match(workbench, /查看当前访问与审批状态/)
   assert.doesNotMatch(exec, /\/\/ Current-state summary chips/)
 })
+
+test('unsolicited UX audit: safe group editing, skill templates and compact navigation', () => {
+  const groups = readFileSync(path.join(root, 'src/group-panel.js'), 'utf8')
+  const skills = readFileSync(path.join(root, 'src/skills-panel.js'), 'utf8')
+  const schedule = readFileSync(path.join(root, 'src/schedule-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(groups, /Boolean\(senderDraft.trim\(\)\)/)
+  assert.match(groups, /setExpanded\(old => Object.fromEntries/)
+  assert.doesNotMatch(groups, /className: 'fgw-group-tag' \}, g.requireMention/)
+  assert.match(skills, /newMode === 'import' \? '' : SKILL_TEMPLATE/)
+  assert.doesNotMatch(schedule, /本地 2026-11-16T09:00:00/)
+  assert.match(css, /\.fgw-session-tabs\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/)
+  assert.match(workbench, /管理后台/)
+})
