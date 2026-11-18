@@ -19,6 +19,16 @@ async function until(test: () => boolean): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 10))
   if (!test()) throw new Error('condition not reached')
 }
+
+// Persistence is intentionally asynchronous; checking after a hard-coded sleep
+// races the filesystem on busy CI runners. Poll the observable state instead.
+async function untilStored(test: () => Promise<boolean>): Promise<void> {
+  for (let n = 0; n < 100; n += 1) {
+    if (await test()) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error('persisted approval state was not observed within 2 seconds')
+}
 class SlowBridge extends MockSessionBridge {
   override async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
     await sleep(10_000, options.signal)
@@ -273,8 +283,7 @@ describe('Permanent approvals end-to-end through the Gateway', () => {
     await until(() => b.t.patchedCards.length > 0)
     expect(JSON.stringify(b.t.patchedCards.at(-1)!.card)).toContain('已永久允许')
 
-    await until(() => true)
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await untilStored(async () => (await readApprovalModel(b.dir)).rules.length === 1)
     const model = await readApprovalModel(b.dir)
     expect(model.rules).toHaveLength(1)
     expect(model.rules[0]).toMatchObject({ tool: 'bash', commandRoot: 'lark-cli', label: 'bash · lark-cli*' })
@@ -284,7 +293,7 @@ describe('Permanent approvals end-to-end through the Gateway', () => {
     expect(await b.gateway.answerApproval(bashRequest(sessionId, 'c2'), async () => 'unavailable'))
       .toBe('allowed-once')
     expect(b.t.interactiveCards).toHaveLength(1)
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await untilStored(async () => (await readApprovalModel(b.dir)).rules[0]?.uses === 1)
     expect((await readApprovalModel(b.dir)).rules[0].uses).toBe(1)
 
     // Operator revoke travels through the validated ops-control mailbox.
