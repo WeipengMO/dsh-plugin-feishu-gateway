@@ -101,18 +101,18 @@ function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh
     h(WbBlock, { title: '执行中任务', aside: '每 15 秒同步' },
       h(OpsTable, { rows: active, empty: '当前没有活跃任务',
         columns: [
-          { key: 'ref', title: '任务', render: x => h('code', null, x.ref.slice(0, 10)) },
+          { key: 'ref', title: '任务编号', render: x => h('code', { title: x.ref }, x.ref.slice(0, 10)) },
           { key: 'botId', title: '机器人' },
-          { key: 'session', title: 'Session', render: x => x.session ? h('code', null, x.session.slice(0, 10)) : '—' },
+          { key: 'session', title: '关联对话', render: x => x.session ? h('code', { title: x.session }, x.session.slice(0, 10)) : '—' },
           { key: 'phase', title: '阶段', render: x => h(WbState, { value: x.phase }) },
           { key: 'elapsedMs', title: '已用时', render: x => wbAge(x.elapsedMs) },
           { key: 'action', title: '操作',
-            render: x => x.phase === 'running' ? h(OpsAction, { label: '取消任务',
+            render: x => x.phase === 'running' ? h(OpsAction, { label: '请求取消',
               onClick: () => onCommand('cancel-task', x.ref) }) : '正在收尾' },
         ] })),
     h(WbBlock, { title: '最近任务事件', aside: '仅记录状态，不保存聊天内容' },
       h(OpsTimeline, { events: events.filter(x => x.kind === 'task').slice(0, 30) })),
-    h(OpsNote, null, '运行中任务取消仍通过原生飞书 /cancel 或任务卡片完成；跨会话后台取消需要单独授权与审计，未开放不安全的直接终止接口。'))
+    h(OpsNote, null, '「请求取消」只是提交取消请求，不能保证任务立即停止；已经执行的外部操作不会撤销。也可以在对应飞书对话中使用 /cancel。'))
   if (kind === 'messages') return h(React.Fragment, null,
     h('div', { className: 'fgw-metrics fgw-metrics-three' },
       h(WbMetric, { title: '近期消息', value: wbCount(summary.messages?.length), caption: '脱敏事件汇总' }),
@@ -128,11 +128,11 @@ function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh
           { key: 'lastAt', title: '最后更新', render: x => opsDate(x.lastAt) },
           { key: 'elapsedMs', title: '任务耗时', render: x => x.elapsedMs === undefined ? '—' : wbAge(x.elapsedMs) },
         ] })),
-    h(OpsNote, null, 'uncertain 状态可能涉及已执行的工具副作用，禁止自动重放。Outbox 原有 UUID 去重机制仍然有效。'),
+    h(OpsNote, null, '状态“结果待确认（uncertain）”表示执行情况尚未确定。为避免重复修改外部系统，不会自动重新执行 Agent。'),
     snapshot?.stats?.outboxPending > 0 && h(OpsAction, {
-      label: '触发 Outbox 安全补发', onClick: () => onCommand('retry-outbox'),
+      label: '重试发送待发消息', onClick: () => onCommand('retry-outbox'),
     }),
-    h(OpsNote, null, '仅针对已经入队的 Outbox 消息触发发送检查，不会再次执行 Agent，不会覆盖永久性失败的跳过规则。'))
+    h(OpsNote, null, '仅重新检查仍允许重试的消息，不会重新执行 Agent，也不会发送已永久失败的消息。'))
   // Token 用量趋势和历史贡献热图从独立的历史数据源加载。
   if (kind === 'alerts') return h(React.Fragment, null,
     h(WbBlock, { title: '当前健康告警', aside: '本地规则计算，非 AI 推断' },
@@ -141,7 +141,7 @@ function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh
           h('div', { key: x.code + ':' + (x.botId || i), className: 'fgw-caution' },
             h('strong', null, x.message), x.botId && h('span', null, ' · ', x.botId)))) :
         h(WbEmpty, { headline: '暂无规则告警', description: '当前没有达到已配置阈值的运行状态。' })),
-    h(OpsNote, null, '这是管理页本地规则告警，不会主动向飞书发送通知。跨进程告警推送需要显式通知目标和授权设置。'),
+    h(OpsNote, null, '这里的告警来自运行状态检查，不会自动发送飞书通知。若需要进一步排查，请切换到「连接与日志」。'),
     (ops.commands ?? []).length > 0 && h(WbBlock, { title: '最近后台操作结果' },
       h(OpsTable, { rows: ops.commands, columns: [
         { key: 'type', title: '操作' },
@@ -163,7 +163,7 @@ function OpsPage({ kind, ops, approvals, onConfig, onCommand, onApprovalsRefresh
       })),
     h(WbBlock, { title: '结构化运行日志', aside: '最多最近 200 条；不含原始异常和正文' },
       h(OpsTimeline, { events: events.slice(0, 100) })),
-    h(OpsNote, null, '该事件审计不等同于完整 systemd journal；完整调试日志可能含敏感数据，应由服务器授权运维人员检查。'))
+    h(OpsNote, null, '这里只展示经过筛选的运行事件，不包含完整服务器日志或消息正文。需要进一步排查时，请由有权限的人员检查服务器日志。'))
   return h(OpsUnavailable, {})
 }
 
@@ -257,8 +257,8 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
           { key: 'elapsedMs', title: '耗时',
             render: x => Number.isFinite(x.elapsedMs) ? wbAge(x.elapsedMs) : '—' },
         ] })),
-    h(OpsNote, null, '撤销操作只是向 Gateway 运营商邮箱入队一条 approval-revoke 请求；只有在 Gateway 处理该请求后永久授权才真正失效，刷新前显示的仍是上一次发布的只读模型。'),
-    h(OpsNote, null, '本页不会在后台伪造审批决策或绕过 DSH 原生 ask 策略；审批卡的有效性仍由 bot / chat / actor / nonce 校验。'),
+    h(OpsNote, null, '撤销申请需要由飞书通道处理，提交后请刷新确认；在状态更新之前，原授权仍可能有效。'),
+    h(OpsNote, null, '请在对应的飞书审批卡片中处理待审批操作。本页面只展示审批记录和管理已保存的授权。'),
     h('div', { className: 'fga-inline-actions' },
       h(OpsAction, { label: '刷新审批数据', onClick: refresh, secondary: true }),
       h(OpsAction, { label: '修改审批卡片设置', onClick: () => onConfig('settings') })))
@@ -269,7 +269,7 @@ function OpsTimeline({ events }) {
     h('div', { className: 'fgw-ops-event', key: item.ts + ':' + item.kind + ':' + i },
       h('span', { className: 'fgw-ops-event-dot' }),
       h('div', { className: 'fgw-ops-event-main' },
-        h('strong', null, (OPS_KIND_LABELS[item.kind] || item.kind) + ' · ' + item.state),
+        h('strong', null, (OPS_KIND_LABELS[item.kind] || item.kind) + ' · ' + wbStateLabel(item.state)),
         h('div', { className: 'fgw-muted' },
           item.botId || 'Gateway', item.ref ? ' · ' + item.ref.slice(0, 10) : '',
           item.session ? ' · Session ' + item.session.slice(0, 10) : '',

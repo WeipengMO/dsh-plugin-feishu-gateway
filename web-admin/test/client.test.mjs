@@ -148,7 +148,7 @@ test('Agent profile keeps draft safeguards and native backend contracts', () => 
   assert.match(profile, /event\.ctrlKey\s*\|\|\s*event\.metaKey/)
   assert.match(profile, /beforeunload/)
   assert.match(profile, /onDirtyChange/)
-  assert.match(workbench, /profileUnsaved\s*&&/)
+  assert.match(workbench, /selected === 'agent-profile' \? profileUnsaved/)
   assert.match(workbench, /fgw-content-profile/)
   assert.match(css, /fgw-profile-primary/)
   assert.match(css, /fgw-profile-setting-card/)
@@ -554,7 +554,7 @@ test('usage dashboard prioritizes a 365-day heatmap, separate date inputs and tw
     panel.indexOf("className: 'fgw-usage-filters'"))
   assert.doesNotMatch(panel, /title: '时区（IANA）'/)
   assert.doesNotMatch(panel, /title: '按周期聚合'/)
-  assert.match(panel, /title: '已上报用量任务'/)
+  assert.match(panel, /title: '有用量记录的任务'/)
   assert.match(panel, /kind: 'calls'/)
   assert.match(panel, /kind: 'tokens'/)
   assert.match(panel, /usageTrendBuckets\(series\)/)
@@ -618,7 +618,8 @@ test('model and bot bars scale values and reveal details on hover, touch and foc
   assert.equal(tree.children[0].children[1].children[0].props.style.width, '100%')
   assert.equal(tree.children[1].children[1].children[0].props.style.width, '25%')
   assert.match(tree.children[1].children[2].children[0], /部分用量/)
-  assert.equal(tree.children[0].children[0].children.length, 1)
+  assert.equal(tree.children[0].children[0].children.length, 2)
+  assert.equal(tree.children[0].children[0].children[1].children[0], '100')
   const event = { currentTarget: { getBoundingClientRect: () => ({ left: 20, width: 100, top: 200, bottom: 220 }) } }
   for (const handler of ['onMouseEnter', 'onTouchStart', 'onFocus']) {
     tip = null
@@ -768,4 +769,12 @@ test('UX regression: every editable admin view uses a shared leave guard', () =>
   assert.match(exec, /onDirtyChange\?\.\(dirty\)/)
   assert.match(source, /savedSignature/)
   assert.match(profile, /if \(!dirty && !settingsChanged\) return/)
+})
+
+test('UX regression: operations wording distinguishes queued actions from completed work', () => {
+  const pages = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
+  assert.match(pages, /重试发送待发消息/)
+  assert.match(pages, /不能保证任务立即停止/)
+  assert.match(pages, /飞书审批卡片/)
+  assert.match(pages, /wbStateLabel\(item.state\)/)
 })

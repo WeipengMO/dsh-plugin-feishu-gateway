@@ -699,7 +699,7 @@ window.__ModuleLoader__.load({
                 state?.pendingRestart ? '已保存，重启通道后生效' : '当前没有未保存的修改'),
             h('div', { className: 'fga-inline-actions' },
               action('仅保存', save, busy || !state || !primaryKey || fallbackSelectionInvalid || !dirty),
-              action('保存并重启', saveAndRestart,
+              action('保存并重启飞书通道', saveAndRestart,
                 busy || !state || !primaryKey || fallbackSelectionInvalid || !dirty, true)))),
         tab === 'permissions' && h('div', { className: 'fga-section' },
           h('label', { className: 'fga-check' },

@@ -1286,3 +1286,13 @@
  .fga-model-savebar .fga-inline-actions{width:100%;margin-left:0}
  .fga-model-savebar .fga-button{flex:1 1 120px}
 }
+
+/* Long operational tables should scroll, never squeeze identifiers into
+   unusable columns. Session tables retain their custom mobile card layout. */
+@container (max-width:650px){
+  .fgw-table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+  .fgw-content .fgw-table{min-width:520px}
+  .fgw-session-center .fgw-table{min-width:0}
+  .fgw-ops-event-main{overflow-wrap:anywhere}
+}
+.fgw-skills-create-hint{font-size:12px;line-height:1.65;color:var(--muted-foreground,#8792a1);margin:10px 16px;padding:10px 12px;background:var(--muted,#8881);border-radius:8px}
