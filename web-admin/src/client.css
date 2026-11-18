@@ -1474,3 +1474,29 @@
   border-color:var(--border,#8885)
 }
 .fga-search-picker-option:disabled{opacity:.48;cursor:not-allowed}
+
+/* Consistent compact refresh icon + text across Feishu Admin. */
+.fgw-refresh-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:6px 11px;line-height:1.35;font-size:12px;font-weight:560;white-space:nowrap}
+.fgw-refresh-action::before{
+ content:'';width:14px;height:14px;flex:none;display:inline-block;background:currentColor;
+ -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 11a8 8 0 1 0 -2 5.5M20 4v7h-7' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+ mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 11a8 8 0 1 0 -2 5.5M20 4v7h-7' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat
+}
+.fgw-top-actions{gap:9px}
+.fgw-top-actions .fgw-refresh-action{min-width:78px}
+/* Desktop date range and metric share a row; narrow content stacks. */
+.fgw-usage-primary-fields{display:grid;grid-template-columns:minmax(0,2fr) minmax(170px,1fr);align-items:end;gap:12px}
+.fgw-usage-primary-fields > .fgw-usage-date-range{grid-column:auto}
+.fgw-usage-primary-fields > .fgw-usage-more{grid-column:1/-1;justify-self:start;align-self:end}
+.fgw-usage-date-range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fgw-usage-date-range .fgw-usage-field{min-width:0}
+.fgw-usage-primary-fields .fgw-usage-field>select{width:100%}
+@container (max-width:730px){
+ .fgw-usage-primary-fields{grid-template-columns:minmax(0,1fr)}
+ .fgw-usage-primary-fields > .fgw-usage-date-range{grid-column:1}
+ .fgw-usage-primary-fields > .fgw-usage-more{grid-column:1}
+}
+@container (max-width:445px){
+ .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
+ .fgw-usage-primary-fields > .fgw-usage-date-range{padding:11px 12px}
+}

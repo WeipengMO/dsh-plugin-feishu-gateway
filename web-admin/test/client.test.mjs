@@ -876,3 +876,15 @@ test('Agent preset dropdown uses themed accessible options and legacy cwd stays 
   assert.match(source, /if \(typeof existing.workspace === 'string' && existing.workspace.trim\(\)\)/)
   assert.match(css, /\.fga-model-preset \.fga-search-picker/)
 })
+
+test('refresh actions and inline desktop date+metric controls share consistent CSS', () => {
+  const native = readFileSync(path.join(root, 'src/native-session-panel.js'), 'utf8')
+  const usage = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(native, /fgw-refresh-action/)
+  assert.match(usage, /fgw-refresh-action/)
+  assert.match(source, /text.includes\('刷新'\)/)
+  assert.match(workbench, /fgw-refresh fgw-refresh-action/)
+  assert.match(css, /\.fgw-refresh-action::before\{/)
+  assert.match(css, /\.fgw-usage-primary-fields > \.fgw-usage-date-range\{grid-column:auto\}/)
+})

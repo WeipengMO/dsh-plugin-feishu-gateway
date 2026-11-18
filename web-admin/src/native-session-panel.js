@@ -157,7 +157,7 @@ function FeishuArchiveHub() {
         h('ul',null,...candidateRows)),
       h('p',{className:'fgw-muted fgw-session-policy-hint'},
         '自动永久删除默认关闭。只有部署了受支持的安全删除服务，才能手动永久删除已归档会话。'),
-      h('button',{type:'button',className:'fgw-refresh',onClick:()=>void refresh(),disabled:busy},
+      h('button',{type:'button',className:'fgw-refresh fgw-refresh-action',onClick:()=>void refresh(),disabled:busy},
         busy?'正在检查…':'刷新候选统计')),
     error&&h('p',{className:'fgw-caution',role:'alert'},error),
     notice&&h('p',{className:'fgw-muted',role:'status'},notice),
@@ -335,7 +335,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
             [1, 6, 24, 48, 72, 168].map(n =>
               h('option', { value: n, key: n }, n + ' 小时')))),
         h('div',{className:'fgw-workspace-actions'},
-          h('button', { type: 'button', className: 'fgw-refresh',
+          h('button', { type: 'button', className: 'fgw-refresh fgw-refresh-action',
             onClick: () => void refresh(), disabled: busy }, '刷新预览'),
         h('button', { type: 'button', className: 'fgw-refresh fgw-ops-cta',
           onClick: () => void runNow(), disabled: busy || !settings?.enabled || !plan?.available }, '执行整理'))),
@@ -377,7 +377,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         h('label', { className: 'fga-check fgw-session-filter-extra' },
           h('input', { type: 'checkbox', checked: reveal,
             onChange: e => setReveal(e.target.checked) }), '显示完整技术标识（仅排查问题时使用）'),
-        h('button', { type: 'submit', className:'fgw-refresh', disabled:busy }, busy?'加载中…':'刷新')),
+        h('button', { type: 'submit', className:'fgw-refresh fgw-refresh-action', disabled:busy }, busy?'加载中…':'刷新')),
       mode==='archive'&&report?.available&&
         h('p',{className:'fgw-session-deletion-info'},
           report.canDelete?

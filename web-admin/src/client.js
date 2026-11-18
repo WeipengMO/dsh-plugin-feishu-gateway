@@ -323,7 +323,9 @@ window.__ModuleLoader__.load({
     }
     /*__MODEL_ROUTE_HELPERS_END__*/
     function action(text, callback, busy, secondary = false) {
-      return h('button', { type: 'button', className: 'fga-button' + (secondary ? ' fga-secondary' : ''),
+      return h('button', { type: 'button',
+        className: 'fga-button' + (secondary ? ' fga-secondary' : '') +
+          (text.includes('刷新') ? ' fgw-refresh-action' : ''),
         onClick: callback, disabled: busy }, text)
     }
     function Stat({ name, value, help }) {
