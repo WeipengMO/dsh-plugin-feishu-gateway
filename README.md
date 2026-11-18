@@ -41,46 +41,35 @@
 - `web` Profile 已能正常启动 DSH Web；`feishu-channel` Profile 已配置相应的 DSH Agent/模型。初次配置 Profile 可以参考[首次部署指南](docs/GETTING-STARTED.md)。
 - 已在[飞书开放平台](https://open.feishu.cn/app)（国际版：[Lark 开放平台](https://open.larksuite.com/app)）创建企业自建应用，启用机器人、长连接事件 `im.message.receive_v1`，申请消息权限并发布应用版本。详见[飞书应用配置](docs/FEISHU-APP.md)。
 
-### 2. 下载并安装插件（当前推荐）
+### 2. 通过 npm 安装（推荐）
 
-当前 GitHub 测试版为 **`v0.1.0-beta.1`**。打开[GitHub Releases 下载页面](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1)，下载以下三个文件并放在同一目录：
-
-- `dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz`
-- `dsh-plugin-feishu-admin-0.1.0-beta.1.tgz`
-- `SHA256SUMS`（用于校验下载的安装包）
-
-> 仓库当前为 Private；在公开仓库之前，只有获得仓库访问权限的用户才能下载这些 GitHub Release 资源。
-
-在**运行 DSH 的机器**上打开终端，进入刚才存放三个文件的目录，执行：
-
-```bash
-# 进入安装包所在目录：替换成你的真实路径
-cd /path/to/downloads
-
-# 检查安装包是否与发布文件一致（Linux）
-sha256sum -c SHA256SUMS
-
-# 分别安装到对应 DSH Profile
-dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
-dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
-
-# 检查 Profile 解析的配置
-dsh --profile feishu-channel --dump-config
-dsh --profile web --dump-config
-```
-
-macOS 可以使用 `shasum -a 256 -c SHA256SUMS` 检查包。**如果校验失败，请不要安装**，重新获取完整的三个文件。
-
-### 通过 npm 安装（包发布到 npm 后）
-
-如果两个版本已出现在 npm 上，也可以不下载 `.tgz`，直接执行：
+两个插件均已在 npm 发布为独立包。运行以下命令即可安装当前测试版，**不需要 clone 源码或编译**：
 
 ```bash
 dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
 dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
 ```
 
-可先用 `npm view dsh-plugin-feishu-gateway@0.1.0-beta.1 version` 和 `npm view dsh-plugin-feishu-admin@0.1.0-beta.1 version` 检查是否已经发布。**GitHub Release 存在不代表 npm 已发布**，测试期间请固定版本号，不要直接安装 `latest`。
+可以在 [Gateway npm](https://www.npmjs.com/package/dsh-plugin-feishu-gateway) 和 [Admin npm](https://www.npmjs.com/package/dsh-plugin-feishu-admin) 查看可用版本；新版本发布后按实际版本号调整命令。测试期建议固定版本号，不直接使用 `latest`。安装完检查两个 Profile：
+
+```bash
+dsh --profile feishu-channel --dump-config
+dsh --profile web --dump-config
+```
+
+#### 从 GitHub Release 安装（可选）
+
+如果你更愿意下载安装包，可从 [GitHub v0.1.0-beta.1 Release](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 获取两个 `.tgz` 和 `SHA256SUMS`，放在 DSH 主机同一个目录：
+
+```bash
+cd /path/to/downloads
+sha256sum -c SHA256SUMS  # macOS: shasum -a 256 -c SHA256SUMS
+
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+```
+
+若校验失败请不要安装。上述两种方式二选一，首次部署仍需要配置并启动独立的飞书通道。
 
 ### 3. 配置飞书机器人
 
@@ -173,7 +162,7 @@ DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早�
 
 运行 `pnpm run pack` 后，执行 `pnpm run release:check` 可对 Gateway 和 Admin 两个 npm 安装包进行发行前检查，并生成 `dist/release-manifest.json` 和 `dist/SHA256SUMS`；CI 也会保存经过检查的双包工件。
 
-**CI 通过不等于真实 DSH / 飞书环境已经验收。** 请按照 [双包发布检查](docs/PRERELEASE.md) 在隔离环境确认安装、权限、群聊、定时任务、Web Admin、升级和回滚。此 CI 不会自动发布 npm。
+**CI 通过不等于真实 DSH / 飞书环境已经验收。** 请按照 [双包发布检查](docs/PRERELEASE.md) 在隔离环境确认安装、权限、群聊、定时任务、Web Admin、升级和回滚。日常 CI 不会向 npm 发布；只有创建 GitHub Release 后才会触发 [npm Trusted Publishing 自动发布工作流](docs/PUBLISHING.md)，且需要先完成 npm 授权。
 
 ## 安全与升级原则
 
@@ -185,6 +174,6 @@ DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早�
 
 ## 文档导航
 
-**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md)
+**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [GitHub → npm 自动发布](docs/PUBLISHING.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md)
 
 MIT License.
