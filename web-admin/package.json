@@ -58,5 +58,10 @@
     "test": "node --test test/*.test.mjs",
     "pack": "pnpm pack --pack-destination ../dist"
   },
-  "packageManager": "pnpm@12.18.0"
+  "packageManager": "pnpm@12.18.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WeipengMO/dsh-plugin-feishu-gateway",
+    "directory": "web-admin"
+  }
 }
