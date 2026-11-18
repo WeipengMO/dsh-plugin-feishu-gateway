@@ -1,93 +1,83 @@
 # DSH Feishu Gateway
 
-让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
+在飞书中使用 DSH Agent，并通过 DSH Web 管理机器人和会话。
 
-> **版本说明**：本分支的源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。开发分支、npm 已发布版以及服务器实际安装版可能不同；请勿混用不同版本的安装包。会话管理第三轮 UI 与删除操作可查看 [PR #41](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/pull/41)，状态以 GitHub 为准；请在测试环境验证后再部署。
+插件沿用 DSH 的模型、工具和会话能力。你可以直接在飞书与 Agent 对话、运行任务，也可以在浏览器里配置机器人、查看任务状态和使用情况。
 
-## 能做什么
+## 功能
 
-- **飞书聊天**：私聊与受控群聊、@ 触发、成员权限、按聊天隔离上下文、`/new`、`/cancel` 等命令。
-- **原生对话与上下文压缩**：由 DSH 保存 Session 和历史；Gateway 复用 DSH 原生上下文自动压缩，并提供飞书 `/context`、`/compact` 查询与手动触发，后台可查看状态。历史归档/恢复与上下文压缩是不同功能。
-- **任务和审批**：流式卡片、任务取消、DSH 原生工具审批、结果通知。
-- **自动化**：管理 DSH 原生定时任务，并把执行结果推送到授权的飞书聊天。
-- **管理后台**：模型与备用模型、Agent 预设（飞书工作模式）、机器人/群聊权限、Agent 档案、**飞书专属 Skills**、Token 用量、消息投递、代理及运行诊断。
-- **可靠性**：持久化 Inbox/Outbox、消息去重、保守重试与重启恢复；不自动重放可能已经产生副作用的任务。
+- **飞书对话**：支持私聊、群聊、@ 机器人和独立的聊天上下文。
+- **模型与 Agent**：选择主模型及备用模型、切换 Agent 预设，使用飞书专属的 Agent 档案和 Skills。
+- **任务处理**：查看运行进度，通过飞书卡片处理工具审批、取消任务。
+- **定时任务**：使用 DSH 原生调度，在后台管理任务，并通过飞书接收执行结果。
+- **管理后台**：管理机器人与访问权限、会话历史、消息投递、Token 用量及网络代理。
 
-**手动永久删除通过可选的 `@michengai/dsh-archive-manager` 提供**（安装于 DSH Web `web` Profile）；没有安装时「删除」按钮保持灰色，其他功能正常运行。自动永久删除和按期限物理清理尚未实现（[Issue #37](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/issues/37)）；图片/文件双向传输也不应视为已实现。**归档和解除飞书关联均不会删除 DSH 对话内容或回收其磁盘空间。**
+飞书对话使用 DSH 原生 Session；不需要再部署一套独立的 Agent。
 
-## 快速开始
+## 安装
 
-环境要求：Node.js `>=24.9.0`、匹配 `package.json` 中 `engines.dsh` 的 DSH、pnpm，以及一个配置了机器人和长连接事件的飞书应用。
+需要 Node.js 24.9+、[DSH](https://github.com/deepseek-ai/deepseek-harness)、pnpm，以及一个已开启机器人能力的飞书应用。DSH 版本要求见 [package.json](package.json)。
 
-| DSH Profile | 安装包 | 用途 |
+项目由两个插件组成，分别安装到对应的 DSH Profile：
+
+| 插件 | Profile | 用途 |
 | --- | --- | --- |
-| `feishu-channel` | `dsh-plugin-feishu-gateway` | 常驻 WebSocket、原生 Agent/Session、上下文压缩命令、消息与定时任务投递 |
-| `web` | `dsh-plugin-feishu-admin` | DSH Web 侧栏「飞书管理」和受认证保护的管理 API |
+| `dsh-plugin-feishu-gateway` | `feishu-channel` | 飞书消息、Agent、任务执行 |
+| `dsh-plugin-feishu-admin` | `web` | DSH Web 管理界面 |
 
-**两个插件必须装在各自的 Profile；不要把 Gateway 安装到 `web`。**
-
-在仓库根目录构建并安装**当前检出的源码版本**：
+### 从源码安装
 
 ```bash
+git clone https://github.com/WeipengMO/dsh-plugin-feishu-gateway.git
+cd dsh-plugin-feishu-gateway
 pnpm install --frozen-lockfile
 pnpm run verify
 pnpm run pack
 
 GATEWAY_VERSION=$(node -p "require('./package.json').version")
 ADMIN_VERSION=$(node -p "require('./web-admin/package.json').version")
+
 dsh plugin --profile feishu-channel add "./dist/dsh-plugin-feishu-gateway-$GATEWAY_VERSION.tgz"
 dsh plugin --profile web add "./dist/dsh-plugin-feishu-admin-$ADMIN_VERSION.tgz"
-
-dsh --profile feishu-channel --dump-config
-dsh --profile web --dump-config
 ```
 
-**安装包更新不等于常驻服务已重启加载。** 首次配置飞书 App ID/Secret、白名单、权限、长连接和系统服务的完整步骤见 **[首次部署](docs/GETTING-STARTED.md)**。已经部署过的用户请直接阅读 **[升级和运维](docs/OPERATIONS.md)**。
+安装后按 [首次部署指南](docs/GETTING-STARTED.md) 配置飞书应用、启动 Gateway，并重启需要加载插件的 DSH 服务。
 
-## 管理界面怎么用
+## 配置
 
-在 DSH Web 左侧打开 **飞书管理**：
+1. 在[飞书开放平台](https://open.feishu.cn/)创建应用，开启机器人能力和长连接事件订阅。
+2. 在 **DSH Web → 设置 → 飞书 Gateway** 配置 App ID 和 App Secret。
+3. 在 **DSH Web → 飞书管理 → 接入与权限** 设置允许使用机器人的成员及群聊。
+4. 启动飞书通道，在管理后台的「总览」检查连接状态。
 
-| 入口 | 管理内容 |
+飞书应用的权限与事件订阅配置详见 [飞书应用配置](docs/FEISHU-APP.md)。
+
+## 使用
+
+配置完成后，直接在飞书中向机器人发送消息。常用命令：
+
+| 命令 | 用途 |
 | --- | --- |
-| 总览 | Gateway 连接状态、运行摘要 |
-| 会话管理 | 独立入口：对话历史、已归档、飞书聊天关联与自动整理 |
-| 任务与消息 | 实时任务、消息投递 |
-| 定时任务 | 创建、暂停、运行、删除任务及查看执行历史 |
-| 接入与权限 | 机器人、群聊、成员白名单和工具执行策略 |
-| Agent 档案 | 飞书专用身份、指令、记忆文件与历史版本 |
-| Skills 技能 | 创建、粘贴导入、编辑、启停和删除飞书专属 SKILL.md；与 DSH Core 完全隔离 |
-| 用量与审计 | Token 统计、模型用量与工具审批记录 |
-| 运维与诊断 | 告警、连接和结构化日志 |
-| 模型与连接 | 主模型、多个备用模型、Agent 预设（飞书工作模式）、代理和消息卡片选项 |
+| `/help` | 查看可用命令 |
+| `/status` | 查看当前聊天与连接状态 |
+| `/new` | 开始新会话 |
+| `/cancel` | 取消当前任务 |
+| `/models` | 查看可用模型 |
+| `/model provider/model` | 切换当前会话模型 |
+| `/context`、`/compact` | 查看或手动压缩上下文 |
 
-「会话管理」包含**对话历史 / 已归档 / 飞书聊天关联**，支持对历史执行单条或多选「归档」，以及对已归档历史多选「恢复 / 删除」（单次最多 20 条）。删除需要可选的 `@michengai/dsh-archive-manager` 扩展接口，没有安装时保持灰色；所有确认统一在后台页面内弹窗。90 天自动归档需手动启用，自动永久删除保持关闭。详见 [会话管理说明](docs/SESSION-CENTER-UX.md)。
+更多命令和群聊设置见 [飞书聊天指南](docs/FEISHU-CHANNEL.md)。
 
-Skills 仅在飞书 Agent 的独立工作区生效，默认停用，不支持自动下载安装脚本；详细规则和验收步骤见 [飞书专属 Skills](docs/FEISHU-SKILLS.md)。
+在 DSH Web 左侧选择 **飞书管理**，可以编辑模型路由、Agent 档案和 Skills，查看会话、定时任务、消息投递和 Token 用量。各页面用法见 [管理后台指南](docs/WEB-ADMIN.md)。
 
-飞书聊天内可使用 `/help`、`/status`、`/new`、`/cancel`、`/models` 等命令。模型目录以 **Gateway 所在 DSH Profile** 为准，详见 [飞书命令与模型](docs/FEISHU-CHANNEL.md)。
+## 文档
 
+- [首次部署](docs/GETTING-STARTED.md) — 环境准备、安装、启动与连接验证
+- [飞书应用配置](docs/FEISHU-APP.md) — 机器人权限与事件订阅
+- [管理后台](docs/WEB-ADMIN.md) — 配置、会话与任务管理
+- [升级与运维](docs/OPERATIONS.md) — 服务管理、备份与故障排查
+- [完整文档](docs/README.md) — 其他功能与开发资料
 
-> **可选增强**：永久删除已归档 DSH 对话需要在 **`web` Profile** 安装并启用 `@michengai/dsh-archive-manager`。没安装时「删除」按钮为灰色，归档、恢复和飞书消息功能不受影响。具体步骤见 [会话管理指南](docs/SESSION-CENTER-UX.md)。
+## License
 
-## 自动上下文压缩
-
-DSH 原生 `dsh-compaction-basic` 根据模型上下文压力自动压缩较早对话，并在确认溢出后尝试恢复；Gateway 不会另造一个按累计 Token 用量触发的摘要引擎。飞书发送 `/context` 可查看当前 Session 的压缩能力，发送 `/compact` 可调用 DSH 原生手动压缩；Web Admin 会话管理底部也提供只读状态：区分自动、手动、未分类压缩和失败计数；只有观察到真实原生自动压缩事件才显示“已观察到”，否则标明自动策略未验证。自动触发阈值应在 **`feishu-channel` Profile** 的 DSH 压缩后端中配置，而非 Web Admin。详见 [上下文压缩与触发策略](docs/CONTEXT-COMPACTION.md)。
-
-## 安全与升级原则
-
-- 飞书私聊只允许授权的 `open_id`；群聊默认关闭，需要显式配置策略和成员白名单。
-- App Secret 仅由受控环境变量或管理端写入，不能进入 Git；Admin 不回显。
-- Gateway 与 Web Admin 在同机同用户部署时协作，**同一状态目录只允许一个 Gateway owner**。
-- 正在执行、等待审批、存在未投递消息或被活动定时任务引用的会话，不得通过后台强制执行破坏性清理。
-- 提交到 GitHub 或 CI 通过不会更新服务器进程；升级前先保存状态并安排维护窗口。
-
-本仓库有历史真实部署验收记录（例如定时任务 9/9），但 **GitHub CI 主要使用 Mock 与本地安全测试**，不能直接证明每个新分支都已通过真实租户与 DSH Web 的端到端验收。
-
-## 文档导航
-
-**[文档总览](docs/README.md)** · [首次部署](docs/GETTING-STARTED.md) · [日常运维](docs/OPERATIONS.md) · [Web 管理后台](docs/WEB-ADMIN.md) · [会话与历史](docs/SESSION-CENTER-UX.md) · [定时任务](docs/SCHEDULED-TASKS.md) · [开发与测试](docs/DEVELOPMENT.md) · [测试版发布检查](docs/PRERELEASE.md)
-
-历史版本变更、早期架构设计与验收快照集中在 [历史资料](docs/archive/README.md)，**不应作为当前版本的安装指令**。
-
-MIT License.
+[MIT](LICENSE)
