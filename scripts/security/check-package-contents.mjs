@@ -21,6 +21,7 @@ export function validateEntries(packageName, entries) {
   if (!entries.length) return ['empty package archive']
   for (const original of entries) {
     if (typeof original !== 'string' || !original) continue
+    if (original === 'package/' || original === 'package') continue
     const value = original.replace(/\/+$/, '')
     const parts = value.split('/')
     if (!value.startsWith('package/') || parts.includes('..') ||
