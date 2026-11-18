@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-feishu-admin",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Native DSH Feishu operations dashboard in the left sidebar with credential-only settings",
   "type": "module",
   "main": "./lib/index.mjs",
