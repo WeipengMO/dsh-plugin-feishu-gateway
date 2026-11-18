@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/security-tools/gitleaks" git --no-banner --redact=100 --log-opts="--all" .
+          "$RUNNER_TEMP/security-tools/gitleaks" git --no-banner --redact=100 --verbose --log-opts="--all" .
       - name: Scan current checkout and uncommitted files
         shell: bash
         run: |
