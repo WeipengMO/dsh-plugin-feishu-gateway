@@ -732,3 +732,23 @@ test('dashboard cards and settings stay centered as the DSH content column shrin
   assert.match(source, /className: 'fga-model-card fga-model-primary'/)
   assert.match(source, /fga-model-unsaved/)
 })
+
+test('UX regression: schedule retains form until Gateway accepts the command', () => {
+  const schedule = readFileSync(path.join(root, 'src/schedule-panel.js'), 'utf8')
+  assert.match(schedule, /return true\s*\} catch \(e\) \{\s*setError\(schedErrorText\(e\)\)\s*return false/)
+  assert.match(schedule, /void submit\(command\)\.then\(accepted => \{\s*if \(!accepted\) return/)
+  assert.match(schedule, /setFormOpen\(false\); setEditing\(null\); setForm\(schedDefaultForm\(\)\)/)
+  assert.match(schedule, /fgw-sched-detail-actions/)
+})
+
+test('UX regression: analytics responds to workbench width and supports touch selection', () => {
+  const usage = readFileSync(path.join(root, 'src/usage-panel.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(usage, /new ResizeObserver\(update\)/)
+  assert.match(usage, /root\.getBoundingClientRect\(\)\.width/)
+  assert.doesNotMatch(usage, /window\.innerWidth < 690/)
+  assert.match(usage, /onClick: event => showTip\(event, day, true\)/)
+  assert.match(usage, /fgw-usage-model-value/)
+  assert.match(css, /\.fga-model-preset\{grid-column:1\/-1/)
+  assert.match(css, /\.fgw-usage-date-range/)
+})

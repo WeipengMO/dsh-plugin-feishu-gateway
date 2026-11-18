@@ -1247,3 +1247,18 @@
   .fga-model-tag-label{max-width:100%}
   .fga-model-add{flex:1 1 auto;max-width:none}
 }
+
+/* UI refinement: predictable placement and accessible density at every zoom. */
+.fga-model-preset{grid-column:1/-1;max-width:none;width:100%}
+.fga-model-preset .fga-model-select{max-width:800px}
+.fgw-usage-date-range{grid-column:span 2;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:0;min-width:0}
+.fgw-usage-date-range .fgw-usage-field{min-width:0}
+.fgw-usage-model-value{font-size:12px;font-weight:680;white-space:nowrap;font-variant-numeric:tabular-nums}
+.fgw-heatmap-dismiss{font-size:11px;padding:5px 9px}
+.fgw-sched-detail-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:9px;padding:7px 0 12px;border-bottom:1px solid var(--border,#8883);margin-bottom:8px}
+@container (max-width:650px){
+  .fgw-usage-date-range{grid-column:1/-1}
+}
+@container (max-width:410px){
+  .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
+}

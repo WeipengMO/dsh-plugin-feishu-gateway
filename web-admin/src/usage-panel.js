@@ -21,6 +21,7 @@ function usageMonthLabel(date, withYear) {
  * keyboard focus and one shared tooltip instead of hundreds of native titles. */
 function UsageHeatmap({ daily, metricText, today, summary }) {
   const [tip, setTip] = useState(null)
+  const [pinned, setPinned] = useState(false)
   if (!daily || !daily.length) {
     return h(WbEmpty, { headline: '暂无历史用量',
       description: '所选日期范围内没有可用的用量记录。' })
@@ -32,7 +33,8 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
     (day.value === null ? '无历史覆盖' : wbCount(day.value)) + ' · 输入 ' + wbValue(day.inputTokens) +
     ' · 输出 ' + wbValue(day.outputTokens) + ' · 有 usage 调用 ' + wbCount(day.calls) +
     ' · 缺失 usage ' + wbCount(day.unknownTurns)
-  const showTip = (event, day) => {
+  const showTip = (event, day, lock = false) => {
+    if (pinned && !lock) return
     const rect = event.currentTarget.getBoundingClientRect()
     const half = 104
     const below = rect.top < 140
@@ -40,8 +42,9 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
       x: Math.min(Math.max(rect.left + rect.width / 2, half),
         Math.max(half, window.innerWidth - half)),
       y: below ? rect.bottom + 8 : rect.top - 8 })
+    if (lock) setPinned(true)
   }
-  const hideTip = () => setTip(null)
+  const hideTip = () => { if (!pinned) setTip(null) }
   const renderCell = (day, key) => day ? h('span', {
     key: day.date,
     className: 'fgw-heat-day fgw-heat-' + level(day) +
@@ -50,6 +53,10 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
     role: 'gridcell', tabIndex: 0, 'aria-label': cellLabel(day),
     onMouseEnter: event => showTip(event, day), onMouseLeave: hideTip,
     onFocus: event => showTip(event, day), onBlur: hideTip,
+    onClick: event => showTip(event, day, true),
+    onKeyDown: event => {
+      if (event.key === 'Escape') { setPinned(false); setTip(null) }
+    },
   }) : h('span', { key, className: 'fgw-heat-day fgw-heat-empty', 'aria-hidden': true })
   const padStart = (new Date(daily[0].date + 'T00:00:00Z').getUTCDay() + 6) % 7
   const cells = [
@@ -96,7 +103,9 @@ function UsageHeatmap({ daily, metricText, today, summary }) {
           ...weeks.map((week, index) =>
             h('div', { key: 'week' + index, className: 'fgw-heatmap-week', role: 'row' }, ...week)))))),
     h('div', { className: 'fgw-heatmap-foot' },
-      h('span', { className: 'fgw-heatmap-hint' }, '悬停查看每日明细'),
+      h('span', { className: 'fgw-heatmap-hint' }, '悬停或点按日期查看每日明细'),
+      pinned && h('button', { type: 'button', className: 'fgw-refresh fgw-heatmap-dismiss',
+        onClick: () => { setPinned(false); setTip(null) } }, '关闭日期详情'),
       h('div', { className: 'fgw-heatmap-legend' },
         h('span', null, '少'), ...[0, 1, 2, 3, 4].map(legendCell), h('span', null, '多'),
         h('span', { className: 'fgw-heatmap-legend-sep' }),
@@ -150,7 +159,9 @@ function UsageModelBars({ rows, metricText, kind = 'model' }) {
         onMouseEnter: event => showTip(event, row, label), onMouseLeave: () => setTip(null),
         onFocus: event => showTip(event, row, label), onBlur: () => setTip(null),
         onTouchStart: event => showTip(event, row, label) },
-        h('div', { className: 'fgw-usage-model-label' }, h('span', null, label)),
+        h('div', { className: 'fgw-usage-model-label' },
+          h('span', null, label),
+          h('strong', { className: 'fgw-usage-model-value' }, wbCount(value))),
         h('div', { className: 'fgw-usage-model-track', 'aria-hidden': true },
           h('div', { className: 'fgw-usage-model-bar', style: { width: (value / peak * 100) + '%' } })),
         partial && h('span', { className: 'fgw-usage-model-partial' }, '部分用量未上报或缺少分类明细'))
@@ -186,7 +197,8 @@ function UsageDateRange({ from, to, onApply }) {
       ? Math.round((Date.parse(nextEnd + 'T00:00:00Z') - Date.parse(nextStart + 'T00:00:00Z')) / 86400000) + 1 : 0
     if (days >= 1 && days <= 366) onApply(nextStart, nextEnd)
   }
-  return h(React.Fragment, null,
+  return h('div', { className: 'fgw-usage-date-range', role: 'group',
+    'aria-label': '统计日期范围' },
     h(UsageField, { title: '开始日期' }, h('input', {
       type: 'date', value: start, 'aria-label': '开始日期', 'aria-invalid': !valid,
       onChange: event => change(event.target.value, end),
@@ -243,11 +255,22 @@ function usageCompact(value) {
   return String(Math.round(value))
 }
 function UsageTrendChart({ title, value, unit, rows, kind, description, granularity }) {
-  const [compact, setCompact] = useState(() => window.innerWidth < 690)
+  // The DSH layout can shrink without resizing the browser (side panels,
+  // zoom, embedded workbench). Measure this chart's actual available width.
+  const rootRef = React.useRef(null)
+  const [compact, setCompact] = useState(false)
   useEffect(() => {
-    const onResize = () => setCompact(window.innerWidth < 690)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const root = rootRef.current
+    if (!root) return
+    const update = () => setCompact(root.getBoundingClientRect().width < 560)
+    update()
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(update)
+      observer.observe(root)
+      return () => observer.disconnect()
+    }
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
   }, [])
   const viewWidth = compact ? 400 : 720
   const left = compact ? 42 : 53
@@ -279,7 +302,7 @@ function UsageTrendChart({ title, value, unit, rows, kind, description, granular
     (amount === null ? '无历史覆盖' : wbCount(amount) + ' ' + unit) +
     (row.partial ? ' · 部分覆盖' : '')
   const hasData = known.length > 0
-  return h('section', { className: 'fgw-usage-chart-card' },
+  return h('section', { ref: rootRef, className: 'fgw-usage-chart-card' },
     h('div', { className: 'fgw-usage-chart-heading' },
       h('div', null,
         h('h3', null, title),
@@ -428,7 +451,7 @@ function UsagePanel() {
     h('div', { className: 'fgw-usage-intro' },
       h('div', null,
         h('strong', null, '用量概览'),
-        h('p', null, '历史 Token 消耗与请求活动 · 数据来自已上报的原生 usage 事件')),
+        h('p', null, '查看历史 Token 使用情况、请求活动与数据覆盖范围')),
       h('span', { className: 'fgw-usage-updated' },
         yearBusy || busy ? '数据更新中…' : '仅显示已采集的数据')),
     h(WbBlock, { title: 'Token 日历热图',
@@ -486,15 +509,15 @@ function UsagePanel() {
         h('div', { className: 'fgw-metrics fgw-usage-metrics' },
           h(WbMetric, { title: metricText, value: wbCount(totals.value),
             caption: totals.unknownTurns ? '已知部分 · 存在未上报任务' : '模型已上报用量' }),
-          h(WbMetric, { title: '已上报用量任务', value: wbCount(totals.calls),
+          h(WbMetric, { title: '有用量记录的任务', value: wbCount(totals.calls),
             caption: '尝试任务 ' + wbCount(totals.turns) }),
-          h(WbMetric, { title: '缺失 usage 任务', value: wbCount(totals.unknownTurns),
+          h(WbMetric, { title: '未上报用量的任务', value: wbCount(totals.unknownTurns),
             caption: '失败 ' + wbCount(totals.failedTurns) + ' · 取消 ' +
               wbCount(totals.cancelledTurns) }),
           h(WbMetric, { title: '日均 Token', value: totals.averagePerDay === null ? '—' :
             wbCount(Math.round(totals.averagePerDay)), caption: '基于已覆盖日期' })),
         h('div', { className: 'fgw-usage-chart-grid' },
-          h(UsageTrendChart, { title: '已上报用量任务',
+          h(UsageTrendChart, { title: '有用量记录的任务',
             value: totals.calls, kind: 'calls', unit: '次',
             description: '包含用量记录的任务数 · 不等于模型请求次数',
             rows: chartData.rows, granularity: chartData.granularity }),

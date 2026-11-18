@@ -208,8 +208,11 @@ function SchedulePanel({ state, onChanged }) {
       setPendingId(response.command && response.command.id ? response.command.id : null)
       setConfirmDelete(null)
       if (onChanged) onChanged()
-    } catch (e) { setError(schedErrorText(e)) }
-    finally { setBusy(false) }
+      return true
+    } catch (e) {
+      setError(schedErrorText(e))
+      return false
+    } finally { setBusy(false) }
   }, [onChanged])
   // Poll /schedule/results until the enqueued command has an outcome.
   useEffect(() => {
@@ -287,10 +290,15 @@ function SchedulePanel({ state, onChanged }) {
     }
     const common = { title: form.title.trim(), prompt: form.prompt.trim(),
       spec: schedFormToSpec(form), notify: form.notify, delivery: schedBuildDelivery(form) }
-    void submit(editing
+    // Do not destroy the user's prompt or scheduling details unless Gateway
+    // actually accepted the command. Rejected/failed requests retain the draft.
+    const command = editing
       ? { action: 'update', taskId: editing.id, ...common, expectedUpdatedAt: editing.updatedAt || null }
-      : { action: 'create', clientRef: schedUuid(), ...common })
-    setFormOpen(false); setEditing(null); setForm(schedDefaultForm()); setPreview(null)
+      : { action: 'create', clientRef: schedUuid(), ...common }
+    void submit(command).then(accepted => {
+      if (!accepted) return
+      setFormOpen(false); setEditing(null); setForm(schedDefaultForm()); setPreview(null)
+    })
   }
 
   // Tabs are constructed eagerly, before the `content` branch below.
@@ -346,10 +354,11 @@ function SchedulePanel({ state, onChanged }) {
     if (form.kind === 'cron') return field('Cron 表达式（5 段）', textInput(form.expression,
       value => setF('expression', value), '0 9 * * 1-5', { maxLength: 200 }),
       '5 个数字段：分 时 日 月 周；仅数字，范围 0-59 / 0-23 / 1-31 / 1-12 / 0-7，支持 * , - / 与步长。')
-    const timeField = field('本地时间 HH:mm:ss', textInput(form.time, value => setF('time', value),
+    const timeField = field('每天执行时间', h('input', { type: 'time', step: 1, className: 'fga-input',
+      value: form.time, onChange: event => setF('time', event.target.value) }),
       '09:00:00', { maxLength: 12 }))
     if (form.kind === 'weekly') return h(React.Fragment, null, timeField,
-      field('星期（ISO 1=周一）', h('div', { className: 'fgw-sched-weekdays' },
+      field('在星期几执行', h('div', { className: 'fgw-sched-weekdays' },
         SCHED_WEEK_LABELS.map((label, index) => {
           const day = index + 1
           const on = form.weekdays.includes(day)
@@ -359,7 +368,7 @@ function SchedulePanel({ state, onChanged }) {
                 : [...form.weekdays, day].sort((a, b) => a - b)) }), label)
         }))))
     if (form.kind === 'monthly') return h(React.Fragment, null, timeField,
-      field('每月日期（1..31）', textInput(form.day, value => setF('day', value), '1',
+      field('每月几号执行', textInput(form.day, value => setF('day', value), '1',
         { type: 'number', min: 1, max: 31 }), '没有该日的月份会被跳过。'))
     return timeField
   }
@@ -369,18 +378,18 @@ function SchedulePanel({ state, onChanged }) {
       h('span', { className: 'fgw-muted' }, '预览与校验由服务端执行；保存仅代表入队')),
     h('div', { className: 'fgw-block-body' },
       h('div', { className: 'fgw-sched-form-grid' },
-        field('任务标题（1..120）', textInput(form.title, value => setF('title', value),
+        field('任务名称', textInput(form.title, value => setF('title', value),
           '例如 每日新闻简报', { maxLength: 120 })),
-        field('调度类型', schedSelect(form.kind, value => { setF('kind', value); setPreview(null) },
+        field('重复方式', schedSelect(form.kind, value => { setF('kind', value); setPreview(null) },
           SCHED_KIND_ORDER.map(kind => [kind, SCHED_KIND_LABELS[kind]]))),
-        field('时区（IANA，必填）', h('input', { className: 'fga-input', value: form.timeZone,
+        field('任务时区', h('input', { className: 'fga-input', value: form.timeZone,
           onChange: event => setF('timeZone', event.target.value), placeholder: 'Asia/Shanghai',
           maxLength: 64, spellCheck: false, autoComplete: 'off' }),
           '每个任务独立时区；列表、详情与预览均按此时区显示。'),
         specFields(),
         field('通知策略', schedSelect(form.notify, value => setF('notify', value),
           Object.entries(SCHED_NOTIFY_LABELS)))),
-      field('执行提示词（1..4000）', h('textarea', { className: 'fga-input fga-textarea fgw-sched-prompt-input',
+      field('任务内容', h('textarea', { className: 'fga-input fga-textarea fgw-sched-prompt-input',
         rows: 5, value: form.prompt, maxLength: 4000, spellCheck: false,
         onChange: event => setF('prompt', event.target.value), placeholder: '要交给 Agent 执行的指令' })),
       h('label', { className: 'fga-check' },
@@ -393,7 +402,7 @@ function SchedulePanel({ state, onChanged }) {
         field('目标类型', schedSelect(form.chatType, value => { setF('chatType', value); setF('chatId', '') },
           [['p2p', '私聊用户'], ['group', '群聊']])),
         field('投递目标', targetField()),
-        field('发送者 open_id（可选）', textInput(form.senderId, value => setF('senderId', value),
+        field('执行者 Open ID（高级，可选）', textInput(form.senderId, value => setF('senderId', value),
           'ou_…', { maxLength: 128 }))),
       form.deliveryEnabled && h('div', { className: 'fgw-sched-delivery-preview' },
         h('strong', null, '投递预览（不会发送任何消息）'),
@@ -442,15 +451,16 @@ function SchedulePanel({ state, onChanged }) {
       action('立即运行', () => void submit({ action: 'run', taskId: task.id }),
         busy || Boolean(pendingId), true),
       action('编辑', () => openEdit(task), busy, true),
-      action('克隆', () => openClone(task), busy, true),
-      action('删除', () => setConfirmDelete(confirmDelete === task.id ? null : task.id), busy, true),
-      action(expanded === task.id ? '收起' : '详情',
+      action(expanded === task.id ? '收起详情' : '更多操作',
         () => setExpanded(expanded === task.id ? null : task.id), false, true)),
     confirmDelete === task.id && h('div', { className: 'fgw-sched-confirm', role: 'alert' },
       h('span', null, '确认删除任务「', schedBound(task.title, 60), '」？此操作不可撤销。'),
       action('确认删除', () => void submit({ action: 'delete', taskId: task.id }), busy),
       action('取消', () => setConfirmDelete(null), false, true)),
     expanded === task.id && h('div', { className: 'fgw-sched-detail' },
+      h('div', { className: 'fgw-sched-detail-actions' },
+        action('克隆任务', () => openClone(task), busy, true),
+        action('删除任务', () => setConfirmDelete(task.id), busy, true)),
       h('div', { className: 'fgw-data-row' }, h('span', { className: 'fgw-muted' }, '任务 ID'),
         h('strong', { className: 'fgw-row-value' }, schedBound(task.id, 64))),
       h('div', { className: 'fgw-data-row' }, h('span', { className: 'fgw-muted' }, '调度 / 时区'),
@@ -492,7 +502,7 @@ function SchedulePanel({ state, onChanged }) {
           void submit({ action: 'delete-inactive' })
       }, busy || Boolean(pendingId), true),
       h('span', { className: 'fgw-muted' },
-        '新建会话间隔：', String(safeModel.limits && safeModel.limits.newSessionIntervalSeconds !== undefined
+        '最低新建会话间隔：', String(safeModel.limits && safeModel.limits.newSessionIntervalSeconds !== undefined
           ? safeModel.limits.newSessionIntervalSeconds : 60), ' 秒')))
 
   const runsTab = h(React.Fragment, null,
