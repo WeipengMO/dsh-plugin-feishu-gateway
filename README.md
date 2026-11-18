@@ -9,7 +9,7 @@
 
 让飞书机器人直接使用 **DSH 原生 Agent、Session、模型和工具**，并在 DSH Web 中管理聊天、任务与运行状态。Gateway 负责消息与执行，Web Admin 负责可视化管理；不需要另建 Agent 服务。
 
-> **当前测试版**：[`v0.1.0-beta.1`](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 已在 GitHub Releases 提供 Gateway 和 Web Admin 两个安装包；npm 发布情况请以 npm Registry 为准。
+> **测试版发布渠道**：通过 npm 的 `beta` 标签安装两个插件；[GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases) 提供对应版本的安装包及 SHA256 校验文件。
 
 > **版本说明**：源码版本以 [Gateway package.json](package.json) 和 [Web Admin package.json](web-admin/package.json) 为准。npm 徽章显示的是**已发布版本**，不代表当前源码或 VPS 安装的版本。测试与升级前请核对两个安装包的具体版本。
 
@@ -43,14 +43,14 @@
 
 ### 2. 通过 npm 安装（推荐）
 
-两个插件均已在 npm 发布为独立包。运行以下命令即可安装当前测试版，**不需要 clone 源码或编译**：
+Gateway 和 Web Admin 已作为两个独立 npm 包发布。运行以下命令即可安装 **beta 渠道中的最新测试版**，**不需要克隆源码、安装构建依赖或手动编译**：
 
 ```bash
-dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
-dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
+dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@beta
+dsh plugin --profile web add dsh-plugin-feishu-admin@beta
 ```
 
-可以在 [Gateway npm](https://www.npmjs.com/package/dsh-plugin-feishu-gateway) 和 [Admin npm](https://www.npmjs.com/package/dsh-plugin-feishu-admin) 查看可用版本；新版本发布后按实际版本号调整命令。测试期建议固定版本号，不直接使用 `latest`。安装完检查两个 Profile：
+可以在 [Gateway npm](https://www.npmjs.com/package/dsh-plugin-feishu-gateway) 和 [Admin npm](https://www.npmjs.com/package/dsh-plugin-feishu-admin) 查看可用版本。用于生产或需要精确复现的环境，建议把 `@beta` 替换成已验证的具体版本号（例如 `@0.1.0-beta.1`），不要使用 `@latest` 安装测试版。安装后检查两个 Profile：
 
 ```bash
 dsh --profile feishu-channel --dump-config
@@ -59,7 +59,7 @@ dsh --profile web --dump-config
 
 #### 从 GitHub Release 安装（可选）
 
-如果你更愿意下载安装包，可从 [GitHub v0.1.0-beta.1 Release](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 获取两个 `.tgz` 和 `SHA256SUMS`，放在 DSH 主机同一个目录：
+如果你更愿意下载安装包，可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases) 选择对应测试版，下载 Gateway、Admin 的 `.tgz` 和 `SHA256SUMS`，放在 DSH 主机同一个目录。以下以 `0.1.0-beta.1` 为例：
 
 ```bash
 cd /path/to/downloads
