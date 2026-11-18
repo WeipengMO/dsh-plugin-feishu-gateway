@@ -83,7 +83,7 @@ pnpm run typecheck
 pnpm run build
 pnpm run test
 pnpm --dir web-admin test
-pnpm run pack:check
+pnpm run pack
 ```
 
 CI 成功只能证明编译与自动化契约，不能证明真实 DSH Web 的所有页面像素和移动端交互。人工验收后方可考虑合并与发布。
