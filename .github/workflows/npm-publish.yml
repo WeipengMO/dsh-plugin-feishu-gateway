@@ -1,0 +1,194 @@
+# Release-driven, token-free npm publishing. Both packages use the same tag.
+# Set up npm Trusted Publishing for each package before creating a new release.
+name: Publish npm packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'WeipengMO/dsh-plugin-feishu-gateway'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      npm_tag: ${{ steps.release.outputs.npm_tag }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release is based on current main and package versions match
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          # Releases must be cut from the current default branch HEAD, never old or arbitrary tags.
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)" || {
+            echo "::error::Release tag does not point at current main HEAD"
+            exit 1
+          }
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs'
+          const gateway = JSON.parse(readFileSync('package.json', 'utf8'))
+          const admin = JSON.parse(readFileSync('web-admin/package.json', 'utf8'))
+          const version = gateway.version
+          const tag = process.env.RELEASE_TAG
+          const repo = 'https://github.com/WeipengMO/dsh-plugin-feishu-gateway'
+          const fail = message => { console.error('::error::' + message); process.exit(1) }
+          if (gateway.name !== 'dsh-plugin-feishu-gateway' || admin.name !== 'dsh-plugin-feishu-admin')
+            fail('Unexpected npm package names')
+          if (gateway.repository?.url !== repo || admin.repository?.url !== repo)
+            fail('Both package.json files must identify the publishing GitHub repository')
+          if (admin.version !== version || tag !== 'v' + version)
+            fail('Tag and both package.json versions must match exactly')
+          if (!/^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(version))
+            fail('Unsupported version format')
+          const pre = version.match(/-(alpha|beta|rc)\.\d+$/)
+          const isPrerelease = Boolean(pre)
+          if (String(isPrerelease) !== process.env.RELEASE_PRERELEASE)
+            fail('GitHub prerelease checkbox must match the version suffix')
+          const npmTag = pre ? (pre[1] === 'rc' ? 'next' : pre[1]) : 'latest'
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            'version=' + version + '\n' + 'npm_tag=' + npmTag + '\n')
+          console.log('Release validated:', tag, '-> npm dist-tag', npmTag)
+          NODE
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 12.18.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify code, Web Admin and integration tests
+        run: |
+          pnpm run verify
+          pnpm run test:coverage
+          node --test scripts/security/check-package-contents.test.mjs
+        env:
+          FEISHU_GATEWAY_OFFLINE: '1'
+
+      - name: Pack and inspect both npm archives
+        run: |
+          pnpm run pack
+          node scripts/security/check-package-contents.mjs
+          pnpm run release:check
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Transfer verified archives to publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-release-archives
+          path: |
+            dist/*.tgz
+            dist/SHA256SUMS
+            dist/release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish two packages using npm Trusted Publishing
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
+      NPM_DIST_TAG: ${{ needs.build.outputs.npm_tag }}
+    steps:
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-release-archives
+          path: dist
+
+      - name: Set up Node.js and npm registry
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Validate npm CLI and tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const [major,minor]=process.argv[1].split('.').map(Number); if (major<11 || (major===11 && minor<5)) { console.error('npm >=11.5.1 required for OIDC'); process.exit(1) }" "$(npm --version)"
+          (cd dist && sha256sum -c SHA256SUMS)
+          echo "npm $(npm --version); publishing $RELEASE_VERSION with dist-tag $NPM_DIST_TAG"
+
+      - name: Publish Gateway then Web Admin
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_one() {
+            local name="$1"
+            local archive="dist/${name}-${RELEASE_VERSION}.tgz"
+            local existing expected
+            expected="$(sha1sum "$archive" | awk '{print $1}')"
+            if existing="$(npm view "${name}@${RELEASE_VERSION}" dist.shasum --json --registry=https://registry.npmjs.org/ 2>/dev/null)"; then
+              existing="$(printf '%s' "$existing" | tr -d '"[:space:]')"
+              if [ "$existing" = "$expected" ]; then
+                echo "Already published identical package: ${name}@${RELEASE_VERSION}"
+                return 0
+              fi
+              echo "::error::${name}@${RELEASE_VERSION} exists with different archive bytes"
+              return 1
+            fi
+            npm publish "$archive" --tag "$NPM_DIST_TAG" --access public --registry=https://registry.npmjs.org/
+          }
+          publish_one dsh-plugin-feishu-gateway
+          publish_one dsh-plugin-feishu-admin
+          npm view "dsh-plugin-feishu-gateway@$RELEASE_VERSION" version
+          npm view "dsh-plugin-feishu-admin@$RELEASE_VERSION" version
+        # No NPM_TOKEN / NODE_AUTH_TOKEN: npm 11+ exchanges GitHub's OIDC identity.
+
+  attach:
+    name: Attach the exact npm tarballs to GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download published archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-release-archives
+          path: dist
+
+      - name: Attach both packages and checksum files to the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release upload "$RELEASE_TAG" dist/*.tgz dist/SHA256SUMS dist/release-manifest.json \
+            --repo WeipengMO/dsh-plugin-feishu-gateway --clobber
