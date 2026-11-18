@@ -853,3 +853,13 @@ test('unsolicited UX audit: safe group editing, skill templates and compact navi
   assert.match(css, /\.fgw-session-tabs\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/)
   assert.match(workbench, /管理后台/)
 })
+
+test('empty approval lists use a compact row instead of three repeated giant cards', () => {
+  const ops = readFileSync(path.join(root, 'src/ops-pages.js'), 'utf8')
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(ops, /compactEmpty = false/)
+  for (const label of ['当前没有等待中的审批请求', '暂无永久授权规则', '暂无审批记录']) {
+    assert.ok(ops.includes("empty: '" + label + "', compactEmpty: true"), label)
+  }
+  assert.match(css, /\.fgw-approval-view \.fgw-table-empty\{/)
+})

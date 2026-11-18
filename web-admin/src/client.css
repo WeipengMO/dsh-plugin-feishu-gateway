@@ -1456,3 +1456,11 @@
 @container (max-width:410px){
  .fgw-session-tab{font-size:11.5px;padding:8px 4px}
 }
+
+/* A table with no records needs one neutral line, not a second card with an icon. */
+.fgw-approval-view .fgw-table-empty{
+ display:flex;align-items:center;justify-content:center;min-height:66px;
+ margin:0;padding:14px;text-align:center;border-radius:8px;
+ background:var(--fgw-ui-inset);color:var(--muted-foreground,#8995a4);
+ font-size:12px;line-height:1.6
+}

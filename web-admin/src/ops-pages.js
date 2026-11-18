@@ -15,9 +15,11 @@ function OpsUnavailable({ title }) {
   return h(WbEmpty, { headline: title || '管理数据尚不可用',
     description: '当前 Gateway 尚未提供运维遥测，或版本不匹配。请将 feishu-channel Gateway 升级并重启；旧服务不会生成假数据。' })
 }
-function OpsTable({ columns, rows, empty }) {
-  if (!rows?.length) return h(WbEmpty, {
-    headline: empty || '暂无记录', description: '只展示已经记录的真实数据；无记录不代表任务执行失败。' })
+function OpsTable({ columns, rows, empty, compactEmpty = false }) {
+  if (!rows?.length) return compactEmpty
+    ? h('p', { className: 'fgw-table-empty', role: 'status' }, empty || '暂无记录')
+    : h(WbEmpty, {
+      headline: empty || '暂无记录', description: '只展示已经记录的真实数据；无记录不代表任务执行失败。' })
   return h('div', { className: 'fgw-table-scroll' },
     h('table', { className: 'fgw-table' },
       h('thead', null, h('tr', null, columns.map(c =>
@@ -224,7 +226,7 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
     !available && h('div', { className: 'fgw-caution', role: 'status' },
       '审批读模型当前不可用：', reason || 'Gateway 未提供原因', '。页面不会显示或推断任何审批状态。'),
     h(WbBlock, { title: '待审批', aside: '在飞书中处理，超时会自动结束' },
-      h(OpsTable, { rows: pending, empty: '当前没有等待中的审批请求',
+      h(OpsTable, { rows: pending, empty: '当前没有等待中的审批请求', compactEmpty: true,
         columns: [
           { key: 'tool', title: '工具', render: x => h('code', null, x.tool) },
           { key: 'command', title: '命令摘要', render: x => approvalCommandSummary(x.command) },
@@ -232,7 +234,7 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
             render: x => h(ApprovalCountdown, { expiresAt: x.expiresAt }) },
         ] })),
     h(WbBlock, { title: '永久授权', aside: '长期允许使用的工具与命令' },
-      h(OpsTable, { rows: rules, empty: '暂无永久授权规则',
+      h(OpsTable, { rows: rules, empty: '暂无永久授权规则', compactEmpty: true,
         columns: [
           { key: 'label', title: '范围', render: x => approvalRuleLabel(x) },
           { key: 'createdByRef', title: '创建者',
@@ -248,7 +250,7 @@ function ApprovalsPanel({ model, onConfig, onRefresh }) {
       notice && h('div', { className: 'fgw-caution', role: 'status' }, notice),
       revokeError && h('div', { className: 'fgw-alert', role: 'alert' }, revokeError)),
     h(WbBlock, { title: '最近审批', aside: '近期操作记录（最多 100 条）' },
-      h(OpsTable, { rows: records.slice(0, 100), empty: '暂无审批记录',
+      h(OpsTable, { rows: records.slice(0, 100), empty: '暂无审批记录', compactEmpty: true,
         columns: [
           { key: 'ts', title: '时间', render: x => opsDate(x.ts) },
           { key: 'tool', title: '工具', render: x => h('code', null, x.tool) },
