@@ -284,7 +284,7 @@ function GroupManagementPanel({ onChanged, onDirtyChange }) {
         error && h('div', { role: 'alert', className: 'fga-error' }, error),
         notice && h('div', { role: 'status', className: 'fga-notice' }, notice)),
       h('div', { className: 'fgw-group-savebar-actions' },
-        h('button', { className: 'fgw-refresh', type: 'button', disabled: busy,
+        h('button', { className: 'fgw-refresh fgw-refresh-action', type: 'button', disabled: busy,
           onClick: () => void fetchState() }, '刷新'),
         h('button', { className: 'fgw-refresh fgw-ops-cta fgw-group-save', type: 'button',
           disabled: busy || !snapshot, onClick: save }, busy ? '保存中…' : '保存群聊策略'))))

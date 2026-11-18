@@ -8,7 +8,8 @@ function opsDate(ts) {
 }
 function OpsNote({ children }) { return h('p', { className: 'fgw-muted fgw-ops-note' }, children) }
 function OpsAction({ label, onClick, secondary = false }) {
-  return h('button', { type: 'button', className: 'fgw-refresh' + (secondary ? '' : ' fgw-ops-cta'),
+  return h('button', { type: 'button', className: 'fgw-refresh' + (label.startsWith('刷新') ? ' fgw-refresh-action' : '') +
+      (secondary ? '' : ' fgw-ops-cta'),
     onClick }, label)
 }
 function OpsUnavailable({ title }) {

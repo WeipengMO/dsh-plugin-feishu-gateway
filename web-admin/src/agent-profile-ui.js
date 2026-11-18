@@ -265,7 +265,7 @@ function AgentProfilePanel({ onDirtyChange }) {
         ' / ' + profileFormatBytes(profile.settings.maxBytes || 16000)),
       profile?.syncNeeded && h('button', { type: 'button', className: 'fgw-refresh',
         disabled: busy, onClick: () => void sync() }, '同步'),
-      h('button', { type: 'button', className: 'fgw-refresh', disabled: busy,
+      h('button', { type: 'button', className: 'fgw-refresh fgw-refresh-action', disabled: busy,
         onClick: () => void refresh() }, busy ? '处理中…' : '刷新')))
 
   let body
