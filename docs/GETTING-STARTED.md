@@ -4,7 +4,7 @@
 
 ## 1. 准备环境
 
-- DSH 版本满足 [Gateway engines.dsh](../package.json) 和 [Admin engines.dsh](../web-admin/package.json)，Node.js `>=24.9.0`，安装 pnpm。
+- DSH 版本满足 [Gateway engines.dsh](../package.json) 和 [Admin engines.dsh](../web-admin/package.json)，Node.js `>=24.9.0`。源码构建时才需要 pnpm。
 - 在飞书开放平台创建企业自建应用，添加机器人能力，采用**长连接接收事件**，订阅 `im.message.receive_v1`。使用 CardKit 操作时还需配置对应卡片事件和权限。
 - 应用取得所需消息权限并**发布生效**，将允许使用的用户添加到可用范围。
 - 不要让两个进程同时消费同一个 App ID 的 WebSocket 长连接。
@@ -15,25 +15,26 @@
 
 插件分为两个包：**Gateway 安装到 `feishu-channel` Profile，Web Admin 安装到 `web` Profile**，请勿交叉安装。安装前先确认相应 Profile 已正确创建并配置 DSH Agent/模型及 Web 运行时。
 
-**目前推荐 GitHub 测试包（v0.1.0-beta.1）：** 在 [Releases 页面](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 下载两个 `.tgz` 和 `SHA256SUMS` 到 DSH 主机上的同一目录。仓库在公开前仅对授权用户可见。
-
-```bash
-# 替换为存放安装包的目录
-cd /path/to/downloads
-sha256sum -c SHA256SUMS
-
-dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
-dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
-dsh --profile feishu-channel --dump-config
-dsh --profile web --dump-config
-```
-
-如果两个包已经发布到 npm，可以改用以下命令。先用 `npm view <包名>@0.1.0-beta.1 version` 核对版本可用；**GitHub Release 创建不代表 npm 已发布**。
+**推荐直接从 npm 安装**，不需要从 GitHub 下载源码、安装 pnpm 或自行编译：
 
 ```bash
 dsh plugin --profile feishu-channel add dsh-plugin-feishu-gateway@0.1.0-beta.1
 dsh plugin --profile web add dsh-plugin-feishu-admin@0.1.0-beta.1
+
+dsh --profile feishu-channel --dump-config
+dsh --profile web --dump-config
 ```
+
+需要离线包时，也可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 下载 Gateway 和 Admin 的 `.tgz` 与 `SHA256SUMS`，在 Linux 上校验后安装：
+
+```bash
+cd /path/to/downloads
+sha256sum -c SHA256SUMS
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+```
+
+不要混用安装方式；后续版本及 GitHub → npm 自动发布规则见 [发布维护指南](PUBLISHING.md)。
 
 安装程序不会自动配置 DSH Agent、LLM 或独立服务。初次 Profile 配置请参照仓库[示例 patch](../cordis.patch.yml)和[测试 Profile 指南](TEST-PROFILE.md)；不要直接照抄他人绝对路径或飞书 App ID。
 
