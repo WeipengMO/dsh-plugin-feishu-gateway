@@ -266,7 +266,7 @@ export class LarkTransport implements FeishuTransport {
     const candidate = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED !== 'direct'
       ? this.networkProxy?.url ?? process.env[envName]
       : undefined
-    let wsAgent: ReturnType<typeof HttpsProxyAgent> | undefined
+    let wsAgent: InstanceType<typeof HttpsProxyAgent> | undefined
     if (candidate) {
       try {
         // Modern versions expose a constructor, not the v5 callable factory.
