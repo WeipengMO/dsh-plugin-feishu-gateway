@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, 'feat/**']
@@ -20,15 +23,17 @@ jobs:
         node: ['24']
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
         with:
           version: 12.18.0
 
       - name: Setup Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -76,8 +81,13 @@ jobs:
       - name: Pack check
         run: pnpm run pack
 
+      - name: Check published artifact privacy and file hygiene
+        run: |
+          node --test scripts/security/check-package-contents.test.mjs
+          node scripts/security/check-package-contents.mjs
+
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dsh-plugin-feishu-gateway-tarball
           path: dist/*.tgz
