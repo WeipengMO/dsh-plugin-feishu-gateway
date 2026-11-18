@@ -425,7 +425,7 @@ function Workbench() {
   let body
   if (selected === 'overview') {
     body = h(React.Fragment, null,
-      h('div', { className: 'fgw-metrics' },
+      h('div', { className: 'fgw-metrics fgw-overview-metrics' },
         h(WbMetric, { title: '服务状态', value: wbStateLabel(health?.status || 'unknown'), caption: '飞书消息接入状态', tone: online ? 'good' : 'warn' }),
         h(WbMetric, { title: '已处理消息', value: wbCount(health?.processed), caption: '进程内累计' }),
         h(WbMetric, { title: '正在处理', value: wbCount(health?.activeTurns), caption: '执行中的任务' }),
@@ -439,6 +439,16 @@ function Workbench() {
               h('div', { className: 'fgw-caution', key: alert.code + i }, alert.message,
                 alert.botId ? ' · ' + alert.botId : ''))) :
           h('p', { className: 'fgw-muted' }, '暂无当前规则告警。')),
+      h('div', { className: 'fgw-shortcuts' },
+        [['conversations', '消息与会话', '查看任务、投递和历史会话'],
+         ['automation', '定时任务', '管理定时执行和通知'],
+         ['channels', '机器人与权限', '管理机器人和群聊'],
+         ['analytics', '用量与审计', '查看用量和工具授权']]
+          .map(([id, title, description]) =>
+            h('button', { key: id, type: 'button', className: 'fgw-shortcut',
+              onClick: () => selectSection(id) },
+              h('strong', null, title), h('span', null, description),
+              h('span', { 'aria-hidden': true }, '›')))),
       ops?.telemetryAvailable && h(WbBlock, { title: '实时任务', aside: '来自 Gateway 快照' },
         h(OpsTable, { rows: ops.snapshot?.stale ? [] : ops.snapshot?.tasks,
           empty: '当前没有活跃任务',
@@ -566,14 +576,6 @@ function Workbench() {
           tabs.map(([id, label]) => h('button', { type: 'button', role: 'tab', key: id,
             className: 'fgw-section-tab' + (sectionTab[selected] === id ? ' is-active' : ''),
             'aria-selected': sectionTab[selected] === id, onClick: () => changeTab(id) }, label)))),
-      selected === 'overview' && h('div', { className: 'fgw-shortcuts' },
-        [['conversations', '消息与会话', '查看任务、投递和历史 Session'],
-         ['automation', '定时任务', '管理计划和通知'],
-         ['channels', '机器人与权限', '管理群聊和安全策略'],
-         ['analytics', '用量与审计', 'Token 消耗和审批记录']]
-          .map(([id, title, description]) =>
-            h('button', { key: id, type: 'button', className: 'fgw-shortcut', onClick: () => selectSection(id) },
-              h('strong', null, title), h('span', null, description), h('span', { 'aria-hidden': true }, '›')))),
       loading && !state && h('div', { className: 'fgw-caution' }, '正在读取管理服务…'),
       error && h('div', { className: 'fgw-alert', role: 'alert' }, '管理服务暂不可用：', error),
       operatorNotice && h('div', { className: 'fgw-caution', role: 'status' }, operatorNotice),

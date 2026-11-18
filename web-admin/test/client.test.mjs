@@ -787,3 +787,14 @@ test('UX regression: schedule draft is guarded across workbench navigation', () 
   assert.match(schedule, /setFormBaseline\(JSON.stringify\(next\)\)/)
   assert.match(schedule, /onDirtyChange\?\.\(formDirty\)/)
 })
+
+test('UX regression: overview prioritizes health, metrics and alerts over quick links', () => {
+  const area = workbench.slice(workbench.indexOf("if (selected === 'overview')"),
+    workbench.indexOf("} else if (selected === 'channels'"))
+  assert.match(area, /fgw-overview-metrics/)
+  assert.ok(area.indexOf('fgw-overview-metrics') < area.indexOf('fgw-shortcuts'))
+  assert.ok(area.indexOf('需要关注') < area.indexOf('fgw-shortcuts'))
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /\.fgw-usage-date-range\{[\s\S]*?border:1px/)
+  assert.match(css, /\.fgw-hero\{[\s\S]*?padding:19px/)
+})

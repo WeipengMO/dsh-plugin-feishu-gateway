@@ -1296,3 +1296,39 @@
   .fgw-ops-event-main{overflow-wrap:anywhere}
 }
 .fgw-skills-create-hint{font-size:12px;line-height:1.65;color:var(--muted-foreground,#8792a1);margin:10px 16px;padding:10px 12px;background:var(--muted,#8881);border-radius:8px}
+
+/* Summary-first overview: connection and alerts precede navigation shortcuts. */
+.fgw-overview-metrics .fgw-metric:first-child{
+ border-color:color-mix(in srgb,var(--primary,#467cf4) 22%,var(--border,#8884));
+ background:color-mix(in srgb,var(--primary,#467cf4) 4%,var(--card,transparent))
+}
+.fgw-hero{
+ padding:19px 23px;
+ background:var(--card,transparent);
+ border-color:color-mix(in srgb,var(--border,#8884) 75%,transparent)
+}
+.fgw-hero h2{font-size:18px}
+.fgw-hero-kicker{color:var(--muted-foreground,#83909f);letter-spacing:.05em}
+.fgw-usage-primary-fields{grid-template-columns:minmax(0,2fr) minmax(140px,.9fr) minmax(110px,auto)}
+.fgw-usage-date-range{
+ grid-column:auto;
+ border:1px solid var(--border,#8884);
+ border-radius:10px;
+ padding:9px 12px;
+ background:var(--card,transparent);
+ gap:10px
+}
+.fgw-usage-primary-fields .fgw-usage-more{align-self:end}
+@container (max-width:1000px){
+ .fgw-usage-primary-fields{grid-template-columns:minmax(0,2fr) minmax(130px,1fr)}
+ .fgw-usage-date-range{grid-column:1/-1}
+}
+@container (max-width:650px){
+ .fgw-usage-primary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .fgw-usage-date-range{grid-column:1/-1}
+}
+@container (max-width:410px){
+ .fgw-usage-primary-fields{grid-template-columns:minmax(0,1fr)}
+ .fgw-usage-date-range{grid-template-columns:minmax(0,1fr)}
+ .fgw-usage-more{width:100%}
+}
