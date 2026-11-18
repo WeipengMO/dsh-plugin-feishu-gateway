@@ -76,9 +76,15 @@ jobs:
       - name: Pack check
         run: pnpm run pack
 
+      - name: Verify prerelease tarballs and generate SHA256 manifest
+        run: pnpm run release:check
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
           name: dsh-plugin-feishu-gateway-tarball
-          path: dist/*.tgz
+          path: |
+            dist/*.tgz
+            dist/release-manifest.json
+            dist/SHA256SUMS
           if-no-files-found: error
