@@ -24,6 +24,17 @@ test('admin client registers the same DSH native id for sidebar and main panel',
   assert.match(built, /\.fgw-root/)
 })
 
+test('all admin dropdowns share one theme-aware control spec', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /\.fga-root,\s*\.fgw-root\s*\{[^}]*--fgw-control-radius:\s*9px/)
+  assert.match(css, /\.fga-root select,\s*\.fgw-root select\s*\{[\s\S]*?appearance:\s*none/)
+  assert.match(css, /\.fga-root select:focus-visible,[\s\S]*?box-shadow:\s*0 0 0 2px/)
+  assert.match(css, /\.fga-root select option[\s\S]{0,260}--popover/)
+  assert.match(css, /\.fga-search-picker-field\s*\{[^}]*--fgw-control-height/)
+  assert.match(css, /\.fga-seg-btn\s*\{[^}]*--fgw-control-height/)
+  assert.doesNotMatch(css, /\.fga-root select[^{]*\{[^}]*background-image:\s*url\(/)
+})
+
 test('management dashboard uses the existing authenticated read endpoints and no LLM calls', () => {
   assert.match(workbench, /request\('\/state'\)/)
   assert.match(workbench, /request\('\/health'\)/)

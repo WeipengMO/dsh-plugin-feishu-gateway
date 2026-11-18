@@ -1533,3 +1533,88 @@
  .fga-root-row>.fga-button{padding-inline:11px}
  .fga-savebar .fga-inline-actions>.fga-button{flex:1 1 132px;white-space:normal}
 }
+
+/* ---------------------------------------------------------------------------
+ * Unified selection controls.
+ *
+ * Dropdowns used to be styled per panel: `.fga-input` selects, a smaller
+ * `.fgw-usage-select`, an unclassed metric select and the themed model picker
+ * each had their own size, radius and focus treatment. Everything below
+ * resolves to one spec inside the Feishu admin roots, so a dropdown looks the
+ * same whether it is a native select, a filter or a searchable picker trigger.
+ * The chevron is drawn with theme gradients (no OS-specific arrow), and the
+ * popup palette follows the host light/dark tokens.
+ * ------------------------------------------------------------------------- */
+.fga-root,
+.fgw-root {
+  --fgw-control-radius: 9px;
+  --fgw-control-height: 38px;
+  --fgw-control-font-size: 13px;
+  --fgw-control-pad-x: 11px;
+}
+
+.fga-root select,
+.fgw-root select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--fgw-control-height);
+  padding: 8px 34px 8px var(--fgw-control-pad-x);
+  border: 1px solid var(--fgw-ui-stroke, var(--border, #8886));
+  border-radius: var(--fgw-control-radius);
+  background-color: var(--background, var(--card, transparent));
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground, #8c95a0) 50%),
+    linear-gradient(135deg, var(--muted-foreground, #8c95a0) 50%, transparent 50%);
+  background-position: right 17px center, right 12px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--foreground, inherit);
+  font: inherit;
+  font-size: var(--fgw-control-font-size);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.fga-root select:hover,
+.fgw-root select:hover {
+  border-color: color-mix(in srgb, var(--ring, #659af0) 55%, var(--fgw-ui-stroke, var(--border, #8886)));
+}
+.fga-root select:focus-visible,
+.fgw-root select:focus-visible {
+  outline: none;
+  border-color: var(--ring, #4f88f0);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring, #4f88f0) 18%, transparent);
+}
+.fga-root select:disabled,
+.fgw-root select:disabled { opacity: .55; cursor: default; }
+.fga-root select option,
+.fgw-root select option,
+.fga-root select optgroup,
+.fgw-root select optgroup {
+  background-color: var(--popover, var(--card, var(--background, #fff)));
+  color: var(--foreground, inherit);
+}
+.fga-root select::-ms-expand,
+.fgw-root select::-ms-expand { display: none; }
+
+/* The themed searchable picker is the same control with a text input inside. */
+.fga-search-picker-field {
+  min-height: var(--fgw-control-height, 38px);
+  border-color: var(--fgw-ui-stroke, var(--border, #8886));
+  border-radius: var(--fgw-control-radius, 9px);
+  background-color: var(--background, var(--card, transparent));
+}
+.fga-search-picker-input {
+  min-height: calc(var(--fgw-control-height, 38px) - 2px);
+  font-size: var(--fgw-control-font-size, 13px);
+}
+
+/* Segmented selectors are the button form of the same dropdown concept. */
+.fga-seg { border-radius: var(--fgw-control-radius, 9px); }
+.fga-seg-btn { min-height: var(--fgw-control-height, 38px); font-size: var(--fgw-control-font-size, 13px); }
+
