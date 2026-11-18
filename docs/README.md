@@ -29,7 +29,8 @@
 
 ## 开发、维护与测试
 
-- [测试版发布检查](PRERELEASE.md)：双插件打包门禁、RC 版本、真实环境验收与 npm next 发布流程。
+- [GitHub → npm 自动发布](PUBLISHING.md)：Trusted Publishing 一次性授权、发布双包、版本命名与失败重试。
+- [测试版发布检查](PRERELEASE.md)：双插件打包、安全门禁及真实环境验收；手动 npm 发布仅作为备用方案。
 - [开发与测试](DEVELOPMENT.md)：源码结构、版本、CI、Mock 和真实租户的区别。
 - [架构和 API 参考](ARCHITECTURE.md)：包含早期方案及后续实现增量，属于**技术背景**，不能取代当前代码。
 - [DSH 兼容性](COMPATIBILITY.md) 和 [隔离测试 Profile](TEST-PROFILE.md)。
