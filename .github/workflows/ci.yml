@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, 'feat/**']
@@ -20,15 +23,17 @@ jobs:
         node: ['24']
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           version: 12.18.0
 
       - name: Setup Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -54,7 +59,7 @@ jobs:
       - name: ESM runtime import smoke (catch CJS interop regressions)
         run: |
           node --input-type=module -e "await import('./lib/channel/lark-transport.js'); console.log('LarkTransport ESM import OK')"
-          node --input-type=module -e "const { default: ProxyAgent } = await import('https-proxy-agent'); const agent = ProxyAgent('http://127.0.0.1:9'); if (typeof agent?.addRequest !== 'function') throw Error('Invalid v5 proxy Agent'); console.log('Proxy agent v5 factory OK')"
+          node --input-type=module -e "const { HttpsProxyAgent } = await import('https-proxy-agent'); const agent = new HttpsProxyAgent('http://127.0.0.1:9'); if (typeof agent?.addRequest !== 'function') throw Error('Invalid HTTPS proxy Agent'); console.log('Proxy agent v9 constructor OK')"
           node --input-type=module -e "await import('./lib/index.js'); console.log('Gateway entrypoint import OK')"
 
       - name: Unit + integration tests (mock transports only)
@@ -76,11 +81,16 @@ jobs:
       - name: Pack check
         run: pnpm run pack
 
-      - name: Verify prerelease tarballs and generate SHA256 manifest
+      - name: Check published artifact privacy and file hygiene
+        run: |
+          node --test scripts/security/check-package-contents.test.mjs
+          node scripts/security/check-package-contents.mjs
+
+      - name: Verify both prerelease archives and generate SHA256 manifest
         run: pnpm run release:check
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dsh-plugin-feishu-gateway-tarball
           path: |

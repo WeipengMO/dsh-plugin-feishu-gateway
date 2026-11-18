@@ -19,8 +19,8 @@
 | pnpm | `12.18.0` | `pnpm -v` |
 | npm | `11.13.0` | `npm -v` |
 | `@larksuiteoapi/node-sdk` | `1.76.0`（记录时的锁定版本；不代表当前最新版） | `npm view` / `pnpm-lock.yaml` |
-| TypeScript | `5.9.3`（固定） | `devDependencies` |
-| Vitest | `3.2.7`（固定） | `devDependencies` |
+| TypeScript | 历史版本 `5.9.3`；当前源码 `7.0.2` | `devDependencies` |
+| Vitest | 历史版本 `3.2.7`；当前源码 `4.1.12` | `devDependencies` |
 
 DSH CLI 自身声明 `"engines": { "node": ">=24.9.0" }`，本插件因此也声明 `>=24.9.0`
 （不是 Cordis 文档里更宽松的 `>=22.19.0` —— 运行 DSH 的约束更严格）。

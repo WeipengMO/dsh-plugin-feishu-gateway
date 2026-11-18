@@ -1,0 +1,10 @@
+# Reviewed historical false positives only. These exact findings are test fixtures,
+# not credentials. Never ignore a whole file, rule, or test directory.
+# Historical mock App Secret used to verify write-only credential APIs:
+565f69d9f4a35696ee6aa3caa968c67b316d1ec2:web-admin/test/server.test.mjs:generic-api-key:120
+# Historical mock Session ID used by native binding tests:
+401d42979938b63404defe17b5973d302402be9f:tests/unit/session-registry.test.ts:generic-api-key:23
+
+# The same two synthetic fixture values in the current working tree:
+tests/unit/session-registry.test.ts:generic-api-key:23
+web-admin/test/server.test.mjs:generic-api-key:204
