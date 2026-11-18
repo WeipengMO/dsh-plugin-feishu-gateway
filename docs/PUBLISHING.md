@@ -7,7 +7,7 @@
 
 [自动发布工作流](../.github/workflows/npm-publish.yml)使用 npm Trusted Publishing（OIDC），**不需要 GitHub Secrets 中的 `NPM_TOKEN`**。只有发布一个 GitHub Release（`published` 事件）才会执行；`git push`、PR 和仅推送 Tag 都不会触发 npm 发布。
 
-> `v0.1.0-beta.1` 已通过手动方式发布。新工作流不会重新发布它；首次验证自动发布时，应使用一个新版本，例如 `v0.1.0-beta.2`。
+> **已验证**：`v0.1.0-beta.1` 由维护者手动发布，`v0.1.0-beta.2` 已由 GitHub Actions 的 npm Trusted Publishing (OIDC) 成功发布两包。后续请使用未占用的新版本（如 `v0.1.0-beta.3`）。
 
 ## 首次配置：npm Trusted Publishing
 
@@ -41,17 +41,17 @@
 
 ### 1. 更新两个 package.json 的版本
 
-在仓库根目录执行（以 `0.1.0-beta.2` 为例）：
+在仓库根目录执行（以 `0.1.0-beta.3` 为例）：
 
 ```bash
 git switch main
 git pull --ff-only
 
-npm pkg set version=0.1.0-beta.2
-npm pkg set version=0.1.0-beta.2 --prefix web-admin
+npm pkg set version=0.1.0-beta.3
+npm pkg set version=0.1.0-beta.3 --prefix web-admin
 
 git add package.json web-admin/package.json
-git commit -m "chore(release): v0.1.0-beta.2"
+git commit -m "chore(release): v0.1.0-beta.3"
 git push origin main
 ```
 
@@ -61,12 +61,12 @@ git push origin main
 
 进入 [Releases → Draft a new release](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/new)：
 
-- **Tag**：`v0.1.0-beta.2`（从最新 `main` 创建）
-- **Release title**：`v0.1.0-beta.2`
+- **Tag**：`v0.1.0-beta.3`（从最新 `main` 创建）
+- **Release title**：`v0.1.0-beta.3`
 - 勾选 **Set as a pre-release**
 - 填写变更说明，点击 **Publish release**
 
-创建 Draft 但未 Publish 不触发自动发布。**仅 `git push origin v0.1.0-beta.2` 不触发**。Release 标签必须指向当时最新的 `main` 提交，且两个 package.json 都是 `0.1.0-beta.2`。
+创建 Draft 但未 Publish 不触发自动发布。**仅 `git push origin v0.1.0-beta.3` 不触发**。Release 标签必须指向当时最新的 `main` 提交，且两个 package.json 都是 `0.1.0-beta.2`。
 
 ### 3. 查看发布状态
 
@@ -79,8 +79,8 @@ git push origin main
 执行成功后可查询：
 
 ```bash
-npm view dsh-plugin-feishu-gateway@0.1.0-beta.2 version
-npm view dsh-plugin-feishu-admin@0.1.0-beta.2 version
+npm view dsh-plugin-feishu-gateway@0.1.0-beta.3 version
+npm view dsh-plugin-feishu-admin@0.1.0-beta.3 version
 npm view dsh-plugin-feishu-gateway dist-tags --json
 npm view dsh-plugin-feishu-admin dist-tags --json
 ```
@@ -89,7 +89,7 @@ npm view dsh-plugin-feishu-admin dist-tags --json
 
 | GitHub Release Tag | GitHub 类型 | npm dist-tag |
 | --- | --- | --- |
-| `v0.1.0-beta.2` | Pre-release | `beta` |
+| `v0.1.0-beta.3` | Pre-release | `beta` |
 | `v0.1.0-rc.1` | Pre-release | `next` |
 | `v0.1.0-alpha.1` | Pre-release | `alpha` |
 | `v0.1.0` | 普通 Release | `latest` |
