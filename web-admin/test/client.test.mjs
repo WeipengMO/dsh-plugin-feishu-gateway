@@ -809,7 +809,7 @@ test('UX regression: overview is actionable without redundant navigation or proc
   assert.match(area, /需要关注/)
   assert.doesNotMatch(area, /fgw-shortcuts|fgw-flow|消息处理链路/)
   const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
-  assert.match(css, /\.fgw-usage-date-range\{[\s\S]*?border:1px/)
+  assert.match(css, /\.fgw-usage-date-range\s*\{[\s\S]*?border:1px/)
   assert.match(css, /\.fgw-hero\{[\s\S]*?padding:19px/)
 })
 
@@ -897,7 +897,7 @@ test('refresh actions and inline desktop date+metric controls share consistent C
   assert.match(source, /text.includes\('刷新'\)/)
   assert.match(workbench, /fgw-refresh fgw-refresh-action/)
   assert.match(css, /\.fgw-refresh-action::before\{/)
-  assert.match(css, /\.fgw-usage-primary-fields > \.fgw-usage-date-range\{grid-column:auto\}/)
+  assert.match(css, /\.fgw-usage-primary-fields > \.fgw-usage-date-range\s*\{\s*grid-column:auto/)
 })
 
 test('security editor uses a consistent heading/field rhythm without duplicate hints', () => {
@@ -931,4 +931,14 @@ test('legacy Feishu chat types surface as unknown instead of guessing private fr
   assert.match(sessions, /\['unknown','类型待确认'\]/)
   assert.match(sessions, /x.type==='p2p'\?'私聊':'类型待确认'/)
   assert.match(backend, /'schedule', 'unknown'\]/)
+})
+
+test('same-level navigation shares a segmented style and usage layout has one canonical grid', () => {
+  const css = readFileSync(path.join(root, 'src/client.css'), 'utf8')
+  assert.match(css, /\.fgw-section-tabs,\.fgw-session-tabs,\.fgw-sched-tabs\{/)
+  assert.match(css, /\.fgw-section-tab.is-active,\.fgw-session-tab.is-active,\.fgw-sched-tab.is-active\{/)
+  assert.equal((css.match(/\.fgw-usage-primary-fields\s*\{/g) || []).length, 2,
+    'one desktop rule plus one container breakpoint; no stale intermediate overrides')
+  assert.doesNotMatch(css, /fgw-usage-primary-fields > \.fgw-usage-field:nth-child\(3\)/)
+  assert.match(css, /@container \(max-width:730px\)/)
 })
