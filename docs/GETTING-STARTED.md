@@ -25,13 +25,13 @@ dsh --profile feishu-channel --dump-config
 dsh --profile web --dump-config
 ```
 
-需要离线包时，也可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.1) 下载 Gateway 和 Admin 的 `.tgz` 与 `SHA256SUMS`，在 Linux 上校验后安装：
+需要离线包时，也可从 [GitHub Releases](https://github.com/WeipengMO/dsh-plugin-feishu-gateway/releases/tag/v0.1.0-beta.2) 下载 Gateway 和 Admin 的 `.tgz` 与 `SHA256SUMS`，在 Linux 上校验后安装：
 
 ```bash
 cd /path/to/downloads
 sha256sum -c SHA256SUMS
-dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.1.tgz
-dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.1.tgz
+dsh plugin --profile feishu-channel add ./dsh-plugin-feishu-gateway-0.1.0-beta.2.tgz
+dsh plugin --profile web add ./dsh-plugin-feishu-admin-0.1.0-beta.2.tgz
 ```
 
 不要混用安装方式；后续版本及 GitHub → npm 自动发布规则见 [发布维护指南](PUBLISHING.md)。
