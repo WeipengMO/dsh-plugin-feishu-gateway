@@ -921,3 +921,14 @@ test('group refresh and global workbench refresh cannot silently discard unsaved
   assert.match(workbench, /const hasLocalRefresh =/)
   assert.match(workbench, /!hasLocalRefresh &&/)
 })
+
+test('legacy Feishu chat types surface as unknown instead of guessing private from oc_ ids', () => {
+  const service = readFileSync(path.join(root, 'src/session-organizer.mjs'), 'utf8')
+  const sessions = readFileSync(path.join(root, 'src/native-session-panel.js'), 'utf8')
+  const backend = readFileSync(path.join(root, 'src/server.mjs'), 'utf8')
+  assert.match(service, /return 'unknown'/)
+  assert.match(service, /'p2p', 'unknown'\]/)
+  assert.match(sessions, /\['unknown','类型待确认'\]/)
+  assert.match(sessions, /x.type==='p2p'\?'私聊':'类型待确认'/)
+  assert.match(backend, /'schedule', 'unknown'\]/)
+})

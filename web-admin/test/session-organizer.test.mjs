@@ -116,13 +116,18 @@ test('chat type comes from the recorded event, not the oc_ chat id prefix', asyn
   assert.equal(bySession.get(NEXT)?.type, 'group', 'older binding falls back to configured groups')
   assert.equal(bySession.get(ORPHAN)?.type, 'group', 'recorded group must win even when not configured')
 
-  // A legacy p2p binding with no recorded type and no group config entry.
+  // Without the inbound event, an oc_ chat cannot be safely classified:
+  // a group might have been deleted from the managed configuration.
   await f.writeBindings({
-    'default:oc_legacy_p2p': bound(SID, 'oc_legacy_p2p'),
+    'default:oc_legacy_unknown': bound(SID, 'oc_legacy_unknown'),
   })
   const legacy = await sessionOrganizationInventory(f.stateDir, f.native, { reveal: true })
-  assert.equal(legacy.items.find(row => row.sessionId === SID)?.type, 'p2p',
-    'unknown legacy oc_ chat must default to p2p, not group')
+  assert.equal(legacy.items.find(row => row.sessionId === SID)?.type, 'unknown')
+  const unknownOnly = await sessionOrganizationInventory(f.stateDir, f.native, { type: 'unknown' })
+  assert.equal(unknownOnly.total, 3,
+    'unattributed native histories should also remain unknown, not be labelled private')
+  const definitelyPrivate = await sessionOrganizationInventory(f.stateDir, f.native, { type: 'p2p' })
+  assert.equal(definitelyPrivate.total, 0)
 })
 
 test('idempotent reconciliation adopts bound sessions, not unconfirmed historical orphans', async t => {

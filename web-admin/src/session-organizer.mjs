@@ -151,13 +151,14 @@ async function sourceData(stateDir, persistence, registry) {
       nameMap.set(group.chatId, group.name.slice(0, 100))
     }
   }
-  // Feishu uses `oc_` for both group and p2p chat ids, so the prefix is NOT a
-  // chat type. Prefer the type recorded from the inbound event; for older
-  // bindings fall back to the configured group list and otherwise p2p.
+  // `oc_` identifies BOTH group and p2p chats. A legacy binding without an
+  // authoritative event type cannot safely be called private: deleted or
+  // unmanaged groups can be absent from the current configured-group list.
+  // Show an explicit unknown type until a later inbound event backfills it.
   const chatTypeOf = binding => {
     if (binding?.chatType === 'group' || binding?.chatType === 'p2p') return binding.chatType
     if (binding?.chatId && groupChatIds.has(binding.chatId)) return 'group'
-    return 'p2p'
+    return 'unknown'
   }
   const archived = new Set(registry.archivedSessionIds || [])
   // A stale snapshot is sufficient for offline history inventory but never
@@ -210,7 +211,7 @@ export async function sessionOrganizationInventory(stateDir, services, query = {
   const to = query.to ? Date.parse(query.to + 'T23:59:59.999Z') : Infinity
   const status = ['all', 'current', 'active', 'idle', 'unknown', 'unbound', 'archived', 'trashed'].includes(query.status)
     ? query.status : 'all'
-  const type = ['all', 'schedule', 'group', 'p2p'].includes(query.type) ? query.type : 'all'
+  const type = ['all', 'schedule', 'group', 'p2p', 'unknown'].includes(query.type) ? query.type : 'all'
   const page = Number.isInteger(query.page) && query.page > 0 && query.page < 100000 ? query.page : 1
   const pageSize = Number.isInteger(query.pageSize) && query.pageSize > 0 &&
     query.pageSize <= 100 ? query.pageSize : 25

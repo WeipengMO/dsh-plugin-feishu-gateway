@@ -357,7 +357,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
         h('label', { className: 'fgw-session-filter' }, h('span', null, '会话来源'),
           h('select', { className: 'fga-input', value: query.type,
             onChange: e => filter('type', e.target.value) },
-            [['all','全部'],['p2p','私聊'],['group','群聊'],['schedule','定时']].map(([value,label]) =>
+            [['all','全部'],['p2p','私聊'],['group','群聊'],['schedule','定时'],['unknown','类型待确认']].map(([value,label]) =>
               h('option', {key:value,value},label)))),
         h('label', { className: 'fgw-session-filter fgw-session-filter-extra' }, h('span', null, '机器人 ID'),
           h('input', { className: 'fga-input', value: query.bot, maxLength: 32,
@@ -436,7 +436,7 @@ function FeishuNativeSessionLedger({ mode = 'history' }) {
           {key:'sessionTitle', title:'对话',render:x=>h('div',null,
             h('strong',null,x.sessionTitle || x.scheduleTitle || '未命名'),
             h('div',{className:'fgw-muted'},x.type==='schedule'?'定时':
-              x.type==='group'?'群聊':'私聊',x.legacy?' · 旧工作区':'',
+              x.type==='group'?'群聊':x.type==='p2p'?'私聊':'类型待确认',x.legacy?' · 旧工作区':'',
               x.orphan?' · 不再关联':''),
             h('details',{className:'fgw-session-tech'},
               h('summary',null,'查看技术信息'),

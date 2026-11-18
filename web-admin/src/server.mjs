@@ -961,7 +961,7 @@ export function createAdminHandler(options = {}) {
           (bot !== '' && !/^[a-z][a-z0-9_-]{0,31}$/.test(bot)) ||
           !validDay(from) || !validDay(to) || (from && to && from > to) ||
           !['all', 'current', 'active', 'idle', 'unknown', 'unbound', 'archived', 'trashed'].includes(params.get('status') || 'all') ||
-          !['all', 'p2p', 'group', 'schedule'].includes(params.get('type') || 'all') ||
+          !['all', 'p2p', 'group', 'schedule', 'unknown'].includes(params.get('type') || 'all') ||
           !['0', '1'].includes(params.get('reveal') || '0') ||
           !['0', '1'].includes(params.get('orphan') || '0')) throw httpError(400, 'invalid native Session query')
         const report = await sessionOrganizationInventory(stateDir, sessionServices(), {
