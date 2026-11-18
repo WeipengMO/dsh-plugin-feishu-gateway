@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "飞书网关",
+    "description": "通过 WebSocket 长连接把飞书 / Lark 私聊消息桥接到 DSH 原生 Session。"
+  }
+}

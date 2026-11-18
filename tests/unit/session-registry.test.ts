@@ -1,0 +1,111 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { SessionRegistry } from '../../src/session/session-registry.js'
+import { chatKey } from '../../src/util/id.js'
+import { tempDir } from '../helpers.js'
+
+const cleanups: Array<() => Promise<void>> = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup()
+})
+
+async function fixture(): Promise<() => SessionRegistry> {
+  const { dir, cleanup } = await tempDir()
+  cleanups.push(cleanup)
+  return () => new SessionRegistry(dir)
+}
+
+describe('SessionRegistry', () => {
+  it('binds one native Session id per chat and persists it', async () => {
+    const make = await fixture()
+    const first = make()
+    await first.open()
+    const key = chatKey('default', 'oc_1')
+    await first.bind(key, 'feishu-default-oc_1', 1000)
+    expect(first.get(key)?.sessionId).toBe('feishu-default-oc_1')
+
+    const second = make()
+    await second.open()
+    expect(second.get(key)?.sessionId).toBe('feishu-default-oc_1')
+    expect(second.bindings()).toHaveLength(1)
+  })
+
+  it('keeps createdAt but updates lastActiveAt on touch', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const key = chatKey('default', 'oc_1')
+    await registry.bind(key, 'session-1', 1000)
+    await registry.touch(key, 5000)
+    expect(registry.get(key)).toMatchObject({ createdAt: 1000, lastActiveAt: 5000, persisted: true })
+  })
+
+  it('rebinds to a new id without changing createdAt', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const key = chatKey('default', 'oc_1')
+    await registry.bind(key, 'session-1', 1000)
+    await registry.bind(key, 'session-2', 3000)
+    expect(registry.get(key)).toMatchObject({ sessionId: 'session-2', createdAt: 1000, lastActiveAt: 3000 })
+  })
+
+  it('records the authoritative chat type and backfills older bindings', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const p2pKey = chatKey('default', 'oc_0ab1e947d08b9bd60b0efdd6ded1d5a5')
+    const groupKey = chatKey('default', 'oc_group')
+
+    await registry.bind(p2pKey, 'session-p2p', 1000, undefined, 'p2p')
+    await registry.bind(groupKey, 'session-group', 1000, undefined, 'group')
+    expect(registry.get(p2pKey)?.chatType).toBe('p2p')
+    expect(registry.get(groupKey)?.chatType).toBe('group')
+
+    const reopened = make()
+    await reopened.open()
+    expect(reopened.get(p2pKey)?.chatType).toBe('p2p')
+    expect(reopened.get(groupKey)?.chatType).toBe('group')
+
+    const legacyKey = chatKey('default', 'oc_legacy')
+    await reopened.bind(legacyKey, 'session-legacy', 1000)
+    expect(reopened.get(legacyKey)?.chatType).toBeUndefined()
+    await reopened.setChatType(legacyKey, 'p2p')
+    expect(reopened.get(legacyKey)?.chatType).toBe('p2p')
+    // Backfill must not disturb activity or drop the binding.
+    expect(reopened.get(legacyKey)).toMatchObject({ lastActiveAt: 1000, sessionId: 'session-legacy' })
+  })
+})
+
+describe('Issue #16 lifecycle: native DSH data is not owned by the registry', () => {
+  it('archives idempotently only at the expected version, and touch reactivates', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const key = chatKey('default', 'oc_1')
+    await registry.bind(key, 'native-1', 1000)
+    expect(await registry.archiveIfUnchanged(key, 'wrong', 1000)).toBe(false)
+    expect(await registry.archiveIfUnchanged(key, 'native-1', 999)).toBe(false)
+    expect(await registry.archiveIfUnchanged(key, 'native-1', 1000)).toBe(true)
+    expect(registry.get(key)?.archived).toBe(true)
+    await registry.touch(key, 2000)
+    expect(registry.get(key)?.archived).toBe(false)
+  })
+
+  it('unlinks only a current unchanged binding and never changes other chats', async () => {
+    const make = await fixture()
+    const registry = make()
+    await registry.open()
+    const key = chatKey('default', 'oc_1')
+    const other = chatKey('default', 'oc_2')
+    await registry.bind(key, 'native-1', 1000)
+    await registry.bind(other, 'native-2', 1000)
+    await registry.touch(key, 2000)
+    expect(await registry.unbindIfUnchanged(key, 'native-1', 1000)).toBe(false)
+    expect(await registry.unbindIfUnchanged(key, 'native-1', 2000)).toBe(true)
+    expect(registry.get(key)).toBeUndefined()
+    expect(registry.get(other)?.sessionId).toBe('native-2')
+    const reopened = make()
+    await reopened.open()
+    expect(reopened.get(other)?.sessionId).toBe('native-2')
+  })
+})

@@ -1,0 +1,4 @@
+# dsh profile root — intentionally empty. The tree is composed as patches:
+# bundle layers (dsh.profile.bundles), then cordis.patch.yml, then --patch overlays.
+# Edit cordis.patch.yml, never this file (profile-boot rewrites it to [] on boot).
+[]

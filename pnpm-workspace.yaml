@@ -1,0 +1,13 @@
+# pnpm 12 reads project settings from pnpm-workspace.yaml (the package.json
+# "pnpm" field is no longer read). This is a single-package project; keeping
+# the settings here makes `pnpm install --frozen-lockfile` deterministic in CI.
+packages:
+  - '.'
+
+# Build scripts are allow-listed explicitly (pnpm 12 writes approvals as
+# `allowBuilds`). Both are required by our dev/test toolchain: esbuild powers
+# Vitest/Vite; protobufjs ships a postinstall for @larksuiteoapi/node-sdk.
+# No other dependency is permitted to run install scripts.
+allowBuilds:
+  esbuild: true
+  protobufjs: true
