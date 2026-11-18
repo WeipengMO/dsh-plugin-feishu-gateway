@@ -1,13 +1,13 @@
 # 测试版发布前检查（0.1.0-beta.1 / npm beta）
 
-适用于 **Gateway 和 Web Admin 两个独立 npm 包**。这是一份发布门禁与验收清单，
+适用于 **Gateway 和 Web Admin 两个独立 npm 包**。日常自动发布参见 [GitHub → npm Trusted Publishing](PUBLISHING.md)；本页手动上传仅用于特殊情况下的后备操作。这是一份发布门禁与验收清单，
 不是“CI 通过即允许上线”的声明。**先测试、后发布；不得在生产 Profile 试错。**
 
 ## 1. 源码与版本
 
 - 目标分支应从最新 `main` 创建，PR 必须通过 CI。记录完整 commit SHA。
 - Gateway 版本：根目录 `package.json`；Admin 版本：`web-admin/package.json`。
-  两者可独立递增，**不要求相同**，但要作为一组验证并记录。
+  手动安装可分别递增；**自动 GitHub Release 发布要求两者版本相同，并与 Release Tag 完全一致**。
 - 要求 Node `>=24.9.0`、DSH `>=0.2.2-rc.1 <0.3.0-0`；
   这是声明的兼容范围，并非对所有 DSH 版本的实测证明。
 - 确认 npm 上目标版本**尚未发布**。npm 同一包同一版本不可重复覆盖。
@@ -82,7 +82,7 @@ npm view dsh-plugin-feishu-admin dist-tags --json
 `npm view` 如果提示 404，应区分“包尚不存在”和“无访问权限”；
 发布前核对包名所有权、2FA、发布令牌和是否允许公开。
 
-## 5. **验收通过后**才发布测试版
+## 5. **验收通过后**的手动发布（后备方案）
 
 仅在授权发布时，使用**CI 已验收的同一提交**重新核对工件哈希。
 两个包是独立的 npm 版本；示例以实际 `package.json` 自动读取：
