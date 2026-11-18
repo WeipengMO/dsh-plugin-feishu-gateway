@@ -5,12 +5,23 @@ name: Publish npm packages
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing GitHub Release tag to publish, e.g. v0.1.0-beta.2'
+        required: true
+        type: string
+      prerelease:
+        description: 'Whether the release is a prerelease'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: npm-publish-${{ github.event.release.tag_name }}
+  group: npm-publish-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +36,7 @@ jobs:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -33,8 +44,8 @@ jobs:
         id: release
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.prerelease) || format('{0}', github.event.release.prerelease) }}
         run: |
           set -euo pipefail
           # Releases must be cut from the current default branch HEAD, never old or arbitrary tags.
@@ -186,7 +197,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
         run: |
           set -euo pipefail
           (cd dist && sha256sum -c SHA256SUMS)
