@@ -77,15 +77,21 @@ jobs:
           set -euo pipefail
           release='v0.1.0-beta.2'
           if gh release view "$release" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release already exists: $release; refusing to overwrite"
-            exit 1
+            # The first attempt already created the release; retry only that exact tag.
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$release" --jq '.object.sha')"
+            test "$tag_sha" = '00eb3841a736cd7e566e5f57c1749f65d8d02596' || {
+              echo "::error::Unexpected tag target for existing prerelease"
+              exit 1
+            }
+            echo "Reusing previously created $release; dispatching fixed npm workflow"
+          else
+            gh release create "$release" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "v0.1.0-beta.2 (npm beta)" \
+              --prerelease \
+              --notes "End-user npm installation guide and Trusted Publishing integration. See docs/PUBLISHING.md."
           fi
-          gh release create "$release" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "v0.1.0-beta.2 (npm beta)" \
-            --prerelease \
-            --notes "Updated end-user npm installation instructions, package metadata and GitHub Actions Trusted Publishing integration. The beta release is pending the separate npm publishing workflow. See docs/PUBLISHING.md."
           # GITHUB_TOKEN-created release events do not automatically trigger another workflow.
           # Explicit workflow_dispatch is supported and preserves npm-publish.yml as the OIDC identity.
           gh workflow run npm-publish.yml \
