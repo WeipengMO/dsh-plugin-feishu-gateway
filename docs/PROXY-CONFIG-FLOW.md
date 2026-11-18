@@ -41,7 +41,7 @@
   "fallbackDirect": true,
   "source": "managed",          // managed | env | none
   "configured": true,
-  "display": "http://100.75.51.18:2080",  // 去掉 userinfo/path/query，可给管理员看
+  "display": "http://proxy.example.invalid:8080",  // 示例域名；去掉 userinfo/path/query
   "envName": "FEISHU_CHANNEL_PROXY_URL",
   "envConfigured": true
 }
