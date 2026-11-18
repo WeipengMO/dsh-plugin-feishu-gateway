@@ -40,6 +40,8 @@ window.__ModuleLoader__.load({
       const matches = options.filter(item => !term ||
         [item.name, item.model, item.providerName, item.provider, item.key]
           .some(value => String(value || '').toLowerCase().includes(term))).slice(0, 150)
+      const enabledIndices = matches.flatMap((item, index) => item.disabled ? [] : [index])
+      const activeIndex = enabledIndices.includes(active) ? active : (enabledIndices[0] ?? -1)
       const choose = item => {
         if (item.disabled) return
         onChoose(item.key)
@@ -51,31 +53,45 @@ window.__ModuleLoader__.load({
         if (event.key === 'Escape') { setOpen(false); setQuery(''); return }
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault()
-          if (!open) { setOpen(true); setActive(0) }
-          else setActive(value => Math.max(0, Math.min(matches.length - 1,
-            value + (event.key === 'ArrowDown' ? 1 : -1))))
+          if (!open) { setOpen(true); setActive(enabledIndices[0] ?? -1) }
+          else if (enabledIndices.length) {
+            const current = enabledIndices.indexOf(activeIndex)
+            const delta = event.key === 'ArrowDown' ? 1 : -1
+            setActive(enabledIndices[Math.max(0, Math.min(enabledIndices.length - 1,
+              current + delta))])
+          }
         }
-        if (event.key === 'Enter' && open && matches.length) {
+        if (event.key === 'Enter' && open) {
           event.preventDefault()
-          const current = matches[Math.min(active, matches.length - 1)]
-          if (current && !current.disabled) choose(current)
+          if (activeIndex >= 0) choose(matches[activeIndex])
         }
       }
       return h('div', { className: 'fga-search-picker' + (inline ? ' is-inline' : ''),
         onBlur: event => { if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false); setQuery('')
         } } },
-        h('div', { className: 'fga-search-picker-field' },
+        h('div', { className: 'fga-search-picker-field',
+          onClick: event => {
+            if (disabled || event.target?.tagName === 'INPUT') return
+            // Make the entire selector including its chevron clickable, even
+            // when the input already owns focus.
+            const input = event.currentTarget.querySelector?.('input')
+            if (open) { setOpen(false); setQuery('') }
+            else {
+              setOpen(true); setQuery(''); setActive(-1)
+              input?.focus()
+            }
+          } },
           h('input', { className: 'fga-search-picker-input', role: 'combobox',
             'aria-label': ariaLabel, 'aria-autocomplete': 'list',
             'aria-expanded': open, 'aria-controls': id + '-options',
-            'aria-activedescendant': open && matches.length ? id + '-option-' + active : undefined,
+            'aria-activedescendant': open && activeIndex >= 0 ? id + '-option-' + activeIndex : undefined,
             autoComplete: 'off', spellCheck: false, disabled,
             placeholder: placeholder || '搜索模型名称或提供方',
             value: open ? query : (selected ?
               selected.name + (compactLabel ? '' : ' · ' + selected.providerName) : ''),
-            onFocus: () => { setOpen(true); setQuery(''); setActive(0) },
-            onChange: event => { setOpen(true); setQuery(event.target.value); setActive(0) },
+            onFocus: () => { setOpen(true); setQuery(''); setActive(-1) },
+            onChange: event => { setOpen(true); setQuery(event.target.value); setActive(-1) },
             onKeyDown: keydown }),
           h('span', { className: 'fga-search-picker-chevron', 'aria-hidden': true }, '⌄')),
         open && !disabled && h('div', { className: 'fga-search-picker-dropdown',
@@ -83,12 +99,12 @@ window.__ModuleLoader__.load({
           matches.length ? matches.map((item, index) =>
             h('button', { type: 'button', role: 'option',
               id: id + '-option-' + index, key: item.key,
-              className: 'fga-search-picker-option' + (active === index ? ' is-active' : '') +
+              className: 'fga-search-picker-option' + (activeIndex === index ? ' is-active' : '') +
                 (selectedKey === item.key ? ' is-selected' : ''),
               'aria-selected': selectedKey === item.key,
               'aria-disabled': item.disabled === true,
               disabled: item.disabled === true,
-              onMouseEnter: () => setActive(index),
+              onMouseEnter: () => { if (!item.disabled) setActive(index) },
               onMouseDown: event => event.preventDefault(),
               onClick: () => choose(item) },
               h('span', { className: 'fga-search-picker-option-name' }, item.name),

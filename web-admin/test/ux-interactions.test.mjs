@@ -110,3 +110,54 @@ test('usage chart responds to pointer inspection, click pin and keyboard navigat
   tree = hooks.render(UsageTrendChart, props)
   assert.doesNotMatch(JSON.stringify(tree.children[2]), /清除选择/)
 })
+
+test('model picker chevron toggles popup and keyboard skips disabled presets', () => {
+  const src = admin.slice(admin.indexOf('function ModelPicker('),
+    admin.indexOf('/*__PROXY_HELPERS_START__*/'))
+  const hooks = createStateHarness()
+  const ModelPicker = runInNewContext(src + '\nModelPicker', {
+    h, useState: hooks.useState, Math, String, Array,
+  })
+  const chosen = []
+  const props = {
+    id: 'agent-preset-test', ariaLabel: 'Agent 预设', selectedKey: '',
+    onChoose: key => chosen.push(key),
+    options: [
+      { key: 'broken', name: 'Broken preset', providerName: 'unavailable', disabled: true },
+      { key: 'healthy', name: 'Healthy preset', providerName: 'ready' },
+      { key: 'other', name: 'Other preset', providerName: 'ready' },
+    ],
+  }
+  let tree = hooks.render(ModelPicker, props)
+  const field = tree.children[0]
+  assert.equal(typeof field.props.onClick, 'function')
+  field.props.onClick({
+    target: { tagName: 'SPAN' },
+    currentTarget: { querySelector: () => ({ focus() {} }) },
+  })
+  tree = hooks.render(ModelPicker, props)
+  assert.equal(tree.children[1].props.role, 'listbox')
+  assert.match(tree.children[0].children[0].props['aria-activedescendant'], /option-1$/)
+  const input = tree.children[0].children[0]
+  input.props.onKeyDown({ key: 'ArrowDown', preventDefault() {} })
+  tree = hooks.render(ModelPicker, props)
+  assert.match(tree.children[0].children[0].props['aria-activedescendant'], /option-2$/)
+  tree.children[0].children[0].props.onKeyDown({ key: 'ArrowUp', preventDefault() {} })
+  tree = hooks.render(ModelPicker, props)
+  tree.children[0].children[0].props.onKeyDown({ key: 'Enter', preventDefault() {} })
+  assert.deepEqual(chosen, ['healthy'])
+  tree = hooks.render(ModelPicker, props)
+  assert.equal(tree.children[1], false)
+  tree.children[0].props.onClick({
+    target: { tagName: 'SPAN' },
+    currentTarget: { querySelector: () => ({ focus() {} }) },
+  })
+  tree = hooks.render(ModelPicker, props)
+  assert.equal(tree.children[1].props.role, 'listbox')
+  tree.children[0].props.onClick({
+    target: { tagName: 'SPAN' },
+    currentTarget: { querySelector: () => ({ focus() {} }) },
+  })
+  tree = hooks.render(ModelPicker, props)
+  assert.equal(tree.children[1], false)
+})
