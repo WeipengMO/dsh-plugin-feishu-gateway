@@ -68,7 +68,7 @@ function ExternalToolsPanel({ onDirtyChange }) {
         h('button', { type: 'button', className: 'fga-button fga-secondary', disabled: busy || dirty,
           onClick: () => void reload() }, '刷新'),
         h('button', { type: 'button', className: 'fga-button fga-secondary',
-          disabled: busy || loading || registry?.unmanagedPatch || servers.length >= 24, onClick: add }, '添加 MCP')),
+          disabled: busy || loading || registry?.unmanagedPatch || servers.length >= 24, onClick: add }, '添加 MCP'))),
     registry?.unmanagedPatch && h('p', { className: 'fga-warning' },
       '检测到运维手工管理的 extra-plugins.patch.yml。为避免覆盖现有插件配置，本页面只读；请先在服务器侧迁移该文件。'),
     error && h('p', { className: 'fga-error', role: 'alert' }, error),
