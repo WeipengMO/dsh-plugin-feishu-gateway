@@ -33,6 +33,7 @@ import { listFeishuSkills, readFeishuSkill, saveFeishuSkill, setFeishuSkillEnabl
 import { readExecPolicy, writeExecPolicy, normalizeExecPolicy, defaultProfilePath,
   EXEC_MODES, APPROVAL_POLICIES, EXEC_OVERLAY_FILE } from './exec-policy.mjs'
 import { DEFAULT_NO_PROXY, normalizeManagedNoProxy } from './no-proxy.mjs'
+import { readExternalTools, writeExternalTools } from './external-tools.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -1252,6 +1253,20 @@ export function createAdminHandler(options = {}) {
           return
         }
         return json(res, 200, { ok: true, report })
+      }
+      // External MCP servers only affect this Feishu profile at its next restart.
+      if (route === PREFIX + '/external-tools')
+        authorizeSchedule(req, admit, req.method === 'GET' ? 'view' : 'edit')
+      if (req.method === 'GET' && route === PREFIX + '/external-tools') {
+        return json(res, 200, { ok: true, registry: await readExternalTools(stateDir) })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/external-tools') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['servers', 'expectedRevision'])
+          return json(res, 200, { ok: true, restartRequired: true,
+            registry: await writeExternalTools(stateDir, body) })
+        })
       }
       // Feishu-owned Skills only: never writes DSH global skills/config.
       // The same owner admission as scheduling protects mutable instructions.
