@@ -32,6 +32,8 @@ import { listFeishuSkills, readFeishuSkill, saveFeishuSkill, setFeishuSkillEnabl
   deleteFeishuSkill, syncFeishuSkills } from './skills-manager.mjs'
 import { readExecPolicy, writeExecPolicy, normalizeExecPolicy, defaultProfilePath,
   EXEC_MODES, APPROVAL_POLICIES, EXEC_OVERLAY_FILE } from './exec-policy.mjs'
+import { DEFAULT_NO_PROXY, normalizeManagedNoProxy } from './no-proxy.mjs'
+import { readExternalTools, writeExternalTools } from './external-tools.mjs'
 
 export const name = 'feishu-channel-admin'
 export const inject = ['webServer', 'connection']
@@ -258,14 +260,15 @@ export function validateConfig(input) {
   if (input.networkProxy !== undefined) {
     const p = input.networkProxy
     if (!object(p)) throw httpError(400, 'networkProxy must be an object')
-    exactKeys(p, ['enabled', 'urlEnv', 'fallbackDirect'])
+    exactKeys(p, ['enabled', 'urlEnv', 'fallbackDirect', 'noProxy'])
     // urlEnv only exists for compatibility with old deployments; a saved
     // managed URL always wins at runtime. Default keeps rc.9 configs valid.
     const urlEnv = p.urlEnv === undefined ? DEFAULT_PROXY_ENV : p.urlEnv
     if (typeof p.enabled !== 'boolean' || typeof p.fallbackDirect !== 'boolean' ||
         typeof urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(urlEnv))
       throw httpError(400, 'invalid networkProxy')
-    result.networkProxy = { enabled: p.enabled, urlEnv, fallbackDirect: p.fallbackDirect }
+    result.networkProxy = { enabled: p.enabled, urlEnv, fallbackDirect: p.fallbackDirect,
+      noProxy: normalizeManagedNoProxy(p.noProxy ?? DEFAULT_NO_PROXY) }
   }
   if (input.replyFormat !== undefined) {
     if (input.replyFormat !== 'text' && input.replyFormat !== 'markdown') throw httpError(400, 'invalid replyFormat')
@@ -1250,6 +1253,20 @@ export function createAdminHandler(options = {}) {
           return
         }
         return json(res, 200, { ok: true, report })
+      }
+      // External MCP servers only affect this Feishu profile at its next restart.
+      if (route === PREFIX + '/external-tools')
+        authorizeSchedule(req, admit, req.method === 'GET' ? 'view' : 'edit')
+      if (req.method === 'GET' && route === PREFIX + '/external-tools') {
+        return json(res, 200, { ok: true, registry: await readExternalTools(stateDir) })
+      }
+      if (req.method === 'PUT' && route === PREFIX + '/external-tools') {
+        return await serializeMutation(async () => {
+          const body = await readBody(req)
+          exactKeys(body, ['servers', 'expectedRevision'])
+          return json(res, 200, { ok: true, restartRequired: true,
+            registry: await writeExternalTools(stateDir, body) })
+        })
       }
       // Feishu-owned Skills only: never writes DSH global skills/config.
       // The same owner admission as scheduling protects mutable instructions.

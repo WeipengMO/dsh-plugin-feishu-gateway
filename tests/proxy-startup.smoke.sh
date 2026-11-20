@@ -17,6 +17,8 @@ cat > "$TMP/bin/dsh" <<'EOF'
   echo "selected=${FEISHU_GATEWAY_PROXY_SELECTED:-none}"
   echo "proxy=${HTTP_PROXY:-none}"
   echo "node_proxy=${NODE_USE_ENV_PROXY:-none}"
+  echo "bypass=${NO_PROXY:-none}"
+  printf 'arguments=%s\n' "$*"
 } > "$DSH_CAPTURE"
 EOF
 cat > "$TMP/bin/curl" <<'EOF'
@@ -27,7 +29,7 @@ EOF
 chmod +x "$TMP/bin/dsh" "$TMP/bin/curl"
 
 run_case() {
-  env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+  env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy -u ALL_PROXY -u NO_PROXY -u no_proxy \
     FEISHU_CHANNEL_ENV_FILE="$TMP/env" \
     FEISHU_CHANNEL_STATE_DIR="$TMP/state" \
     DSH_CAPTURE="$TMP/captured" \
@@ -70,4 +72,17 @@ MOCK_PROXY_BROKEN=0 MOCK_CURL_CAPTURE="$TMP/curl-targets" run_case > "$TMP/lark"
 grep -q 'open.larksuite.com/open-apis' "$TMP/curl-targets"
 ! grep -q 'open.feishu.cn/open-apis' "$TMP/curl-targets"
 
-echo "PASS: proxy, direct fallback, Lark target and fail-closed startup"
+# Managed exemptions and optional overlays are scoped to this channel.
+cat > "$TMP/state/admin-config.json" <<'EOF'
+{"version":1,"config":{"networkProxy":{"enabled":true,"fallbackDirect":true,"noProxy":"*.internal,198.51.100.42"}}}
+EOF
+printf '%s\n' '- id: example-policy' > "$TMP/state/exec-policy.patch.yml"
+printf '%s\n' '- id: example-external' > "$TMP/state/extra-plugins.patch.yml"
+printf '%s\n' '- id: example-operator' > "$TMP/extra.patch.yml"
+MOCK_PROXY_BROKEN=0 FEISHU_CHANNEL_EXTRA_PATCHES="$TMP/extra.patch.yml" run_case > "$TMP/managed"
+grep -q 'bypass=localhost,127.0.0.1,::1,\*.internal,198.51.100.42' "$TMP/captured"
+grep -q 'exec-policy.patch.yml' "$TMP/captured"
+grep -q 'extra-plugins.patch.yml' "$TMP/captured"
+grep -q 'extra.patch.yml' "$TMP/captured"
+
+echo "PASS: proxy routing, bypass hosts, extra patches, Lark target and fail-closed startup"
