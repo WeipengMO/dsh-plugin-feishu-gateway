@@ -1584,3 +1584,11 @@
 .fgw-sched-tab{color:var(--muted-foreground,#919baa);font-weight:550}
 .fgw-sched-tab:hover{color:var(--foreground,inherit);background:var(--muted,#8882)}
 @container (max-width:650px){.fgw-sched-tabs{width:100%;flex:1 1 100%}}
+
+/* Channel-scoped MCP roster: compact forms, no nested navigation or decorative rules. */
+.fgw-external-tools { width:100%; max-width:980px; gap:16px; padding-bottom:28px; }
+.fgw-mcp-card { display:flex; flex-direction:column; gap:14px; min-width:0; padding:18px; border:1px solid var(--border,#8884); background:var(--card,transparent); border-radius:12px; }
+.fgw-mcp-card-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.fgw-mcp-card-head strong { font-size:14px; font-weight:650; flex:1; min-width:0; overflow-wrap:anywhere; }
+.fgw-mcp-card .fga-textarea { min-height:86px; }
+@media (max-width:650px) { .fgw-mcp-card { padding:13px; } .fgw-mcp-card .fga-route-row { grid-template-columns:1fr; } }
