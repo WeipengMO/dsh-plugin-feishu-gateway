@@ -1,7 +1,9 @@
+import { Agent as NativeHttpsAgent } from 'node:https'
 import { appIdLooksValid } from '../config.js'
 // https-proxy-agent >= 9 exposes a named ESM constructor.
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { DEFAULT_PROXY_URL_ENV, validateProxyUrl } from '../util/proxy-url.js'
+import { DEFAULT_NO_PROXY, shouldBypassProxy } from '../util/no-proxy.js'
 import type {
   BotCredentials,
   CardActionEvent,
@@ -266,13 +268,32 @@ export class LarkTransport implements FeishuTransport {
     const candidate = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED !== 'direct'
       ? this.networkProxy?.url ?? process.env[envName]
       : undefined
-    let wsAgent: InstanceType<typeof HttpsProxyAgent> | undefined
+    let wsAgent: NativeHttpsAgent | undefined
     if (candidate) {
       try {
-        // Modern versions expose a constructor, not the v5 callable factory.
-        wsAgent = new HttpsProxyAgent(validateProxyUrl(candidate))
+        const proxyUrl = validateProxyUrl(candidate)
+        // The SDK obtains its actual WSS endpoint at runtime. Choose the route
+        // for each handshake using its real request hostname, not the REST API
+        // host. HttpsProxyAgent alone ignores NO_PROXY.
+        const noProxy = [this.networkProxy?.noProxy ?? DEFAULT_NO_PROXY,
+          process.env.NO_PROXY, process.env.no_proxy].filter(Boolean).join(',')
+        const direct = new NativeHttpsAgent()
+        let proxied: HttpsProxyAgent<string> | undefined
+        wsAgent = new NativeHttpsAgent()
+        wsAgent.addRequest = (req, options) => {
+          const rawHost = String(options.hostname ?? options.host ?? '')
+          const hostname = rawHost.startsWith('[') ? rawHost.slice(1).split(']')[0]! :
+            rawHost.includes(':') && rawHost.indexOf(':') === rawHost.lastIndexOf(':')
+              ? rawHost.split(':')[0]! : rawHost
+          if (shouldBypassProxy(hostname, options.port, noProxy)) {
+            direct.addRequest(req, options)
+          } else {
+            proxied ??= new HttpsProxyAgent(proxyUrl)
+            proxied.addRequest(req, options)
+          }
+        }
       } catch {
-        // Neither the URL nor the parser message may be logged (userinfo!).
+        // Never emit the proxy URL or a thrown parser error (credentials).
         this.logger.warn('bot %s proxy is unusable; continuing with a direct connection', this.botId)
         wsAgent = undefined
       }
