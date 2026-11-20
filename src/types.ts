@@ -158,6 +158,8 @@ export interface NetworkProxyConfig {
   readonly enabled: boolean
   readonly urlEnv: string
   readonly fallbackDirect: boolean
+  /** Host/IP/suffix/CIDR exclusions; never contains proxy credentials. */
+  readonly noProxy?: string
   /** Resolved proxy URL (may contain credentials). In-memory only, never logged. */
   readonly url?: string
 }
