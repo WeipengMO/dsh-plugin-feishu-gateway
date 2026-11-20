@@ -289,10 +289,10 @@ export class LarkTransport implements FeishuTransport {
           const hostname = rawHost.startsWith('[') ? rawHost.slice(1).split(']')[0]! :
             rawHost.includes(':') && rawHost.indexOf(':') === rawHost.lastIndexOf(':')
               ? rawHost.split(':')[0]! : rawHost
-          if (shouldBypassProxy(hostname, options.port, noProxy)) {
+          if (shouldBypassProxy(hostname, options.port ?? undefined, noProxy)) {
             (direct as NativeHttpsAgent & RequestAgent).addRequest(req, options)
           } else {
-            proxied ??= new HttpsProxyAgent(proxyUrl)
+            proxied ??= new HttpsProxyAgent(proxyUrl);
             (proxied as unknown as RequestAgent).addRequest(req, options)
           }
         }
