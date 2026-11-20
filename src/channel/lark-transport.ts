@@ -1,4 +1,5 @@
 import { Agent as NativeHttpsAgent } from 'node:https'
+import type { ClientRequest, RequestOptions } from 'node:http'
 import { appIdLooksValid } from '../config.js'
 // https-proxy-agent >= 9 exposes a named ESM constructor.
 import { HttpsProxyAgent } from 'https-proxy-agent'
@@ -268,6 +269,9 @@ export class LarkTransport implements FeishuTransport {
     const candidate = this.networkProxy?.enabled && process.env.FEISHU_GATEWAY_PROXY_SELECTED !== 'direct'
       ? this.networkProxy?.url ?? process.env[envName]
       : undefined
+    // Node 26's Agent type no longer exposes the legacy addRequest signature,
+    // but ws and https-proxy-agent still use it for handshake routing.
+    type RequestAgent = { addRequest(req: ClientRequest, options: RequestOptions): void }
     let wsAgent: NativeHttpsAgent | undefined
     if (candidate) {
       try {
@@ -279,19 +283,20 @@ export class LarkTransport implements FeishuTransport {
           process.env.NO_PROXY, process.env.no_proxy].filter(Boolean).join(',')
         const direct = new NativeHttpsAgent()
         let proxied: HttpsProxyAgent<string> | undefined
-        wsAgent = new NativeHttpsAgent()
-        wsAgent.addRequest = (req, options) => {
+        const routingAgent = new NativeHttpsAgent() as NativeHttpsAgent & RequestAgent
+        routingAgent.addRequest = (req: ClientRequest, options: RequestOptions) => {
           const rawHost = String(options.hostname ?? options.host ?? '')
           const hostname = rawHost.startsWith('[') ? rawHost.slice(1).split(']')[0]! :
             rawHost.includes(':') && rawHost.indexOf(':') === rawHost.lastIndexOf(':')
               ? rawHost.split(':')[0]! : rawHost
           if (shouldBypassProxy(hostname, options.port, noProxy)) {
-            direct.addRequest(req, options)
+            (direct as NativeHttpsAgent & RequestAgent).addRequest(req, options)
           } else {
             proxied ??= new HttpsProxyAgent(proxyUrl)
-            proxied.addRequest(req, options)
+            (proxied as unknown as RequestAgent).addRequest(req, options)
           }
         }
+        wsAgent = routingAgent
       } catch {
         // Never emit the proxy URL or a thrown parser error (credentials).
         this.logger.warn('bot %s proxy is unusable; continuing with a direct connection', this.botId)
