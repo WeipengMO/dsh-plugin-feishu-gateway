@@ -2,6 +2,7 @@ import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { implicitEnvNames, resolveConfig } from './config.js'
 import { DEFAULT_PROXY_URL_ENV } from './util/proxy-url.js'
+import { DEFAULT_NO_PROXY, normalizeNoProxy } from './util/no-proxy.js'
 import type {
   AgentFallbackRoute, BotSpec, GatewayConfig, GroupPolicy, GroupRule, GroupSessionScope,
 } from './types.js'
@@ -43,7 +44,7 @@ export interface ManagedChannelConfig {
     fallbacks?: AgentFallbackRoute[]
   }
   replyTimeoutMs?: number
-  networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean }
+  networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean; noProxy?: string }
   replyFormat?: 'text' | 'markdown'
   sendRetries?: number
   outboxRetryIntervalMs?: number
@@ -242,7 +243,7 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
     if (!dictionary(v)) throw new Error('networkProxy must be an object')
     // `url` is deliberately NOT an accepted field: the proxy URL (which may
     // carry credentials) lives only in network-proxy.json, never in this file.
-    assertFields(v, ['enabled', 'urlEnv', 'fallbackDirect'])
+    assertFields(v, ['enabled', 'urlEnv', 'fallbackDirect', 'noProxy'])
     // Old (rc.9) overlays may omit urlEnv; it then falls back to the legacy name.
     const enabled = v.enabled === undefined ? false : v.enabled
     const fallbackDirect = v.fallbackDirect === undefined ? true : v.fallbackDirect
@@ -250,7 +251,7 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
     if (typeof enabled !== 'boolean' || typeof fallbackDirect !== 'boolean' ||
         typeof urlEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(urlEnv))
       throw new Error('invalid networkProxy configuration')
-    result.networkProxy = { enabled, urlEnv, fallbackDirect }
+    result.networkProxy = { enabled, urlEnv, fallbackDirect, noProxy: normalizeNoProxy(v.noProxy ?? DEFAULT_NO_PROXY) }
   }
   if (value.replyFormat !== undefined) {
     if (value.replyFormat !== 'text' && value.replyFormat !== 'markdown') throw new Error('invalid replyFormat')
