@@ -1,3 +1,4 @@
+import { Agent as NativeHttpsAgent } from 'node:https'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appIdLooksValid } from '../../src/config.js'
 
@@ -18,6 +19,7 @@ const sdkState = vi.hoisted(() => ({
   wsParams: [] as Array<Record<string, unknown>>,
   /** URLs passed to the mocked HttpsProxyAgent factory. */
   proxyAgentCalls: [] as string[],
+  proxyAgentRequests: [] as string[],
   failCreate: false,
   /** Simulate a misconfigured bot: `start()` resolves but onReady never fires. */
   suppressReady: false,
@@ -30,6 +32,9 @@ vi.mock('https-proxy-agent', () => ({
     constructor(url: string) {
       sdkState.proxyAgentCalls.push(url)
       this.mockedAgentFor = url
+    }
+    addRequest(_request: unknown, options: { hostname?: string }) {
+      sdkState.proxyAgentRequests.push(options.hostname || '')
     }
   },
 }))
@@ -147,6 +152,7 @@ beforeEach(() => {
   sdkState.requests.length = 0
   sdkState.wsParams.length = 0
   sdkState.proxyAgentCalls.length = 0
+  sdkState.proxyAgentRequests.length = 0
   sdkState.failCreate = false
   sdkState.suppressReady = false
   for (const key of Object.keys(sdkState.handlers)) delete sdkState.handlers[key]
@@ -480,6 +486,12 @@ describe('Feishu native CardKit and signed WS callback contract (mock SDK)', () 
 })
 
 describe('network proxy selection (SDK mocked, no real connection)', () => {
+  beforeEach(() => { setEnv('NO_PROXY', ''); setEnv('no_proxy', '') })
+  const dispatch = (host: string) => {
+    const agent = sdkState.wsParams[0]?.agent as { addRequest: (req: unknown, opts: unknown) => void }
+    expect(agent).toHaveProperty('addRequest')
+    agent.addRequest({}, { hostname: host, port: 443 })
+  }
   const proxyConfig = (url?: string, overrides: Partial<NetworkProxyConfig> = {}): NetworkProxyConfig => ({
     enabled: true,
     urlEnv: 'FEISHU_TEST_PROXY_URL',
@@ -495,8 +507,10 @@ describe('network proxy selection (SDK mocked, no real connection)', () => {
     setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
     const t = transport('feishu', proxyConfig())
     await connect(t)
+    expect(sdkState.proxyAgentCalls).toEqual([]) // lazy until the actual WSS target is known
+    dispatch('open.feishu.cn')
     expect(sdkState.proxyAgentCalls).toEqual(['http://env-proxy:3128'])
-    expect(sdkState.wsParams[0]?.agent).toEqual({ mockedAgentFor: 'http://env-proxy:3128' })
+    expect(sdkState.proxyAgentRequests).toEqual(['open.feishu.cn'])
     expect(t.state).toBe('connected')
   })
 
@@ -504,15 +518,32 @@ describe('network proxy selection (SDK mocked, no real connection)', () => {
     setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
     setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
     await connect(transport('feishu', proxyConfig('http://managed-proxy:2080')))
+    dispatch('open.feishu.cn')
     expect(sdkState.proxyAgentCalls).toEqual(['http://managed-proxy:2080'])
-    expect(sdkState.wsParams[0]?.agent).toEqual({ mockedAgentFor: 'http://managed-proxy:2080' })
   })
 
   it('uses the proxy even when no launcher marker is present (standalone plugin)', async () => {
     setEnv('FEISHU_TEST_PROXY_URL', 'http://env-proxy:3128')
     setEnv('FEISHU_GATEWAY_PROXY_SELECTED', undefined)
     await connect(transport('feishu', proxyConfig()))
+    dispatch('open.feishu.cn')
     expect(sdkState.proxyAgentCalls).toEqual(['http://env-proxy:3128'])
+  })
+
+  it('routes matching WSS target hosts directly, without opening a proxy agent', async () => {
+    setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
+    const direct = vi.spyOn(NativeHttpsAgent.prototype, 'addRequest').mockImplementation(() => {})
+    try {
+      await connect(transport('feishu', proxyConfig('http://proxy.example.org:8080', {
+        noProxy: 'localhost,127.0.0.1,::1,*.internal,198.51.100.0/24',
+      })))
+      dispatch('browser.internal')
+      dispatch('198.51.100.42')
+      expect(direct).toHaveBeenCalledTimes(2)
+      expect(sdkState.proxyAgentCalls).toEqual([])
+      dispatch('open.feishu.cn')
+      expect(sdkState.proxyAgentCalls).toEqual(['http://proxy.example.org:8080'])
+    } finally { direct.mockRestore() }
   })
 
   it('never uses a proxy when the launcher fell back to a direct connection', async () => {
