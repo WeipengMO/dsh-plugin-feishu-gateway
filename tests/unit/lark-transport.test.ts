@@ -532,7 +532,7 @@ describe('network proxy selection (SDK mocked, no real connection)', () => {
 
   it('routes matching WSS target hosts directly, without opening a proxy agent', async () => {
     setEnv('FEISHU_GATEWAY_PROXY_SELECTED', 'proxy')
-    const direct = vi.spyOn(NativeHttpsAgent.prototype, 'addRequest').mockImplementation(() => {})
+    const direct = vi.spyOn(NativeHttpsAgent.prototype as any, 'addRequest').mockImplementation(() => {})
     try {
       await connect(transport('feishu', proxyConfig('http://proxy.example.org:8080', {
         noProxy: 'localhost,127.0.0.1,::1,*.internal,198.51.100.0/24',
