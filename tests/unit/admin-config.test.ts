@@ -144,11 +144,11 @@ describe('managed Feishu channel overlay', () => {
 describe('managed network proxy configuration', () => {
   it('accepts a legacy rc.9 overlay and defaults urlEnv', () => {
     expect(validateManagedConfig({ networkProxy: { enabled: true, fallbackDirect: false } }).networkProxy)
-      .toEqual({ enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false })
+      .toEqual({ enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false, noProxy: 'localhost,127.0.0.1,::1' })
     expect(validateManagedConfig({ networkProxy: {} }).networkProxy)
-      .toEqual({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true })
+      .toEqual({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true, noProxy: 'localhost,127.0.0.1,::1' })
     expect(validateManagedConfig({ networkProxy: { enabled: true, urlEnv: 'HTTPS_PROXY' } }).networkProxy)
-      .toEqual({ enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true })
+      .toEqual({ enabled: true, urlEnv: 'HTTPS_PROXY', fallbackDirect: true, noProxy: 'localhost,127.0.0.1,::1' })
   })
 
   it('never accepts a proxy URL inside admin-config.json', () => {
@@ -174,7 +174,7 @@ describe('managed network proxy configuration', () => {
     } }))
     const result = loadManagedConfig(base)
     expect(result.networkProxy).toEqual({
-      enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false,
+      enabled: true, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: false, noProxy: 'localhost,127.0.0.1,::1',
     })
     expect(JSON.stringify(result.networkProxy)).not.toContain('http://')
   })
