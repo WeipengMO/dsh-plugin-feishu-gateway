@@ -259,13 +259,13 @@ test('network proxy helpers degrade gracefully on an older backend and keep the 
   assert.equal(api.networkProxyView({}).available, false)
   // Managed state from the new backend.
   const managed = api.networkProxyView({ networkProxy: { enabled: true, fallbackDirect: true,
-    source: 'managed', configured: true, display: 'http://100.75.51.18:2080',
+    source: 'managed', configured: true, display: 'http://192.0.2.18:2080',
     envName: 'MY_PROXY', envConfigured: true } })
   assert.equal(managed.available, true)
   assert.equal(managed.source, 'managed')
   assert.equal(managed.configured, true)
   assert.equal(managed.envConfigured, true)
-  assert.equal(managed.display, 'http://100.75.51.18:2080')
+  assert.equal(managed.display, 'http://192.0.2.18:2080')
   assert.equal('urlEnv' in managed, false)
   // Env-only fallback: configured but not managed, so no "已保存" claim.
   const envOnly = api.networkProxyView({ networkProxy: { source: 'env', configured: true,
@@ -288,11 +288,11 @@ test('network proxy helpers degrade gracefully on an older backend and keep the 
   // Payload rules: enabled/fallbackDirect always; url only when typed or explicitly cleared.
   // The legacy env-var name is no longer sent (the backend applies its default).
   assert.equal(JSON.stringify(api.networkProxyPayload({ enabled: true })),
-    JSON.stringify({ enabled: true, fallbackDirect: true }))
+    JSON.stringify({ enabled: true, fallbackDirect: true, noProxy: 'localhost,127.0.0.1,::1' }))
   assert.equal(JSON.stringify(api.networkProxyPayload({ fallbackDirect: false })),
-    JSON.stringify({ enabled: false, fallbackDirect: false }))
+    JSON.stringify({ enabled: false, fallbackDirect: false, noProxy: 'localhost,127.0.0.1,::1' }))
   assert.equal(JSON.stringify(api.networkProxyPayload({ url: '  http://127.0.0.1:7890  ' })),
-    JSON.stringify({ enabled: false, fallbackDirect: true, url: 'http://127.0.0.1:7890' }))
+    JSON.stringify({ enabled: false, fallbackDirect: true, noProxy: 'localhost,127.0.0.1,::1', url: 'http://127.0.0.1:7890' }))
   assert.equal(api.networkProxyPayload({ cleared: true }).url, null)
   assert.equal('url' in api.networkProxyPayload({}), false)
   assert.equal('url' in api.networkProxyPayload({ url: '   ' }), false)

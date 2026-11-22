@@ -90,6 +90,12 @@ Agent 预设使用跟随 DSH 当前亮/暗主题的自定义下拉，避免系�
 - 归档、解除关联、取消任务都**不会撤销已经执行的外部工具操作**。
 - 如果 Gateway 离线、快照过期或 DSH 不提供所需接口，后台应该禁用高风险操作并解释原因，而不是假成功。会话管理确认统一使用页面内弹窗，永久删除必须额外确认不可恢复。
 
+## 网络代理与外部工具
+
+「模型与连接」支持代理直连例外（`noProxy`），可维护主机、IP 和域名后缀，并在通道启动时导出为 `NO_PROXY/no_proxy`。详细行为及不同 HTTP 客户端的限制见 [网络代理说明](PROXY-CONFIG-FLOW.md)。
+
+「MCP / 外部工具」支持同时配置多个 HTTP 或 stdio MCP Server，为独立飞书通道生成受管补丁；凭据使用 DSH credential 引用而非明文密钥。安装、配置、扩展补丁顺序及测试方式见 [MCP 与外部工具](MCP-EXTERNAL-TOOLS.md)。
+
 ## 安全边界
 
 后台请求使用 DSH 原生用户认证和同源/CSRF 保护，写入使用受限数据结构和独立管理权限。Admin 不读取或回显 App Secret，不创建第二个 Agent Host，也不主动删除原生 DSH Session 文件。详细实现可查 [技术架构](ARCHITECTURE.md) 和 [开发测试](DEVELOPMENT.md)。

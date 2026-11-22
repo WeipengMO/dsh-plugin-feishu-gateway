@@ -9,7 +9,7 @@
 
 | 数据 | 位置 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| 开关与回退策略 | `<stateDir>/admin-config.json` → `config.networkProxy = { enabled, fallbackDirect, urlEnv }` | 0600 | 非敏感；`urlEnv` 仅为兼容旧部署保留 |
+| 开关与回退策略 | `<stateDir>/admin-config.json` → `config.networkProxy = { enabled, fallbackDirect, urlEnv, noProxy }` | 0600 | 非敏感；`urlEnv` 仅为兼容旧部署保留 |
 | 代理 URL（含可选认证） | `<stateDir>/network-proxy.json` → `{ "version": 1, "url": "http://..." }` | 0600 | **敏感**，只写不读回；任何 API 都不返回原文 |
 
 `<stateDir>` 默认 `$HOME/.dsh/feishu-channel-state`（管理端与启动脚本一致）。
@@ -47,19 +47,20 @@
 }
 ```
 
-`config.networkProxy` 仍只含 `{ enabled, fallbackDirect, urlEnv }`，**永不含 `url`**。
+`config.networkProxy` 只含 `{ enabled, fallbackDirect, urlEnv, noProxy }`，**永不含 `url`**。
 
 `PUT /api/feishu-admin/config` 的 `networkProxy` 接受：
 
 ```json
 { "enabled": true, "fallbackDirect": true, "urlEnv": "FEISHU_CHANNEL_PROXY_URL",
+  "noProxy": "localhost,127.0.0.1,::1,*.internal",
   "url": "http://host:port" }
 ```
 
 - `url` 为字符串：校验后写入 `network-proxy.json`（原子写、0600、拒绝符号链接）；
 - `url` 为 `null`：删除已保存 URL；
 - `url` 省略：保持现状；
-- `admin-config.json` 中只写 `{ enabled, fallbackDirect, urlEnv }`（`urlEnv` 缺省补 `FEISHU_CHANNEL_PROXY_URL`）；
+- `admin-config.json` 中只写 `{ enabled, fallbackDirect, urlEnv, noProxy }`（`urlEnv` 缺省补 `FEISHU_CHANNEL_PROXY_URL`）；
 - 响应保持 `{ ok, revision, restartRequired }`，可附带新的 `networkProxy` 状态对象。
 
 `POST /api/feishu-admin/network-proxy/test`，body `{ "url"?: string }`：
@@ -83,7 +84,7 @@
 
 ## 4. 启动脚本（`scripts/channel/start-feishu-channel.sh`）
 
-1. 读取 `admin-config.json` 的 `networkProxy`（enabled / urlEnv / fallbackDirect）；
+1. 读取 `admin-config.json` 的 `networkProxy`（enabled / urlEnv / fallbackDirect / noProxy）；
 2. `enabled=false`：直接返回，不设置任何代理变量；
 3. `enabled=true`：先读 `network-proxy.json`（严格校验：普通文件、非符号链接、JSON `version:1`、URL 合法），
    读不到再用 `urlEnv` 环境变量；
@@ -103,7 +104,7 @@
 - `src/channel/lark-transport.ts`：`enabled && selected !== 'direct' && url` 时用
   `HttpsProxyAgent(url)`（v5 CJS 工厂，保持 rc.9 修复）；
 - `src/gateway.ts`：`health()` 增加 `network: { proxySelected: 'proxy' | 'direct' | null }`（非敏感）；
-- `redactedConfigSummary` 只报告 `{ enabled, urlEnv, fallbackDirect, configured, selected }`。
+- `redactedConfigSummary` 只报告 `{ enabled, urlEnv, fallbackDirect, configured, selected }`，不记录直连例外。
 
 ## 6. 前端（`web-admin/src/client.js`）
 
@@ -120,7 +121,15 @@
 - 不再显示「代理 URL 环境变量名（兼容旧部署）」输入项；前端不再发送 `urlEnv`，由后端补默认值；
 - 提示：修改后必须重启独立飞书通道才生效；管理端不存储明文到日志。
 
-## 7. 兼容与回滚
+## 7. 直连例外与协议差异
+
+- Web Admin 的「直连例外（NO_PROXY）」可维护主机、完整 IP、后缀（如 `*.internal`）及 CIDR。配置会在重启时与系统原有的 `NO_PROXY/no_proxy` 以及历史环回默认值合并。
+- Feishu WebSocket 由按实际 WSS 握手目标动态选择的 Agent 处理；不再将所有 WS 统一交给代理。
+- DSH 内的 Node HTTP、REST、fetch 路径遵守各自客户端的环境代理规则。**Node 原生 HTTP 环境代理不保证识别 CIDR**：如果要保证 HTTP MCP 节点绕过代理，请明确填写目标主机名或 IP，而不是只填写网段；WebSocket 的路由判定支持 IPv4/IPv6 CIDR。
+- 只有实际由此脚本启动的通道才会接收导出的新环境变量。systemd 直接启动 DSH 而绕过该脚本的部署仍需在自身服务环境中设置代理。
+- 变更不会直接写系统代理或其他 DSH Profile；地址保存在部署机器上的私有 `stateDir`，不得放入仓库、日志或 issue 复现信息。
+
+## 8. 兼容与回滚
 
 - 旧管理端（rc.9）写入的 `{enabled,urlEnv,fallbackDirect}` 新 Gateway 继续接受；`urlEnv` 缺省为
   `FEISHU_CHANNEL_PROXY_URL`；

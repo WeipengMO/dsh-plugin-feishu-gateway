@@ -1,5 +1,6 @@
 import Schema from '@deepseek-ai/schemastery'
 import { resolveProxyUrl } from './util/proxy-url.js'
+import { DEFAULT_NO_PROXY, normalizeNoProxy } from './util/no-proxy.js'
 import type {
   AgentRoute, BotCredentials, BotSpec, GatewayConfig, GroupRule, GroupSessionScope,
 } from './types.js'
@@ -72,7 +73,8 @@ export const Config: ConfigValidator = Schema.object({
     enabled: Schema.boolean().default(false),
     urlEnv: Schema.string().default('FEISHU_CHANNEL_PROXY_URL'),
     fallbackDirect: Schema.boolean().default(true),
-  }).default({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true })
+    noProxy: Schema.string().default(DEFAULT_NO_PROXY),
+  }).default({ enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true, noProxy: DEFAULT_NO_PROXY })
     .description('Optional startup proxy for Feishu channel and DSH Agent HTTP requests; proxy URL is read from the named env variable only.'),
   replyFormat: Schema.union([Schema.const('text'), Schema.const('markdown')]).default('text')
     .description('Feishu reply type: legacy text (default) or post/md rich Markdown.'),
@@ -154,6 +156,7 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
           ? value : 'FEISHU_CHANNEL_PROXY_URL'
       })(),
       fallbackDirect: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.fallbackDirect !== false,
+      noProxy: normalizeNoProxy((raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.noProxy ?? DEFAULT_NO_PROXY),
     },
     replyFormat: raw.replyFormat === 'markdown' ? 'markdown' : 'text',
     approvalCards: raw.approvalCards === true,

@@ -11,13 +11,14 @@ const WORKBENCH_NAV = [
   ['channels', '接入与权限', '◉'],
   ['agent-profile', 'Agent 档案', '▤'],
   ['skills', 'Skills 技能', '◇'],
+  ['external-tools', 'MCP / 外部工具', '⌘'],
   ['analytics', '用量与审计', '▥'],
   ['operations', '运维与诊断', '⌁'],
   ['advanced', '模型与连接', '⚙'],
 ]
 const WORKBENCH_GROUPS = [
   { label: '日常管理', ids: ['overview', 'sessions', 'conversations', 'automation'] },
-  { label: '机器人与 Agent', ids: ['channels', 'agent-profile', 'skills', 'advanced'] },
+  { label: '机器人与 Agent', ids: ['channels', 'agent-profile', 'skills', 'external-tools', 'advanced'] },
   { label: '统计与诊断', ids: ['analytics', 'operations'] },
 ]
 const WORKBENCH_TABS = {
@@ -33,6 +34,7 @@ const WORKBENCH_DESCRIPTIONS = {
   channels: '统一管理机器人、群聊、白名单与工具执行权限。',
   'agent-profile': '管理飞书 Agent 的独立工作区身份和记忆。',
   skills: '为飞书 Agent 管理独立的 SKILL.md 技能，不影响 DSH 全局配置。',
+  'external-tools': '管理独立飞书通道可调用的本地与远程 MCP Server。',
   analytics: '查看 Token 消耗与工具审批审计。',
   operations: '检查告警、连接状态和运行日志。',
   advanced: '配置模型、代理、卡片和重试策略。',
@@ -324,6 +326,7 @@ function Workbench() {
   const [selected, setSelected] = useState('overview')
   const [profileUnsaved, setProfileUnsaved] = useState(false)
   const [skillsUnsaved, setSkillsUnsaved] = useState(false)
+  const [externalUnsaved, setExternalUnsaved] = useState(false)
   const [groupUnsaved, setGroupUnsaved] = useState(false)
   const [botUnsaved, setBotUnsaved] = useState(false)
   const [execUnsaved, setExecUnsaved] = useState(false)
@@ -380,6 +383,7 @@ function Workbench() {
   const dirtyForCurrent = selected === 'automation' ? scheduleUnsaved
     : selected === 'agent-profile' ? profileUnsaved
     : selected === 'skills' ? skillsUnsaved
+    : selected === 'external-tools' ? externalUnsaved
     : selected === 'advanced' ? settingsUnsaved
     : selected === 'channels' ? sectionTab.channels === 'bots' ? botUnsaved
       : sectionTab.channels === 'groups' ? groupUnsaved
@@ -393,7 +397,8 @@ function Workbench() {
   }
   // These pages have their own scoped refresh control; avoid a second,
   // misleading full-Gateway refresh button in the global heading.
-  const hasLocalRefresh = (selected === 'channels' && sectionTab.channels === 'groups') ||
+  const hasLocalRefresh = selected === 'external-tools' ||
+    (selected === 'channels' && sectionTab.channels === 'groups') ||
     (selected === 'analytics' && ['usage', 'approvals'].includes(sectionTab.analytics))
   useEffect(() => {
     if (!dirtyForCurrent) return
@@ -481,6 +486,8 @@ function Workbench() {
     body = h(AgentProfilePanel, { onDirtyChange: setProfileUnsaved })
   } else if (selected === 'skills') {
     body = h(SkillsPanel, { onDirtyChange: setSkillsUnsaved })
+  } else if (selected === 'external-tools') {
+    body = h(ExternalToolsPanel, { onDirtyChange: setExternalUnsaved })
   } else if (selected === 'channels' && sectionTab.channels === 'security') {
     body = h(React.Fragment, null,
       h(ExecPolicyPanel, { onDirtyChange: setExecUnsaved }),
@@ -554,14 +561,14 @@ function Workbench() {
       h('div', { className: 'fgw-subnav-foot' },
         h(WbState, { value: health?.status ?? 'unknown' }),
         h('p', null, '只读监控不产生额外模型调用'))),
-    h('main', { className: 'fgw-content' + ((selected === 'agent-profile' || selected === 'skills') ? ' fgw-content-profile' : '') },
+    h('main', { className: 'fgw-content' + ((selected === 'agent-profile' || selected === 'skills' || selected === 'external-tools') ? ' fgw-content-profile' : '') },
       h('div', { className: 'fgw-topbar' },
         h('div', null, h('div', { className: 'fgw-eyebrow' }, '飞书 Gateway'),
           h('h1', null, WORKBENCH_NAV.find(x => x[0] === selected)?.[1] || '飞书管理'),
           !tabs.length && h('p', { className: 'fgw-section-description' }, WORKBENCH_DESCRIPTIONS[selected])),
         h('div', { className: 'fgw-top-actions' },
-          selected !== 'agent-profile' && selected !== 'skills' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
-          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'automation' && selected !== 'sessions' && !hasLocalRefresh &&
+          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'external-tools' && h('span', { className: 'fgw-muted' }, updatedAt ? '更新 ' + updatedAt.toLocaleTimeString() : '尚未更新'),
+          selected !== 'agent-profile' && selected !== 'skills' && selected !== 'external-tools' && selected !== 'automation' && selected !== 'sessions' && !hasLocalRefresh &&
             h('button', { className: 'fgw-refresh fgw-refresh-action', type: 'button', disabled: updating,
               onClick: refresh }, updating ? '刷新中…' : '刷新'))),
       selected === 'overview' && h('div', { className: 'fgw-hero' },
@@ -581,7 +588,7 @@ function Workbench() {
       operatorNotice && h('div', { className: 'fgw-caution', role: 'status' }, operatorNotice),
       state && body,
       !state && !loading && h(WbEmpty, { headline: '无法获取管理数据', description: '请检查 DSH Web 的飞书管理插件是否已加载，以及 feishu-channel 服务是否运行。' }),
-      selected !== 'agent-profile' && selected !== 'skills' && h('footer', { className: 'fgw-footnote' }, 'DSH 原生插件扩展 · 仅使用现有认证 API · 15 秒可见页轻量刷新')))
+      selected !== 'agent-profile' && selected !== 'skills' && selected !== 'external-tools' && h('footer', { className: 'fgw-footnote' }, 'DSH 原生插件扩展 · 仅使用现有认证 API · 15 秒可见页轻量刷新')))
 }
 
 function CredentialSettings() {

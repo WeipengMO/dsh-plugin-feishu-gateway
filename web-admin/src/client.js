@@ -156,6 +156,7 @@ window.__ModuleLoader__.load({
         available: Boolean(reported),
         enabled,
         fallbackDirect,
+        noProxy: typeof saved.noProxy === 'string' ? saved.noProxy : 'localhost,127.0.0.1,::1',
         source: reported && (reported.source === 'managed' || reported.source === 'env') ? reported.source : 'none',
         configured: Boolean(reported && reported.configured === true),
         envConfigured: Boolean(reported && reported.envConfigured === true),
@@ -170,6 +171,7 @@ window.__ModuleLoader__.load({
       const payload = {
         enabled: source.enabled === true,
         fallbackDirect: source.fallbackDirect !== false,
+        noProxy: typeof source.noProxy === 'string' ? source.noProxy.trim() : 'localhost,127.0.0.1,::1',
       }
       // url is write-only: send a typed address, send null only for an explicit
       // clear, and omit it otherwise so the stored secret is preserved.
@@ -377,6 +379,7 @@ window.__ModuleLoader__.load({
       const [timeout, setTimeout] = useState('')
       const [proxyEnabled, setProxyEnabled] = useState(false)
       const [proxyFallback, setProxyFallback] = useState(true)
+      const [proxyBypass, setProxyBypass] = useState('localhost,127.0.0.1,::1')
       // The proxy URL itself is write-only: the input never receives a value
       // from /state, only what the operator is currently typing.
       const [proxyUrl, setProxyUrl] = useState('')
@@ -394,7 +397,7 @@ window.__ModuleLoader__.load({
       const [savedSignature, setSavedSignature] = useState(null)
       const draftSignature = JSON.stringify([
         allowOverride, allowText, agentWorkspace, primaryProvider,
-        primaryModel, fallbacks, agentPreset, timeout, proxyEnabled, proxyFallback,
+        primaryModel, fallbacks, agentPreset, timeout, proxyEnabled, proxyFallback, proxyBypass,
         proxyUrl, proxyCleared, retry, interval, autoConnect, replyFormat,
         approvalCards, streamCards, approvalTimeout, streamInterval,
       ])
@@ -423,6 +426,7 @@ window.__ModuleLoader__.load({
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
         setProxyEnabled(c.networkProxy?.enabled === true)
         setProxyFallback(c.networkProxy?.fallbackDirect !== false)
+        setProxyBypass(typeof c.networkProxy?.noProxy === 'string' ? c.networkProxy.noProxy : 'localhost,127.0.0.1,::1')
         // Never echo a saved proxy URL back into the DOM.
         setProxyUrl(''); setProxyCleared(false); setProxyTest(null)
         setRetry(c.sendRetries === undefined ? '' : String(c.sendRetries))
@@ -478,7 +482,7 @@ window.__ModuleLoader__.load({
         if (agentPreset !== '__inherit__') result.agentPreset = agentPreset
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
         result.networkProxy = networkProxyPayload({
-          enabled: proxyEnabled, fallbackDirect: proxyFallback,
+          enabled: proxyEnabled, fallbackDirect: proxyFallback, noProxy: proxyBypass,
           url: proxyUrl, cleared: proxyCleared,
         })
         if (retry.trim()) result.sendRetries = Number(retry)
@@ -748,6 +752,15 @@ window.__ModuleLoader__.load({
               placeholder: 'http://127.0.0.1:7890', spellCheck: false, autoComplete: 'off',
               onChange: e => { setProxyUrl(e.target.value); setProxyCleared(false); setProxyTest(null) } }),
             h('span', { className: 'fga-hint' }, proxyHint)),
+          h('div', { className: 'fga-field' },
+            h('span', { className: 'fga-label' }, '直连例外（NO_PROXY）'),
+            h('textarea', { className: 'fga-input fga-textarea', name: 'feishu-no-proxy',
+              rows: 3, spellCheck: false, value: proxyBypass,
+              placeholder: 'localhost,127.0.0.1,::1,*.internal',
+              onChange: e => setProxyBypass(e.target.value) }),
+            h('span', { className: 'fga-hint' },
+              '逗号、空格或换行分隔主机、IP、域名后缀或 CIDR。保留本机地址默认值；已有系统 NO_PROXY 会合并。' +
+              'CIDR 在 WebSocket 路由中可识别，Node 原生 HTTP 环境代理对 CIDR 的支持可能不同，建议为 HTTP MCP 目标填明确切主机/IP。')),
           h('label', { className: 'fga-check' },
             h('input', { type: 'checkbox', checked: proxyFallback, onChange: e => setProxyFallback(e.target.checked) }),
             '代理预检失败则启动时回退直连'),

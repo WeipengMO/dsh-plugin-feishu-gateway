@@ -37,7 +37,7 @@ die() { echo "error: $*" >&2; exit 1; }
 configure_proxy() {
   local cfg_file="$STATE_DIR/admin-config.json"
   local secret_file="$STATE_DIR/network-proxy.json"
-  local settings enabled env_name fallback source proxy_url proxy_targets
+  local settings enabled env_name fallback source proxy_url proxy_targets managed_no_proxy
   settings="$(node -e '
     const fs = require("node:fs");
     const [cfgFile, secretFile, defaultEnv] = process.argv.slice(1);
@@ -80,6 +80,11 @@ configure_proxy() {
     console.log(p.fallbackDirect === false ? "0" : "1");
     console.log(source);
     console.log(url || "");
+    // Only data goes into NO_PROXY; reject malformed rules before shell export.
+    const rules = p.noProxy === undefined ? "" : p.noProxy;
+    if (typeof rules !== "string" || rules.length > 4096 ||
+      /[\u0000-\u001f\u007f]/.test(rules)) process.exit(2);
+    console.log(rules);
     const active = (cfg.config?.bots || [{domain:"feishu",enabled:true}]).filter(b => b.enabled !== false);
     const domains = new Set(active.map(b => b.domain === "lark" ? "lark" : "feishu"));
     console.log([...domains].map(d => d === "lark" ? "https://open.larksuite.com/open-apis/" : "https://open.feishu.cn/open-apis/").join(" ") || "https://open.feishu.cn/open-apis/");
@@ -91,7 +96,8 @@ configure_proxy() {
   fallback="${fields[2]:-1}"
   source="${fields[3]:-none}"
   proxy_url="${fields[4]:-}"
-  proxy_targets="${fields[5]:-https://open.feishu.cn/open-apis/}"
+  managed_no_proxy="${fields[5]:-}"
+  proxy_targets="${fields[6]:-https://open.feishu.cn/open-apis/}"
   [ "$enabled" = 1 ] || return 0
 
   if [ -z "$proxy_url" ]; then
@@ -116,8 +122,13 @@ configure_proxy() {
   if [ "$probe_ok" = 1 ]; then
     export http_proxy="$proxy_url" https_proxy="$proxy_url"
     export HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url"
-    export no_proxy="${no_proxy:-${NO_PROXY:-localhost,127.0.0.1,::1}}"
-    export NO_PROXY="$no_proxy"
+    # Merge rather than replace existing operator-provided exemptions.
+    # All values remain data: never evaluate or execute a host entry.
+    local bypass="localhost,127.0.0.1,::1"
+    [ -z "$managed_no_proxy" ] || bypass+=",$managed_no_proxy"
+    [ -z "${NO_PROXY:-}" ] || bypass+=",${NO_PROXY}"
+    [ -z "${no_proxy:-}" ] || bypass+=",${no_proxy}"
+    export no_proxy="$bypass" NO_PROXY="$bypass"
     export NODE_USE_ENV_PROXY=1
     export FEISHU_GATEWAY_PROXY_SELECTED=proxy
     # The Gateway plugin reads the effective URL from this named variable.
@@ -140,12 +151,26 @@ configure_proxy() {
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 mkdir -p "$STATE_DIR"
 
-# Apply the admin-managed execution-permission overlay if one exists. The
-# Feishu Admin UI writes it under the state dir; `--patch` layers it after the
-# profile's own cordis.patch.yml so sandbox/approval edits take effect here.
+# The ordered overlays are scoped to this channel profile, not global DSH.
+# Extra patches are trusted local files supplied by the operator (colon-separated).
 PATCH_ARGS=()
+append_patch() {
+  local file="$1"
+  [ -n "$file" ] || return 0
+  [ -f "$file" ] && [ ! -L "$file" ] || die "configured patch is missing or unsafe"
+  PATCH_ARGS+=(--patch "$file")
+}
 if [ -f "$STATE_DIR/exec-policy.patch.yml" ]; then
-  PATCH_ARGS=(--patch "$STATE_DIR/exec-policy.patch.yml")
+  append_patch "$STATE_DIR/exec-policy.patch.yml"
+fi
+if [ -f "$STATE_DIR/extra-plugins.patch.yml" ]; then
+  append_patch "$STATE_DIR/extra-plugins.patch.yml"
+fi
+if [ -n "${FEISHU_CHANNEL_EXTRA_PATCHES:-}" ]; then
+  IFS=':' read -r -a EXTRA_PATCH_FILES <<< "$FEISHU_CHANNEL_EXTRA_PATCHES"
+  for extra_file in "${EXTRA_PATCH_FILES[@]}"; do
+    [ -z "$extra_file" ] || append_patch "$extra_file"
+  done
 fi
 
 case "${1:-}" in

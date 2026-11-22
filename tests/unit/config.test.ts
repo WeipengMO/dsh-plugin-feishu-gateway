@@ -20,6 +20,7 @@ describe('resolveConfig', () => {
     expect(config.replyTimeoutMs).toBe(120_000)
     expect(config.networkProxy).toEqual({
       enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true,
+      noProxy: 'localhost,127.0.0.1,::1',
     })
     expect(config.replyFormat).toBe('text')
     expect(config.workspace).toBe(process.cwd())
