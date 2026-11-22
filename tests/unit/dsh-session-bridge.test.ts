@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DshSessionBridge } from '../../src/session/dsh-session-bridge.js'
 import { SessionTurnFailure } from '../../src/session/turn-failure.js'
 import { extractText } from '../../src/session/session-bridge.js'
@@ -305,6 +305,107 @@ describe('DshSessionBridge', () => {
     })
     ctx.emit('session/event', { id: 'session-1' }, { type: 'turn/end', data: {} })
     expect((await waiting).text).toBe('live tokens')
+  })
+
+  it('renews the idle deadline on tool and assistant events instead of a fixed wall clock', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ctx, bridge } = setup()
+      await bridge.create('active-turn', '/workspace')
+      await bridge.submit('active-turn', 'long task', new AbortController().signal)
+      const waiting = bridge.waitForReply('active-turn', {
+        timeoutMs: 100, maxDurationMs: 400, signal: new AbortController().signal,
+      })
+      await vi.advanceTimersByTimeAsync(80)
+      ctx.emit('session/event', { id: 'active-turn' }, {
+        type: 'tool/call', data: { callId: 'c1', name: 'job_output' },
+      })
+      await vi.advanceTimersByTimeAsync(80)
+      ctx.emit('session/event', { id: 'active-turn' }, {
+        type: 'tool/result', data: { message: { toolCallId: 'c1' } },
+      })
+      await vi.advanceTimersByTimeAsync(80)
+      ctx.emit('session/event', { id: 'active-turn' }, {
+        type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'completed' }] } },
+      })
+      ctx.emit('session/event', { id: 'active-turn' }, { type: 'turn/end', data: {} })
+      expect(await waiting).toMatchObject({ text: 'completed', reason: 'idle', toolCalls: 1 })
+      await bridge.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('enforces the absolute deadline despite ongoing progress', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ctx, bridge } = setup()
+      await bridge.create('hard-limit', '/workspace')
+      await bridge.submit('hard-limit', 'long task', new AbortController().signal)
+      const waiting = bridge.waitForReply('hard-limit', {
+        timeoutMs: 100, maxDurationMs: 220, signal: new AbortController().signal,
+      })
+      for (let t = 0; t < 3; t += 1) {
+        await vi.advanceTimersByTimeAsync(70)
+        ctx.emit('session/event', { id: 'hard-limit' }, {
+          type: 'tool/call', data: { name: 'job_output', callId: 'c' + t },
+        })
+      }
+      await vi.advanceTimersByTimeAsync(10)
+      const reply = await waiting
+      expect(reply).toMatchObject({
+        reason: 'timeout', timeoutKind: 'max-duration',
+        lastActivity: 'tool', lastTool: 'job_output',
+      })
+      await bridge.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('updates an active idle deadline when /timeout notifies the waiter', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ctx, bridge } = setup()
+      await bridge.create('extended-turn', '/workspace')
+      await bridge.submit('extended-turn', 'long task', new AbortController().signal)
+      let idleMs = 100
+      let notify = () => {}
+      const waiting = bridge.waitForReply('extended-turn', {
+        timeoutMs: 100, maxDurationMs: 600, signal: new AbortController().signal,
+        getTimeoutMs: () => idleMs,
+        onTimeoutChange: callback => { notify = callback; return () => { notify = () => {} } },
+      })
+      await vi.advanceTimersByTimeAsync(80)
+      idleMs = 400
+      notify()
+      await vi.advanceTimersByTimeAsync(100)
+      ctx.emit('session/event', { id: 'extended-turn' }, {
+        type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'saved' }] } },
+      })
+      ctx.emit('session/event', { id: 'extended-turn' }, { type: 'turn/end', data: {} })
+      expect(await waiting).toMatchObject({ text: 'saved', reason: 'idle' })
+      await bridge.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports inactivity when there are no native progress events', async () => {
+    vi.useFakeTimers()
+    try {
+      const { bridge } = setup()
+      await bridge.create('silent-turn', '/workspace')
+      await bridge.submit('silent-turn', 'wait', new AbortController().signal)
+      const waiting = bridge.waitForReply('silent-turn', {
+        timeoutMs: 100, maxDurationMs: 500, signal: new AbortController().signal,
+      })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(await waiting).toMatchObject({ reason: 'timeout', timeoutKind: 'idle' })
+      await bridge.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports a timeout when the turn never settles', async () => {

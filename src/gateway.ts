@@ -72,6 +72,7 @@ interface ActiveTurn {
   cancelledByUser: boolean
   cancelSource?: 'card' | 'command' | 'operator'
   phase: 'running' | 'finalizing'
+  onTimeoutChange?: () => void
 }
 
 class SessionResumeError extends Error {
@@ -133,6 +134,8 @@ export class FeishuGateway {
   private readonly inFlight = new Set<Promise<void>>()
   private readonly scheduledMessageIds = new Set<string>()
   private readonly activeTurns = new Map<string, ActiveTurn>()
+  /** Process-local overrides isolated by chat scope. */
+  private readonly chatTimeouts = new Map<string, number>()
   private readonly approvals: FeishuApprovalManager
   /** Durable permanent authorizations + approval audit for the Web Admin. */
   private readonly approvalStore: ApprovalStore
@@ -381,6 +384,7 @@ export class FeishuGateway {
     await this.ops.whenIdle()
     await this.schedules.stop()
     this.chatQueues.clear()
+    this.chatTimeouts.clear()
     this.scheduledMessageIds.clear()
     this.logger.info(
       'stopped: processed=%d rejected=%d errors=%d outboxPending=%d',
@@ -519,10 +523,9 @@ export class FeishuGateway {
 
   private async processRecord(record: InboxRecord): Promise<void> {
     const command = parseControlCommand(record.text)
-    // A cancellation or status request MUST bypass the current chat's Agent
-    // queue, otherwise a 5-minute turn would block the very control used to
-    // stop or inspect it. /new remains serialized behind current work.
-    if (command === 'cancel' || command === 'status' || command === 'help' || command === 'context') {
+    // Interactive controls must bypass the current chat's running Agent turn.
+    if (command === 'cancel' || command === 'status' || command === 'help' ||
+      command === 'context' || command === 'timeout') {
       await this.dispatchControl(record, command)
       return
     }
@@ -586,7 +589,30 @@ export class FeishuGateway {
           `飞书连接：${health.transports[record.botId] ?? '未知'}`,
           `待发送回复：${health.outbox.pending}`,
           `当前已绑定会话：${this.registry.get(key) ? '是' : '否'}`,
+          `静默超时：${Math.round((this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs) / 1000)} 秒；总时长上限：${Math.round(this.config.maxReplyDurationMs / 1000)} 秒`,
         ].join('\n')
+      } else if (command === 'timeout') {
+        const argument = record.text.trim().replace(/^\/timeout\s*/i, '').trim().toLowerCase()
+        if (!argument) {
+          reply = `本聊天静默超时：${Math.round((this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs) / 1000)} 秒。` +
+            `单轮总上限：${Math.round(this.config.maxReplyDurationMs / 1000)} 秒。发送 /timeout 10 设置为 10 分钟，/timeout reset 恢复通道默认值。`
+        } else if (argument === 'reset') {
+          this.chatTimeouts.delete(key)
+          this.activeTurns.get(key)?.onTimeoutChange?.()
+          reply = '已恢复通道默认静默超时（' + Math.round(this.config.replyTimeoutMs / 1000) + ' 秒）。'
+        } else if (/^[1-9]\d{0,2}$/.test(argument) &&
+          Number(argument) * 60_000 <= this.config.maxReplyDurationMs) {
+          const ms = Number(argument) * 60_000
+          if (this.chatTimeouts.size >= 1000 && !this.chatTimeouts.has(key)) {
+            const first = this.chatTimeouts.keys().next().value
+            if (first) this.chatTimeouts.delete(first)
+          }
+          this.chatTimeouts.set(key, ms)
+          this.activeTurns.get(key)?.onTimeoutChange?.()
+          reply = `已将本聊天静默超时调整为 ${argument} 分钟，运行中的任务立即生效；单轮总上限仍为 ${Math.round(this.config.maxReplyDurationMs / 60000)} 分钟。该设置仅在 Gateway 本次运行期间有效。`
+        } else {
+          reply = `参数无效。请使用 /timeout [1–${Math.floor(this.config.maxReplyDurationMs / 60000)}]（分钟）或 /timeout reset。`
+        }
       } else if (command === 'context') {
         const bound = this.registry.get(key)
         const status = this.bridge.compactionStatus?.(bound?.sessionId)
@@ -864,7 +890,13 @@ export class FeishuGateway {
         attachProgress()
         try {
           reply = await this.bridge.waitForReply(sessionId, {
-            timeoutMs: this.config.replyTimeoutMs,
+            timeoutMs: this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs,
+            maxDurationMs: this.config.maxReplyDurationMs,
+            getTimeoutMs: () => this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs,
+            onTimeoutChange: notify => {
+              turn.onTimeoutChange = notify
+              return () => { if (turn.onTimeoutChange === notify) turn.onTimeoutChange = undefined }
+            },
             signal,
           })
           break
@@ -910,15 +942,37 @@ export class FeishuGateway {
       this.audit({ kind: 'task', state: 'finalizing', botId: record.botId,
         ref: record.messageId, session: sessionId })
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
-        this.logger.warn('Feishu task exceeded reply deadline: session=%s timeoutMs=%d tools=%d failures=%d',
-          sessionId, this.config.replyTimeoutMs, reply.toolCalls ?? 0, reply.toolFailures ?? 0)
+        const idleLimit = this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs
+        const timeoutKind = reply.timeoutKind ?? 'idle'
+        this.logger.warn('Feishu reply deadline: session=%s kind=%s idleLimitMs=%d maxMs=%d lastActivity=%s lastTool=%s idleMs=%d tools=%d failures=%d',
+          sessionId, timeoutKind, idleLimit, this.config.maxReplyDurationMs,
+          reply.lastActivity ?? 'none', reply.lastTool ?? 'none', reply.idleMs ?? 0,
+          reply.toolCalls ?? 0, reply.toolFailures ?? 0)
+        this.audit({ kind: 'task',
+          state: timeoutKind === 'max-duration' ? 'timeout-max-duration' : 'timeout-idle',
+          botId: record.botId, ref: record.messageId, session: sessionId,
+          lastTool: reply.lastTool, idleMs: reply.idleMs })
         this.bridge.cancel(sessionId)
-        // A late reply from the prior Agent must never enter the next turn.
-        await this.registry.unbind(key)
-        await this.bridge.retire?.(sessionId)
-        await this.replyDiagnostic(record, `执行超时（上限 ${Math.round(this.config.replyTimeoutMs / 1000)} 秒），` +
-          `已调用工具 ${reply.toolCalls ?? 0} 次（失败 ${reply.toolFailures ?? 0} 次）。` +
-          '原会话已隔离以避免继续执行；可缩小问题范围后重试。')
+        // Only keep the binding when DSH confirms the native Agent has become
+        // idle after cancellation. Otherwise a late turn could overlap a new
+        // one, so isolation remains the safety fallback.
+        const reusable = reply.reason === 'timeout' &&
+          await this.bridge.waitUntilIdle?.(sessionId, 5_000) === true
+        if (!reusable) {
+          await this.registry.unbind(key)
+          await this.bridge.retire?.(sessionId)
+        }
+        const limit = timeoutKind === 'max-duration'
+          ? `总时长达到 ${Math.round(this.config.maxReplyDurationMs / 60000)} 分钟`
+          : `连续 ${Math.round(idleLimit / 1000)} 秒没有收到 Agent 活动`
+        await this.replyDiagnostic(record, `执行超时：${limit}。` +
+          `最近活动：${reply.lastActivity === 'tool' ? '工具事件' : reply.lastActivity === 'assistant' ? '模型输出' : reply.lastActivity === 'model' ? '模型请求' : '未检测到'}` +
+          (reply.lastTool ? `；最近工具：${reply.lastTool}` : '') +
+          `；已调用工具 ${reply.toolCalls ?? 0} 次（失败 ${reply.toolFailures ?? 0} 次）。` +
+          (reusable
+            ? '已停止本轮执行，原会话已保留。可发送“继续”从已保存的上下文接续；已执行的工具操作不会回滚。'
+            : '原会话已隔离以避免继续执行；历史仍由 DSH 保留，但不能安全地自动续接。') +
+          `发送 /timeout 查看或调整本聊天静默超时（总上限 ${Math.round(this.config.maxReplyDurationMs / 60000)} 分钟）。`)
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
         const answer = text || '模型未返回文本内容。'
@@ -1396,6 +1450,7 @@ export class FeishuGateway {
   private audit(event: {
     kind: OpsEvent['kind']; state: string; botId?: string; ref?: string
     session?: string; model?: string; tokens?: number; elapsedMs?: number
+    lastTool?: string; idleMs?: number
   }): void {
     void this.ops.record(event).catch(() => this.logger.warn('operations journal unavailable'))
   }

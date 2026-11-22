@@ -221,7 +221,10 @@ export interface GatewayConfig {
   readonly dedupTtlMs: number
   readonly maxDedupEntries: number
   readonly maxTextLength: number
+  /** Idle time between native Agent events before the turn is considered stalled. */
   readonly replyTimeoutMs: number
+  /** Absolute per-turn deadline, regardless of continued progress. */
+  readonly maxReplyDurationMs: number
   readonly networkProxy: NetworkProxyConfig
   /** Default plain text; opt-in rich Markdown for AI answers. */
   readonly replyFormat: 'text' | 'markdown'
@@ -258,11 +261,22 @@ export interface SessionReply {
   readonly generationMs?: number
   readonly toolCalls?: number
   readonly toolFailures?: number
+  readonly timeoutKind?: 'idle' | 'max-duration'
+  readonly idleMs?: number
+  readonly lastActivity?: 'assistant' | 'tool' | 'model'
+  /** Sanitized tool name only; excludes arguments, output, and paths. */
+  readonly lastTool?: string
 }
 
 export interface WaitOptions {
+  /** Inactivity timeout, extended on native Agent/tool activity. */
   readonly timeoutMs: number
+  readonly maxDurationMs?: number
   readonly signal: AbortSignal
+  /** Per-chat override, readable during an active turn. */
+  readonly getTimeoutMs?: () => number
+  /** Trigger a deadline reschedule when the chat sets /timeout. */
+  readonly onTimeoutChange?: (notify: () => void) => () => void
 }
 
 /**
@@ -409,6 +423,8 @@ export interface SessionBridge {
   onToolActivity?(sessionId: string, callback: (activity: SessionToolActivity) => void): () => void
   /** Cancel the active turn (long-task cancellation hook for v0.2.0). */
   cancel(sessionId: string): void
+  /** Confirm the cancelled native Agent is quiescent before reusing its Session. */
+  waitUntilIdle?(sessionId: string, timeoutMs: number): Promise<boolean>
   /** Release an abandoned Session handle after timeout/error (not normal follow-ups). */
   retire?(sessionId: string): Promise<void>
   /** Release every owned AgentHandle and listener. */

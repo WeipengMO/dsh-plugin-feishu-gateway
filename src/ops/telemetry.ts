@@ -23,6 +23,9 @@ export interface OpsEvent {
   readonly model?: string
   readonly tokens?: number
   readonly elapsedMs?: number
+  readonly idleMs?: number
+  /** Sanitized tool identifier only; no arguments or outputs. */
+  readonly lastTool?: string
 }
 export interface OpsTask {
   readonly ref: string
@@ -174,6 +177,7 @@ export class OpsTelemetry {
   async record(value: {
     kind: OpsKind; state: string; botId?: string; ref?: string
     session?: string; model?: string; tokens?: number; elapsedMs?: number
+    idleMs?: number; lastTool?: string
   }): Promise<void> {
     // Every event string comes from an allowlisted, finite alphabet. Reject
     // arbitrary text rather than accidentally recording an exception body.
@@ -186,6 +190,9 @@ export class OpsTelemetry {
       ...(safeModel(value.model) ? { model: safeModel(value.model) } : {}),
       ...(safeNumber(value.tokens) !== undefined ? { tokens: safeNumber(value.tokens) } : {}),
       ...(safeNumber(value.elapsedMs) !== undefined ? { elapsedMs: safeNumber(value.elapsedMs) } : {}),
+      ...(safeNumber(value.idleMs) !== undefined ? { idleMs: safeNumber(value.idleMs) } : {}),
+      ...(typeof value.lastTool === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(value.lastTool)
+        ? { lastTool: value.lastTool } : {}),
     }
     await this.queue(async () => {
       await mkdir(this.stateDir, { recursive: true, mode: 0o700 })

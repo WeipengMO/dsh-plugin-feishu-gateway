@@ -17,13 +17,23 @@ describe('resolveConfig', () => {
     expect(config.offline).toBe(process.env.FEISHU_GATEWAY_OFFLINE === '1')
     expect(config.autoConnect).toBe(true)
     expect(config.sendRetries).toBe(3)
-    expect(config.replyTimeoutMs).toBe(120_000)
+    expect(config.replyTimeoutMs).toBe(300_000)
+    expect(config.maxReplyDurationMs).toBe(1_800_000)
     expect(config.networkProxy).toEqual({
       enabled: false, urlEnv: 'FEISHU_CHANNEL_PROXY_URL', fallbackDirect: true,
       noProxy: 'localhost,127.0.0.1,::1',
     })
     expect(config.replyFormat).toBe('text')
     expect(config.workspace).toBe(process.cwd())
+  })
+
+  it('clamps per-turn idle and absolute runtime limits independently', () => {
+    const config = resolveConfig({ replyTimeoutMs: 5_000, maxReplyDurationMs: 60_000 })
+    expect(config.replyTimeoutMs).toBe(5_000)
+    expect(config.maxReplyDurationMs).toBe(60_000)
+    expect(resolveConfig({ replyTimeoutMs: 0, maxReplyDurationMs: 0 }).maxReplyDurationMs).toBe(30_000)
+    expect(resolveConfig({ replyTimeoutMs: 10_000_000, maxReplyDurationMs: 10_000_000 }).maxReplyDurationMs)
+      .toBe(3_600_000)
   })
 
   it('normalizes an explicit primary route and a distinct fallback route', () => {

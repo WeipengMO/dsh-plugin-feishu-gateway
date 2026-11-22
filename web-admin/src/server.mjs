@@ -41,7 +41,7 @@ const execFile = promisify(rawExecFile)
 const PREFIX = '/api/feishu-admin'
 const VERSION = 1
 const SERVICE = 'dsh-feishu-channel.service'
-const CFG_KEYS = ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'agentPreset', 'replyTimeoutMs', 'networkProxy',
+const CFG_KEYS = ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agent', 'agentPreset', 'replyTimeoutMs', 'maxReplyDurationMs', 'networkProxy',
   'replyFormat', 'sendRetries', 'outboxRetryIntervalMs', 'autoConnect',
   'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs']
 // The proxy URL is a write-only secret: stored in its own 0600 file, never in
@@ -257,6 +257,7 @@ export function validateConfig(input) {
     }
   }
   if (input.replyTimeoutMs !== undefined) result.replyTimeoutMs = integer(input.replyTimeoutMs, 'replyTimeoutMs', 5000, 1800000)
+  if (input.maxReplyDurationMs !== undefined) result.maxReplyDurationMs = integer(input.maxReplyDurationMs, 'maxReplyDurationMs', 30000, 3600000)
   if (input.networkProxy !== undefined) {
     const p = input.networkProxy
     if (!object(p)) throw httpError(400, 'networkProxy must be an object')
