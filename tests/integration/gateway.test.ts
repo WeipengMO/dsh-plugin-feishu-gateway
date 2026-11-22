@@ -387,6 +387,55 @@ describe('Gateway end-to-end pipeline (all transports mocked)', () => {
     await gateway.stop()
   })
 
+  it('keeps a native Session after timeout only when the Agent confirms it is idle', async () => {
+    class QuiescedTimeoutBridge extends MockSessionBridge {
+      private calls = 0
+      override async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
+        this.calls += 1
+        if (this.calls === 1) return {
+          text: 'partial', reason: 'timeout', timeoutKind: 'idle',
+          lastActivity: 'tool', lastTool: 'job_output', toolCalls: 2, idleMs: 300000,
+        }
+        return super.waitForReply(sessionId, options)
+      }
+      async waitUntilIdle(): Promise<boolean> { return true }
+    }
+    const { dir, cleanup } = await tempDir()
+    cleanups.push(cleanup)
+    const transport = new MockFeishuTransport('default')
+    const bridge = new QuiescedTimeoutBridge({ reply: 'continued' })
+    const gateway = createGateway(resolveConfig({
+      stateDir: dir, allowlist: ['ou_alice'], offline: true,
+    }), { transports: [transport], bridge, logger: silentLogger })
+    await gateway.start()
+    await transport.emitMessage(alice({ messageId: 'om_timeout_saved' }))
+    await gateway.whenIdle()
+    expect(transport.sent[0]?.text).toContain('原会话已保留')
+    expect(transport.sent[0]?.text).toContain('job_output')
+    await transport.emitMessage(alice({ messageId: 'om_continue', text: '继续' }))
+    await gateway.whenIdle()
+    expect(bridge.created).toHaveLength(1)
+    expect(bridge.resumed).toContain(bridge.created[0]!.sessionId)
+    expect(bridge.disposedSessions).toHaveLength(0)
+    expect(transport.sent[1]?.text).toBe('continued')
+    await gateway.stop()
+  })
+
+  it('supports per-chat /timeout controls without creating an Agent turn', async () => {
+    const { gateway, transport, bridge } = await harness()
+    await transport.emitMessage(alice({ messageId: 'om_timeout_cmd', text: '/timeout 10' }))
+    await transport.emitMessage(alice({ messageId: 'om_timeout_check', text: '/timeout' }))
+    await gateway.whenIdle()
+    expect(bridge.prompts).toHaveLength(0)
+    expect(transport.sent.find(item => item.replyToMessageId === 'om_timeout_check')?.text)
+      .toContain('600 秒')
+    await transport.emitMessage(alice({ messageId: 'om_timeout_reset', text: '/timeout reset' }))
+    await gateway.whenIdle()
+    expect(transport.sent.find(item => item.replyToMessageId === 'om_timeout_reset')?.text)
+      .toContain('已恢复通道默认')
+    await gateway.stop()
+  })
+
   it('isolates the Session of a crash-interrupted turn before the next message', async () => {
     const { dir, cleanup } = await tempDir()
     cleanups.push(cleanup)
