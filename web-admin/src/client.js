@@ -377,6 +377,7 @@ window.__ModuleLoader__.load({
       const [fallbacks, setFallbacks] = useState([])
       const [agentPreset, setAgentPreset] = useState('__inherit__')
       const [timeout, setTimeout] = useState('')
+      const [maxDuration, setMaxDuration] = useState('')
       const [proxyEnabled, setProxyEnabled] = useState(false)
       const [proxyFallback, setProxyFallback] = useState(true)
       const [proxyBypass, setProxyBypass] = useState('localhost,127.0.0.1,::1')
@@ -397,7 +398,7 @@ window.__ModuleLoader__.load({
       const [savedSignature, setSavedSignature] = useState(null)
       const draftSignature = JSON.stringify([
         allowOverride, allowText, agentWorkspace, primaryProvider,
-        primaryModel, fallbacks, agentPreset, timeout, proxyEnabled, proxyFallback, proxyBypass,
+        primaryModel, fallbacks, agentPreset, timeout, maxDuration, proxyEnabled, proxyFallback, proxyBypass,
         proxyUrl, proxyCleared, retry, interval, autoConnect, replyFormat,
         approvalCards, streamCards, approvalTimeout, streamInterval,
       ])
@@ -424,6 +425,7 @@ window.__ModuleLoader__.load({
         setFallbacks(directory.fallbacks)
         setAgentPreset(agentPresetView(data).selected)
         setTimeout(c.replyTimeoutMs === undefined ? '' : String(c.replyTimeoutMs / 1000))
+        setMaxDuration(c.maxReplyDurationMs === undefined ? '' : String(c.maxReplyDurationMs / 1000))
         setProxyEnabled(c.networkProxy?.enabled === true)
         setProxyFallback(c.networkProxy?.fallbackDirect !== false)
         setProxyBypass(typeof c.networkProxy?.noProxy === 'string' ? c.networkProxy.noProxy : 'localhost,127.0.0.1,::1')
@@ -481,6 +483,7 @@ window.__ModuleLoader__.load({
         // any other value is persisted, where '' is an explicit "no preset".
         if (agentPreset !== '__inherit__') result.agentPreset = agentPreset
         if (timeout.trim()) result.replyTimeoutMs = Number(timeout) * 1000
+        if (maxDuration.trim()) result.maxReplyDurationMs = Number(maxDuration) * 1000
         result.networkProxy = networkProxyPayload({
           enabled: proxyEnabled, fallbackDirect: proxyFallback, noProxy: proxyBypass,
           url: proxyUrl, cleared: proxyCleared,
@@ -777,7 +780,10 @@ window.__ModuleLoader__.load({
             '通过 start-feishu-channel.sh 启动时生效；适用于同一 DSH 进程内的 HTTP 请求。' +
             ' WebSocket 使用独立代理 Agent，运行期断线由 SDK 重连；单次请求不自动重放。'),
           h('div', { className: 'fga-fields-row' },
-            field('回复超时（秒）', textInput(timeout, setTimeout, '继承 Profile', { type: 'number', min: 5, max: 1800 })),
+            field('静默超时（秒）', textInput(timeout, setTimeout, '继承 Profile（默认300秒）', { type: 'number', min: 5, max: 1800 }),
+              '只有 Agent 没有模型输出或工具活动达到此时长才会停止等待；也可在飞书用 /timeout 调整本聊天。'),
+            field('单轮总上限（秒）', textInput(maxDuration, setMaxDuration, '继承 Profile（默认1800秒）', { type: 'number', min: 30, max: 3600 }),
+              '即使持续有输出也不能超过该总时长；修改配置需重启飞书通道。'),
             field('发送尝试次数', textInput(retry, setRetry, '继承 Profile', { type: 'number', min: 1, max: 10 })),
             field('补发间隔（秒）', textInput(interval, setIntervalValue, '继承 Profile', { type: 'number', min: 1, max: 300 }))),
           field('自动连接',
