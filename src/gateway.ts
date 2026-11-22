@@ -942,15 +942,37 @@ export class FeishuGateway {
       this.audit({ kind: 'task', state: 'finalizing', botId: record.botId,
         ref: record.messageId, session: sessionId })
       if (reply.reason === 'timeout' || reply.reason === 'cancelled') {
-        this.logger.warn('Feishu task exceeded reply deadline: session=%s timeoutMs=%d tools=%d failures=%d',
-          sessionId, this.config.replyTimeoutMs, reply.toolCalls ?? 0, reply.toolFailures ?? 0)
+        const idleLimit = this.chatTimeouts.get(key) ?? this.config.replyTimeoutMs
+        const timeoutKind = reply.timeoutKind ?? 'idle'
+        this.logger.warn('Feishu reply deadline: session=%s kind=%s idleLimitMs=%d maxMs=%d lastActivity=%s lastTool=%s idleMs=%d tools=%d failures=%d',
+          sessionId, timeoutKind, idleLimit, this.config.maxReplyDurationMs,
+          reply.lastActivity ?? 'none', reply.lastTool ?? 'none', reply.idleMs ?? 0,
+          reply.toolCalls ?? 0, reply.toolFailures ?? 0)
+        this.audit({ kind: 'task',
+          state: timeoutKind === 'max-duration' ? 'timeout-max-duration' : 'timeout-idle',
+          botId: record.botId, ref: record.messageId, session: sessionId,
+          lastTool: reply.lastTool, idleMs: reply.idleMs })
         this.bridge.cancel(sessionId)
-        // A late reply from the prior Agent must never enter the next turn.
-        await this.registry.unbind(key)
-        await this.bridge.retire?.(sessionId)
-        await this.replyDiagnostic(record, `执行超时（上限 ${Math.round(this.config.replyTimeoutMs / 1000)} 秒），` +
-          `已调用工具 ${reply.toolCalls ?? 0} 次（失败 ${reply.toolFailures ?? 0} 次）。` +
-          '原会话已隔离以避免继续执行；可缩小问题范围后重试。')
+        // Only keep the binding when DSH confirms the native Agent has become
+        // idle after cancellation. Otherwise a late turn could overlap a new
+        // one, so isolation remains the safety fallback.
+        const reusable = reply.reason === 'timeout' &&
+          await this.bridge.waitUntilIdle?.(sessionId, 5_000) === true
+        if (!reusable) {
+          await this.registry.unbind(key)
+          await this.bridge.retire?.(sessionId)
+        }
+        const limit = timeoutKind === 'max-duration'
+          ? `总时长达到 ${Math.round(this.config.maxReplyDurationMs / 60000)} 分钟`
+          : `连续 ${Math.round(idleLimit / 1000)} 秒没有收到 Agent 活动`
+        await this.replyDiagnostic(record, `执行超时：${limit}。` +
+          `最近活动：${reply.lastActivity === 'tool' ? '工具事件' : reply.lastActivity === 'assistant' ? '模型输出' : reply.lastActivity === 'model' ? '模型请求' : '未检测到'}` +
+          (reply.lastTool ? `；最近工具：${reply.lastTool}` : '') +
+          `；已调用工具 ${reply.toolCalls ?? 0} 次（失败 ${reply.toolFailures ?? 0} 次）。` +
+          (reusable
+            ? '已停止本轮执行，原会话已保留。可发送“继续”从已保存的上下文接续；已执行的工具操作不会回滚。'
+            : '原会话已隔离以避免继续执行；历史仍由 DSH 保留，但不能安全地自动续接。') +
+          `发送 /timeout 查看或调整本聊天静默超时（总上限 ${Math.round(this.config.maxReplyDurationMs / 60000)} 分钟）。`)
       } else {
         const text = truncateText(reply.text, this.config.maxTextLength)
         const answer = text || '模型未返回文本内容。'
