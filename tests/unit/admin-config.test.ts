@@ -121,6 +121,9 @@ describe('managed Feishu channel overlay', () => {
   })
 
   it('rejects secrets, unknown fields, invalid ids, and env collisions', () => {
+    expect(validateManagedConfig({ replyTimeoutMs: 300_000, maxReplyDurationMs: 1_800_000 }))
+      .toMatchObject({ replyTimeoutMs: 300_000, maxReplyDurationMs: 1_800_000 })
+    expect(() => validateManagedConfig({ maxReplyDurationMs: 3_600_001 })).toThrow(/maxReplyDurationMs/)
     expect(() => validateManagedConfig({ appSecret: 'top-secret' })).toThrow(/unsupported/)
     expect(() => validateManagedConfig({ bots: [{ id: 'a-b', domain: 'feishu' }, { id: 'a_b', domain: 'lark' }] })).toThrow(/colliding/)
     expect(() => validateManagedConfig({ allowlist: ['not-an-open-id'] })).toThrow(/allowlist/)
