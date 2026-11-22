@@ -44,6 +44,7 @@ export interface ManagedChannelConfig {
     fallbacks?: AgentFallbackRoute[]
   }
   replyTimeoutMs?: number
+  maxReplyDurationMs?: number
   networkProxy?: { enabled: boolean; urlEnv: string; fallbackDirect: boolean; noProxy?: string }
   replyFormat?: 'text' | 'markdown'
   sendRetries?: number
@@ -79,7 +80,7 @@ function positiveInteger(value: unknown, key: string, min: number, max: number):
 /** Validation is intentionally strict: an invalid overlay stops startup. */
 export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   if (!dictionary(value)) throw new Error('managed config must be an object')
-  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agentPreset', 'agent', 'replyTimeoutMs', 'networkProxy', 'replyFormat', 'sendRetries',
+  assertFields(value, ['bots', 'allowlist', 'groupPolicy', 'groupSenderAllowlist', 'groups', 'workspace', 'agentWorkspace', 'agentPreset', 'agent', 'replyTimeoutMs', 'maxReplyDurationMs', 'networkProxy', 'replyFormat', 'sendRetries',
     'outboxRetryIntervalMs', 'autoConnect',
     'approvalCards', 'streamCards', 'approvalTimeoutMs', 'streamIntervalMs'])
   const result: ManagedChannelConfig = {}
@@ -237,6 +238,9 @@ export function validateManagedConfig(value: unknown): ManagedChannelConfig {
   }
   if (value.replyTimeoutMs !== undefined) {
     result.replyTimeoutMs = positiveInteger(value.replyTimeoutMs, 'replyTimeoutMs', 5_000, 1_800_000)
+  }
+  if (value.maxReplyDurationMs !== undefined) {
+    result.maxReplyDurationMs = positiveInteger(value.maxReplyDurationMs, 'maxReplyDurationMs', 30_000, 3_600_000)
   }
   if (value.networkProxy !== undefined) {
     const v = value.networkProxy
