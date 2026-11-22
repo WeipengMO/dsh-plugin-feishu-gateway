@@ -40,8 +40,11 @@ test('official DSH plugin shape uses only web services', () => {
 
 test('strict config validation rejects secrets, forged paths, and env name collisions', () => {
   const valid = validateConfig({ allowlist: ['ou_alice'], agent: { provider: 'magpie', model: 'group/deepseek' },
-    bots: [{ id: 'default', domain: 'feishu', enabled: true }], replyTimeoutMs: 300000 })
+    bots: [{ id: 'default', domain: 'feishu', enabled: true }], replyTimeoutMs: 300000,
+    maxReplyDurationMs: 1800000 })
   assert.equal(valid.bots[0].id, 'default')
+  assert.equal(valid.maxReplyDurationMs, 1800000)
+  assert.throws(() => validateConfig({ maxReplyDurationMs: 3600001 }), /maxReplyDurationMs/)
   assert.throws(() => validateConfig({ appSecret: 'SHOULD_NEVER_APPEAR' }), /unsupported/)
   assert.throws(() => validateConfig({ workspace: 'relative/path' }), /absolute/)
   assert.throws(() => validateConfig({ allowlist: ['bad'] }), /allowlist/)
