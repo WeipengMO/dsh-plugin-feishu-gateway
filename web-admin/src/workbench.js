@@ -11,7 +11,7 @@ const WORKBENCH_NAV = [
   ['channels', '接入与权限', '◉'],
   ['agent-profile', 'Agent 档案', '▤'],
   ['skills', 'Skills 技能', '◇'],
-  ['external-tools', 'MCP / 外部工具', '⌘']
+  ['external-tools', 'MCP / 外部工具', '⌘'],
   ['analytics', '用量与审计', '▥'],
   ['operations', '运维与诊断', '⌁'],
   ['advanced', '模型与连接', '⚙'],
