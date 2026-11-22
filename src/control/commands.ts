@@ -1,10 +1,11 @@
 /** Gateway-owned controls run outside the native Agent's prompt stream. */
-export type ControlCommand = 'help' | 'status' | 'cancel' | 'new' | 'model' | 'models' | 'compact' | 'context'
+export type ControlCommand = 'help' | 'status' | 'cancel' | 'new' | 'model' | 'models' | 'compact' | 'context' | 'timeout'
 
 export function parseControlCommand(text: string): ControlCommand | undefined {
   const value = text.trim()
   if (/^\/models(?:\s+[^\r\n]+)?$/i.test(value)) return 'models'
   if (/^\/model(?:\s+[^\r\n]+)?$/i.test(value)) return 'model'
+  if (/^\/timeout(?:\s+[^\r\n]+)?$/i.test(value)) return 'timeout'
   const match = /^\/(help|status|stop|cancel|new|compact|context)\s*$/i.exec(value)
   const name = match?.[1]?.toLowerCase()
   return (name === 'stop' ? 'cancel' : name) as ControlCommand | undefined
@@ -15,6 +16,7 @@ export const commandHelp = [
   '/help — 查看可用命令',
   '/status — 查看当前聊天任务及通道状态',
   '/stop — 停止当前聊天正在运行的任务（不影响其他聊天）',
+  '/timeout [分钟|reset] — 查看或调整本聊天静默超时；运行中立即生效',
   '/models — 查看可用模型及当前会话模型',
   '/model provider/model — 切换当前会话模型',
   '/new — 结束当前会话关联，下一条消息开启新上下文',
