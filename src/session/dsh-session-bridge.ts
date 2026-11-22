@@ -109,6 +109,11 @@ interface TurnState {
   readonly attemptStarts: Map<string, number>
   /** Set when `turn/end` reports a non-completed reason (native Agent failure). */
   failure?: string
+  readonly startedAt: number
+  lastActivityAt: number
+  lastActivity?: 'assistant' | 'tool' | 'model'
+  lastTool?: string
+  onActivity?: () => void
 }
 
 /**
@@ -607,13 +612,59 @@ export class DshSessionBridge implements SessionBridge {
     }
   }
 
+  /** A moving silence deadline plus a hard ceiling, without polling or leaked listeners. */
+  private waitForTurn(turn: TurnState, options: WaitOptions): Promise<'done' | 'cancelled' | 'idle' | 'max-duration'> {
+    return new Promise(resolve => {
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      let hardTimer: ReturnType<typeof setTimeout> | undefined
+      let unsubscribe: (() => void) | undefined
+      let finished = false
+      const finish = (reason: 'done' | 'cancelled' | 'idle' | 'max-duration') => {
+        if (finished) return
+        finished = true
+        clearTimeout(idleTimer)
+        clearTimeout(hardTimer)
+        turn.onActivity = undefined
+        options.signal.removeEventListener('abort', onAbort)
+        unsubscribe?.()
+        resolve(reason)
+      }
+      const onAbort = () => finish('cancelled')
+      const scheduleIdle = () => {
+        if (finished) return
+        clearTimeout(idleTimer)
+        if (turn.settled) return finish('done')
+        const idleLimit = Math.max(5, options.getTimeoutMs?.() ?? options.timeoutMs)
+        const remaining = turn.lastActivityAt + idleLimit - Date.now()
+        if (remaining <= 0) return finish('idle')
+        idleTimer = setTimeout(scheduleIdle, remaining)
+      }
+      turn.onActivity = scheduleIdle
+      unsubscribe = options.onTimeoutChange?.(scheduleIdle)
+      options.signal.addEventListener('abort', onAbort, { once: true })
+      void turn.done.then(() => finish('done'))
+      if (options.signal.aborted) return finish('cancelled')
+      const remaining = turn.startedAt + (options.maxDurationMs ?? 1_800_000) - Date.now()
+      if (remaining <= 0) return finish('max-duration')
+      hardTimer = setTimeout(() => finish(turn.settled ? 'done' : 'max-duration'), remaining)
+      scheduleIdle()
+    })
+  }
+
+  private noteActivity(turn: TurnState, kind: 'assistant' | 'tool' | 'model'): void {
+    if (turn.settled) return
+    turn.lastActivityAt = Date.now()
+    turn.lastActivity = kind
+    turn.onActivity?.()
+  }
+
   async waitForReply(sessionId: string, options: WaitOptions): Promise<SessionReply> {
     const turn = this.turns.get(sessionId)
     if (!turn) return { text: '', reason: 'empty' }
-    const result = await withTimeout(turn.done, options.timeoutMs, options.signal)
+    const outcome = await this.waitForTurn(turn, options)
     const durable = turn.durable.join('').trim()
     const text = durable || turn.attempts.join('').trim() || turn.live.join('').trim()
-    const reason = !result.timedOut ? 'idle' : 'timeout'
+    const reason = outcome === 'done' ? 'idle' : outcome === 'cancelled' ? 'cancelled' : 'timeout'
     const failure = turn.failure
     this.turns.delete(sessionId)
     // A `turn/end` with reason.kind === 'error' means the native Agent loop
@@ -636,6 +687,12 @@ export class DshSessionBridge implements SessionBridge {
       ...(turn.generationMs > 0 ? { generationMs: turn.generationMs } : {}),
       toolCalls: turn.toolCalls,
       toolFailures: turn.toolFailures,
+      ...(outcome === 'idle' || outcome === 'max-duration' ? {
+        timeoutKind: outcome,
+        idleMs: Math.max(0, Date.now() - turn.lastActivityAt),
+      } : {}),
+      ...(turn.lastActivity ? { lastActivity: turn.lastActivity } : {}),
+      ...(turn.lastTool ? { lastTool: turn.lastTool } : {}),
     }
   }
 
@@ -675,6 +732,16 @@ export class DshSessionBridge implements SessionBridge {
       this.logger.warn('cancel failed for %s: %s', sessionId, String(error))
     }
     this.settle(sessionId)
+  }
+
+  async waitUntilIdle(sessionId: string, timeoutMs: number): Promise<boolean> {
+    const handle = this.handles.get(sessionId)
+    if (typeof handle?.agent.whenIdle !== 'function') return false
+    try {
+      return !(await withTimeout(handle.agent.whenIdle(), timeoutMs)).timedOut
+    } catch {
+      return false
+    }
   }
 
   async retire(sessionId: string): Promise<void> {
@@ -727,6 +794,7 @@ export class DshSessionBridge implements SessionBridge {
       durable: [], attempts: [], live: [], done, resolve, settled: false,
       events: 0, generationMs: 0, attemptStarts: new Map(),
       toolNames: new Map(), toolCalls: 0, toolFailures: 0,
+      startedAt: Date.now(), lastActivityAt: Date.now(),
       ...(this.sessionModels.has(sessionId) ? { model: this.sessionModels.get(sessionId) } : {}),
     }
     this.turns.set(sessionId, turn)
@@ -879,6 +947,9 @@ export class DshSessionBridge implements SessionBridge {
     const turn = this.turns.get(sessionId)
     if (!turn) return
     if (this.sessionModels.has(sessionId)) turn.model = this.sessionModels.get(sessionId)
+    if (type === 'tool/call' || type === 'tool/result') this.noteActivity(turn, 'tool')
+    else if (type === 'assistant/message' || type === 'assistant/attempt') this.noteActivity(turn, 'assistant')
+    else if (type === 'request/context' || type === 'request/header') this.noteActivity(turn, 'model')
     // DSH native tool events are observable without reading/storing arguments.
     // Never send raw tool output, URLs, file paths or error messages to CardKit.
     if (type === 'tool/call') {
@@ -886,6 +957,7 @@ export class DshSessionBridge implements SessionBridge {
       const raw = typeof data?.name === 'string' ? data.name : ''
       const name = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(raw) ? raw : 'tool'
       if (id) turn.toolNames.set(id, name)
+      turn.lastTool = name
       turn.toolCalls += 1
       try { turn.onToolActivity?.({ name, phase: 'started', calls: turn.toolCalls, failures: turn.toolFailures }) }
       catch { /* progress telemetry must not break native sessions */ }
@@ -894,6 +966,7 @@ export class DshSessionBridge implements SessionBridge {
       const id = typeof msg?.toolCallId === 'string' ? msg.toolCallId
         : typeof msg?.source?.callId === 'string' ? msg.source.callId : ''
       const name = turn.toolNames.get(id) ?? 'tool'
+      turn.lastTool = name
       turn.toolNames.delete(id)
       // Native web_fetch records the HTTP status in data.meta.statusCode.
       // Prefer this structured field over parsing the returned, untrusted webpage.
@@ -956,8 +1029,10 @@ export class DshSessionBridge implements SessionBridge {
     })?.frame
     const attemptId = typeof frame?.attemptId === 'string' ? frame.attemptId : 'default'
     if (frame?.type === 'start') {
+      if (turn) this.noteActivity(turn, 'model')
       turn?.attemptStarts.set(attemptId, Date.now())
     } else if (frame?.type === 'end') {
+      if (turn) this.noteActivity(turn, 'model')
       const started = turn?.attemptStarts.get(attemptId)
       if (turn && started !== undefined) {
         turn.generationMs += Math.max(0, Date.now() - started)
@@ -965,7 +1040,8 @@ export class DshSessionBridge implements SessionBridge {
       }
     } else if (frame?.type === 'chunk') {
       const chunk = frame.chunk as { type?: unknown; text?: unknown } | undefined
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text) {
+        if (turn) this.noteActivity(turn, 'assistant')
         turn?.live.push(chunk.text)
         external?.live.push(chunk.text)
         try { turn?.onTextDelta?.(chunk.text) }
