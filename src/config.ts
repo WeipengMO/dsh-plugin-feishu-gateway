@@ -67,8 +67,10 @@ export const Config: ConfigValidator = Schema.object({
     .description('Upper bound on remembered message ids (oldest are pruned first).'),
   maxTextLength: Schema.number().default(8000)
     .description('Inbound text is truncated to this many code points.'),
-  replyTimeoutMs: Schema.number().default(120_000)
-    .description('Maximum time to wait for the native Session reply.'),
+  replyTimeoutMs: Schema.number().default(300_000)
+    .description('Inactivity timeout between native Agent/tool events (ms).'),
+  maxReplyDurationMs: Schema.number().default(1_800_000)
+    .description('Absolute turn ceiling, even while progress continues (ms).'),
   networkProxy: Schema.object({
     enabled: Schema.boolean().default(false),
     urlEnv: Schema.string().default('FEISHU_CHANNEL_PROXY_URL'),
@@ -147,7 +149,8 @@ export function resolveConfig(input: Partial<GatewayConfig> | undefined): Gatewa
     dedupTtlMs: numberOr(raw.dedupTtlMs, 24 * 60 * 60 * 1000),
     maxDedupEntries: numberOr(raw.maxDedupEntries, 50_000),
     maxTextLength: numberOr(raw.maxTextLength, 8000),
-    replyTimeoutMs: numberOr(raw.replyTimeoutMs, 120_000),
+    replyTimeoutMs: Math.max(5_000, Math.min(1_800_000, numberOr(raw.replyTimeoutMs, 300_000))),
+    maxReplyDurationMs: Math.max(30_000, Math.min(3_600_000, numberOr(raw.maxReplyDurationMs, 1_800_000))),
     networkProxy: {
       enabled: (raw.networkProxy as Partial<GatewayConfig['networkProxy']> | undefined)?.enabled === true,
       urlEnv: (() => {
